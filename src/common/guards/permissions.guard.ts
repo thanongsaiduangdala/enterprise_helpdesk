@@ -16,7 +16,7 @@ export class PermissionsGuard implements CanActivate {
             PERMISSION_KEY,
             context.getHandler(),
         );
-        if (!required) return true; // no @RequirePermission on this route, allow
+        if (!required) return true;
 
         const request = context.switchToHttp().getRequest();
         const user = request.user;
