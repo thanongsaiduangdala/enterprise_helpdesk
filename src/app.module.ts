@@ -4,7 +4,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { RolesModule } from './roles/roles.module';
-import { TicketTypesModule } from './ticket_type/ticket-type.module';
+import { TicketTypesModule } from './ticket-types/ticket-type.module';
+import { SlaPoliciesModule } from './sla_policy/sla-policies.module';
+import { BranchesModule } from './branches/branches.module';
+import { DepartmentsModule } from './department/departments.module';
 
 
 @Module({
@@ -15,6 +18,9 @@ import { TicketTypesModule } from './ticket_type/ticket-type.module';
     UsersModule,
     AuthModule,
     TicketTypesModule,
+    SlaPoliciesModule,
+    BranchesModule,
+    DepartmentsModule,
   ],
 })
 export class AppModule { }
