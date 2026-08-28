@@ -2,45 +2,42 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
+import { SessionsService, DeviceInfoInput } from '../sessions/sessions.service';
 
 @Injectable()
 export class AuthService {
     constructor(
         private usersService: UsersService,
         private jwtService: JwtService,
+        private sessionsService: SessionsService,
     ) { }
 
-    async login(email: string, password: string) {
+    async login(email: string, password: string, deviceInfo: DeviceInfoInput) {
         const user = await this.usersService.findByEmail(email);
         if (!user) throw new UnauthorizedException('Invalid credentials');
 
-        // FIX: was comparing against `user.password`, a field that doesn't
-        // exist on the User schema (it's `passwordHash`). This meant
-        // bcrypt.compare(password, undefined) - which always resolves to
-        // false, so no login could ever succeed. Fixed to compare against
-        // the actual stored field.
         const passwordMatches = await bcrypt.compare(password, user.passwordHash);
         if (!passwordMatches) throw new UnauthorizedException('Invalid credentials');
 
-        // ADDED: block login for deactivated accounts. The Users module
-        // supports isActive/deactivatedAt, but nothing was checking it -
-        // a deactivated employee could still log in and get a valid token.
         if (!user.isActive) {
             throw new UnauthorizedException('This account has been deactivated');
         }
 
-        // FIX: `user.role` used to be a plain string enum value
-        // ("DEPT_MANAGER"), so dropping it straight into the JWT payload
-        // worked by accident. Now that `role` is a reference,
-        // findByEmail() populates it, so `user.role` here is the full role
-        // document - pull out just what guards/the frontend actually need
-        // (name + permissions), not the whole Mongoose object.
         const role = user.role as any; // populated Role document
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // matches JwtModule's 1d expiry
+
+        const session = await this.sessionsService.create(
+            String(user._id),
+            deviceInfo,
+            expiresAt,
+        );
+
         const payload = {
             sub: user._id,
             email: user.email,
             role: role.name,
             permissions: role.permissions,
+            sessionId: String(session._id),
         };
         const token = this.jwtService.sign(payload);
 

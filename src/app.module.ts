@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { UsersModule } from './users/users.module';
@@ -8,7 +8,8 @@ import { TicketTypesModule } from './ticket-types/ticket-type.module';
 import { SlaPoliciesModule } from './sla_policy/sla-policies.module';
 import { BranchesModule } from './branches/branches.module';
 import { DepartmentsModule } from './department/departments.module';
-
+import { SessionsModule } from './sessions/sessions.module';
+import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
 @Module({
   imports: [
@@ -21,7 +22,11 @@ import { DepartmentsModule } from './department/departments.module';
     SlaPoliciesModule,
     BranchesModule,
     DepartmentsModule,
+    SessionsModule,
   ],
 })
-export class AppModule { }
-
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(LoggerMiddleware).forRoutes('*');
+  }
+}
