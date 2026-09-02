@@ -10,6 +10,8 @@ import { BranchesModule } from './branches/branches.module';
 import { DepartmentsModule } from './department/departments.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
+import { RoomsModule } from './rooms/rooms.module';
+import { RoomBookingsModule } from './room-bookings/room-bookings.module';
 
 @Module({
   imports: [
@@ -23,6 +25,8 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     BranchesModule,
     DepartmentsModule,
     SessionsModule,
+    RoomsModule,
+    RoomBookingsModule,
   ],
 })
 export class AppModule implements NestModule {
