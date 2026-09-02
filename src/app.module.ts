@@ -12,6 +12,8 @@ import { SessionsModule } from './sessions/sessions.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 import { RoomsModule } from './rooms/rooms.module';
 import { RoomBookingsModule } from './room-bookings/room-bookings.module';
+import { SupplyCatalogModule } from './supply-catalog/supply-catalog.module';
+import { SupplyRequestsModule } from './supply-requests/supply-requests.module';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { RoomBookingsModule } from './room-bookings/room-bookings.module';
     SessionsModule,
     RoomsModule,
     RoomBookingsModule,
+    SupplyCatalogModule,
+    SupplyRequestsModule,
   ],
 })
 export class AppModule implements NestModule {
