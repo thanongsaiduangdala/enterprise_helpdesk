@@ -1,7 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type RoomBookingDocument = RoomBooking & Document;
+export type RoomBookingDocument = RoomBooking & Omit<Document, '_id'>;
 
 export enum BookingStatus {
     CONFIRMED = 'CONFIRMED',
@@ -19,6 +19,9 @@ class Recurrence {
 
 @Schema({ timestamps: true })
 export class RoomBooking {
+    @Prop({ type: String })
+    _id!: string; // e.g. 'RB001'
+
     @Prop({ type: String, ref: 'Room', required: true })
     roomId!: string;
 

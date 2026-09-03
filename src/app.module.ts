@@ -14,6 +14,8 @@ import { RoomsModule } from './rooms/rooms.module';
 import { RoomBookingsModule } from './room-bookings/room-bookings.module';
 import { SupplyCatalogModule } from './supply-catalog/supply-catalog.module';
 import { SupplyRequestsModule } from './supply-requests/supply-requests.module';
+import { CannedResponsesModule } from './canned-responses/canned-responses.module';
+import { TicketMessagesModule } from './ticket-messages/ticket-messages.module';
 
 @Module({
   imports: [
@@ -31,6 +33,8 @@ import { SupplyRequestsModule } from './supply-requests/supply-requests.module';
     RoomBookingsModule,
     SupplyCatalogModule,
     SupplyRequestsModule,
+    CannedResponsesModule,
+    TicketMessagesModule,
   ],
 })
 export class AppModule implements NestModule {

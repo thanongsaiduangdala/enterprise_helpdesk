@@ -24,6 +24,17 @@ export class RoomBookingsService {
         @Inject(forwardRef(() => RoomsService)) private roomsService: RoomsService,
     ) { }
 
+    private async generateId(): Promise<string> {
+        const bookings = await this.bookingModel
+            .find({ _id: /^RB\d{3}$/ }, { _id: 1 })
+            .sort({ _id: 1 })
+            .exec();
+        const usedNumbers = new Set(bookings.map((b) => parseInt(b._id.slice(2), 10)));
+        let seq = 1;
+        while (usedNumbers.has(seq)) seq++;
+        return `RB${String(seq).padStart(3, '0')}`;
+    }
+
     // Core overlap check: two CONFIRMED bookings on the same room clash if
     // (existing.start < newEnd) AND (existing.end > newStart).
     private async assertNoOverlap(
@@ -51,12 +62,14 @@ export class RoomBookingsService {
     }
 
     async create(dto: CreateRoomBookingDto, bookedBy: string) {
-        await this.roomsService.findOne(dto.roomId); // throws 404 if room doesn't exist
+        await this.roomsService.findOne(dto.roomId);
         const startAt = new Date(dto.startAt);
         const endAt = new Date(dto.endAt);
         await this.assertNoOverlap(dto.roomId, startAt, endAt);
 
+        const _id = await this.generateId();
         const booking = new this.bookingModel({
+            _id,
             roomId: dto.roomId,
             bookedBy,
             startAt,

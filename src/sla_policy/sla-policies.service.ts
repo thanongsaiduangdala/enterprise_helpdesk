@@ -15,14 +15,6 @@ export class SlaPoliciesService {
         @InjectModel(SlaPolicy.name) private slaPolicyModel: Model<SlaPolicyDocument>,
     ) { }
 
-    private async generateId(): Promise<string> {
-        const last = await this.slaPolicyModel
-            .findOne({ _id: /^SLA\d{3}$/ })
-            .sort({ _id: -1 })
-            .exec();
-        const nextSeq = last ? parseInt(last._id.slice(3), 10) + 1 : 1;
-        return `SLA${String(nextSeq).padStart(3, '0')}`;
-    }
 
     async create(dto: CreateSlaPolicyDto) {
         const existing = await this.slaPolicyModel.findOne({
@@ -34,8 +26,7 @@ export class SlaPoliciesService {
                 `An SLA policy already exists for this ticket type + priority`,
             );
         }
-        const _id = await this.generateId();
-        const policy = new this.slaPolicyModel({ _id, ...dto });
+        const policy = new this.slaPolicyModel(dto);
         return policy.save();
     }
 

@@ -18,9 +18,6 @@ export class TicketType {
     defaultPriority!: string;
 
     @Prop()
-    defaultSlaPolicyId?: string;
-
-    @Prop()
     description?: string;
 
     @Prop({ default: true })

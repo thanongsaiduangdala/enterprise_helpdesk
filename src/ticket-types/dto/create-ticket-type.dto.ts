@@ -15,11 +15,6 @@ export class CreateTicketTypeDto {
     @IsIn(['low', 'medium', 'high', 'urgent'])
     defaultPriority?: string;
 
-    @ApiPropertyOptional({ example: 'SLA001', description: 'A slaPolicies._id (added once that module exists)' })
-    @IsOptional()
-    @IsString()
-    defaultSlaPolicyId?: string;
-
     @ApiPropertyOptional({ example: 'Issues connecting to the corporate VPN' })
     @IsOptional()
     @IsString()

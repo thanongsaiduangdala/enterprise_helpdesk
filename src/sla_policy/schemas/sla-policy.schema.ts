@@ -26,8 +26,6 @@ class IdleReminder {
 
 @Schema({ timestamps: true })
 export class SlaPolicy {
-    @Prop({ type: String })
-    _id!: string;
 
     @Prop({ required: true })
     name!: string;
@@ -55,3 +53,5 @@ export class SlaPolicy {
 }
 
 export const SlaPolicySchema = SchemaFactory.createForClass(SlaPolicy);
+
+SlaPolicySchema.index({ ticketTypeId: 1, priority: 1 }, { unique: true });
