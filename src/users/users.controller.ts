@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -15,8 +15,8 @@ export class UsersController {
 
     @Post()
     @RequirePermission('users', 'create')
-    create(@Body() dto: CreateUserDto) {
-        return this.usersService.create(dto);
+    create(@Body() dto: CreateUserDto, @Req() req: any) {
+        return this.usersService.create(dto, req.user.userId, req.ip);
     }
 
     @Get()
@@ -33,13 +33,13 @@ export class UsersController {
 
     @Patch(':id')
     @RequirePermission('users', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-        return this.usersService.update(id, dto);
+    update(@Param('id') id: string, @Body() dto: UpdateUserDto, @Req() req: any) {
+        return this.usersService.update(id, dto, req.user.userId, req.ip);
     }
 
     @Delete(':id')
     @RequirePermission('users', 'delete')
-    remove(@Param('id') id: string) {
-        return this.usersService.remove(id);
+    remove(@Param('id') id: string, @Req() req: any) {
+        return this.usersService.remove(id, req.user.userId, req.ip);
     }
 }

@@ -16,6 +16,11 @@ import { SupplyCatalogModule } from './supply-catalog/supply-catalog.module';
 import { SupplyRequestsModule } from './supply-requests/supply-requests.module';
 import { CannedResponsesModule } from './canned-responses/canned-responses.module';
 import { TicketMessagesModule } from './ticket-messages/ticket-messages.module';
+import { AssetsModule } from './assets/assets.module';
+import { KbArticlesModule } from './kb-articles/kb-articles.module';
+import { AnnouncementsModule } from './announcements/announcements.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { AuditLogsModule } from './audit-logs/audit-logs.module';
 
 @Module({
   imports: [
@@ -35,6 +40,11 @@ import { TicketMessagesModule } from './ticket-messages/ticket-messages.module';
     SupplyRequestsModule,
     CannedResponsesModule,
     TicketMessagesModule,
+    AssetsModule,
+    KbArticlesModule,
+    AnnouncementsModule,
+    NotificationsModule,
+    AuditLogsModule,
   ],
 })
 export class AppModule implements NestModule {
