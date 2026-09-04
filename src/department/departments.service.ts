@@ -10,6 +10,7 @@ import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { BranchesService } from '../branches/branches.service';
 import { TicketTypesService } from '../ticket-types/ticket-types.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class DepartmentsService {
@@ -17,6 +18,7 @@ export class DepartmentsService {
         @InjectModel(Department.name) private departmentModel: Model<DepartmentDocument>,
         private branchesService: BranchesService,
         private ticketTypesService: TicketTypesService,
+        private auditLogsService: AuditLogsService,
     ) { }
 
     private async generateId(): Promise<string> {
@@ -36,7 +38,7 @@ export class DepartmentsService {
         return { ...department.toObject(), ticketTypes };
     }
 
-    async create(dto: CreateDepartmentDto) {
+    async create(dto: CreateDepartmentDto, actorId: string, ip?: string) {
         await this.branchesService.findOne(dto.branchId); // throws 404 if branch doesn't exist
 
         const existing = await this.departmentModel.findOne({
@@ -51,7 +53,19 @@ export class DepartmentsService {
 
         const _id = await this.generateId();
         const department = new this.departmentModel({ _id, ...dto });
-        return department.save();
+        const saved = await department.save();
+
+        await this.auditLogsService.log(
+            actorId,
+            'DEPARTMENT_CREATED',
+            'Department',
+            saved._id,
+            undefined,
+            saved.toObject(),
+            ip,
+        );
+
+        return saved;
     }
 
     async findAll() {
@@ -65,20 +79,52 @@ export class DepartmentsService {
         return this.withTicketTypes(department);
     }
 
-    async update(id: string, dto: UpdateDepartmentDto) {
+    async update(id: string, dto: UpdateDepartmentDto, actorId: string, ip?: string) {
         if (dto.branchId) {
             await this.branchesService.findOne(dto.branchId);
         }
+
+        const before = await this.departmentModel.findById(id).exec();
+        if (!before) throw new NotFoundException('Department not found');
+
         const department = await this.departmentModel
             .findByIdAndUpdate(id, dto, { new: true })
             .exec();
         if (!department) throw new NotFoundException('Department not found');
+
+        // Manager reassignment gets its own action name — worth being able to filter for
+        // "who put this person in charge of this department" separately from a plain edit.
+        const action = dto.managerIds ? 'DEPARTMENT_MANAGER_CHANGED' : 'DEPARTMENT_UPDATED';
+        await this.auditLogsService.log(
+            actorId,
+            action,
+            'Department',
+            id,
+            before.toObject(),
+            department.toObject(),
+            ip,
+        );
+
         return this.withTicketTypes(department);
     }
 
-    async remove(id: string) {
+    async remove(id: string, actorId: string, ip?: string) {
+        const before = await this.departmentModel.findById(id).exec();
+        if (!before) throw new NotFoundException('Department not found');
+
         const result = await this.departmentModel.findByIdAndDelete(id).exec();
         if (!result) throw new NotFoundException('Department not found');
+
+        await this.auditLogsService.log(
+            actorId,
+            'DEPARTMENT_DELETED',
+            'Department',
+            id,
+            before.toObject(),
+            undefined,
+            ip,
+        );
+
         return { deleted: true };
     }
 }

@@ -1,5 +1,5 @@
 import {
-    Body, Controller, Delete, Get, Param, Patch, Post, UseGuards,
+    Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { DepartmentsService } from './departments.service';
@@ -17,8 +17,8 @@ export class DepartmentsController {
 
     @Post()
     @RequirePermission('departments', 'create')
-    create(@Body() dto: CreateDepartmentDto) {
-        return this.departmentsService.create(dto);
+    create(@Body() dto: CreateDepartmentDto, @Req() req: any) {
+        return this.departmentsService.create(dto, req.user.userId, req.ip);
     }
 
     @Get()
@@ -35,13 +35,13 @@ export class DepartmentsController {
 
     @Patch(':id')
     @RequirePermission('departments', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateDepartmentDto) {
-        return this.departmentsService.update(id, dto);
+    update(@Param('id') id: string, @Body() dto: UpdateDepartmentDto, @Req() req: any) {
+        return this.departmentsService.update(id, dto, req.user.userId, req.ip);
     }
 
     @Delete(':id')
     @RequirePermission('departments', 'delete')
-    remove(@Param('id') id: string) {
-        return this.departmentsService.remove(id);
+    remove(@Param('id') id: string, @Req() req: any) {
+        return this.departmentsService.remove(id, req.user.userId, req.ip);
     }
 }

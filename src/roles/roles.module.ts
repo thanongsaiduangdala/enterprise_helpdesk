@@ -4,6 +4,7 @@ import { Role, RoleSchema } from './schemas/role.schema';
 import { Counter, CounterSchema } from './schemas/counter.schema';
 import { RolesService } from './roles.service';
 import { RolesController } from './roles.controller';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
     imports: [
@@ -11,6 +12,7 @@ import { RolesController } from './roles.controller';
             { name: Role.name, schema: RoleSchema },
             { name: Counter.name, schema: CounterSchema },
         ]),
+        AuditLogsModule,
     ],
     controllers: [RolesController],
     providers: [RolesService],

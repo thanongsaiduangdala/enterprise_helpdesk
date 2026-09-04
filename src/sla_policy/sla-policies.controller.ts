@@ -1,5 +1,5 @@
 import {
-    Body, Controller, Delete, Get, Param, Patch, Post, UseGuards,
+    Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { SlaPoliciesService } from './sla-policies.service';
@@ -17,8 +17,8 @@ export class SlaPoliciesController {
 
     @Post()
     @RequirePermission('sla', 'create')
-    create(@Body() dto: CreateSlaPolicyDto) {
-        return this.slaPoliciesService.create(dto);
+    create(@Body() dto: CreateSlaPolicyDto, @Req() req: any) {
+        return this.slaPoliciesService.create(dto, req.user.userId, req.ip);
     }
 
     @Get()
@@ -35,13 +35,13 @@ export class SlaPoliciesController {
 
     @Patch(':id')
     @RequirePermission('sla', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateSlaPolicyDto) {
-        return this.slaPoliciesService.update(id, dto);
+    update(@Param('id') id: string, @Body() dto: UpdateSlaPolicyDto, @Req() req: any) {
+        return this.slaPoliciesService.update(id, dto, req.user.userId, req.ip);
     }
 
     @Delete(':id')
     @RequirePermission('sla', 'delete')
-    remove(@Param('id') id: string) {
-        return this.slaPoliciesService.remove(id);
+    remove(@Param('id') id: string, @Req() req: any) {
+        return this.slaPoliciesService.remove(id, req.user.userId, req.ip);
     }
 }

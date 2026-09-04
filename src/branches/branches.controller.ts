@@ -1,5 +1,5 @@
 import {
-    Body, Controller, Delete, Get, Param, Patch, Post, UseGuards,
+    Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { BranchesService } from './branches.service';
@@ -17,8 +17,8 @@ export class BranchesController {
 
     @Post()
     @RequirePermission('branches', 'create')
-    create(@Body() dto: CreateBranchDto) {
-        return this.branchesService.create(dto);
+    create(@Body() dto: CreateBranchDto, @Req() req: any) {
+        return this.branchesService.create(dto, req.user.userId, req.ip);
     }
 
     @Get()
@@ -35,13 +35,13 @@ export class BranchesController {
 
     @Patch(':id')
     @RequirePermission('branches', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateBranchDto) {
-        return this.branchesService.update(id, dto);
+    update(@Param('id') id: string, @Body() dto: UpdateBranchDto, @Req() req: any) {
+        return this.branchesService.update(id, dto, req.user.userId, req.ip);
     }
 
     @Delete(':id')
     @RequirePermission('branches', 'delete')
-    remove(@Param('id') id: string) {
-        return this.branchesService.remove(id);
+    remove(@Param('id') id: string, @Req() req: any) {
+        return this.branchesService.remove(id, req.user.userId, req.ip);
     }
 }

@@ -6,6 +6,7 @@ import {
     Param,
     Patch,
     Post,
+    Req,
     UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
@@ -24,8 +25,8 @@ export class RolesController {
 
     @Post()
     @RequirePermission('roles', 'create')
-    create(@Body() dto: CreateRoleDto) {
-        return this.rolesService.create(dto);
+    create(@Body() dto: CreateRoleDto, @Req() req: any) {
+        return this.rolesService.create(dto, req.user.userId, req.ip);
     }
 
     @Get()
@@ -42,13 +43,13 @@ export class RolesController {
 
     @Patch(':id')
     @RequirePermission('roles', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
-        return this.rolesService.update(id, dto);
+    update(@Param('id') id: string, @Body() dto: UpdateRoleDto, @Req() req: any) {
+        return this.rolesService.update(id, dto, req.user.userId, req.ip);
     }
 
     @Delete(':id')
     @RequirePermission('roles', 'delete')
-    remove(@Param('id') id: string) {
-        return this.rolesService.remove(id);
+    remove(@Param('id') id: string, @Req() req: any) {
+        return this.rolesService.remove(id, req.user.userId, req.ip);
     }
 }

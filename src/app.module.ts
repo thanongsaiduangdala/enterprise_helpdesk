@@ -21,6 +21,7 @@ import { KbArticlesModule } from './kb-articles/kb-articles.module';
 import { AnnouncementsModule } from './announcements/announcements.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { TicketsModule } from './tickets/tickets.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module';
     AnnouncementsModule,
     NotificationsModule,
     AuditLogsModule,
+    TicketsModule,
   ],
 })
 export class AppModule implements NestModule {

@@ -8,12 +8,14 @@ import {
 } from './schemas/supply-request.schema';
 import { CreateSupplyRequestDto } from './dto/create-supply-request.dto';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class SupplyRequestsService {
     constructor(
         @InjectModel(SupplyRequest.name) private requestModel: Model<SupplyRequestDocument>,
         private catalogService: SupplyCatalogService,
+        private auditLogsService: AuditLogsService,
     ) { }
 
     private async generateId(): Promise<string> {
@@ -27,6 +29,7 @@ export class SupplyRequestsService {
         return `SR${String(seq).padStart(3, '0')}`;
     }
 
+    // Not logged — routine employee action, not a sensitive one.
     async create(dto: CreateSupplyRequestDto, requestedBy: string) {
         for (const item of dto.items) {
             if (item.catalogItemId) {
@@ -63,30 +66,59 @@ export class SupplyRequestsService {
         }
     }
 
-    async approve(id: string, approverId: string) {
+    async approve(id: string, approverId: string, ip?: string) {
         const request = await this.findOne(id);
         this.assertStatus(request, SupplyRequestStatus.REQUESTED);
+        const before = request.toObject();
+
         request.status = SupplyRequestStatus.APPROVED;
         request.approvedBy = approverId as any;
         request.approvedAt = new Date();
-        return request.save();
+        const saved = await request.save();
+
+        await this.auditLogsService.log(
+            approverId,
+            'SUPPLY_REQUEST_APPROVED',
+            'SupplyRequest',
+            id,
+            before,
+            saved.toObject(),
+            ip,
+        );
+
+        return saved;
     }
 
-    async reject(id: string, approverId: string, reason: string) {
+    async reject(id: string, approverId: string, reason: string, ip?: string) {
         const request = await this.findOne(id);
         this.assertStatus(request, SupplyRequestStatus.REQUESTED);
+        const before = request.toObject();
+
         request.status = SupplyRequestStatus.REJECTED;
         request.approvedBy = approverId as any;
         request.approvedAt = new Date();
         request.rejectionReason = reason;
-        return request.save();
+        const saved = await request.save();
+
+        await this.auditLogsService.log(
+            approverId,
+            'SUPPLY_REQUEST_REJECTED',
+            'SupplyRequest',
+            id,
+            before,
+            saved.toObject(),
+            ip,
+        );
+
+        return saved;
     }
 
     // Deducts stock for every catalog-linked item, then marks FULFILLED.
     // Free-text "other" items (no catalogItemId) are skipped — nothing to deduct.
-    async fulfill(id: string, fulfilledById: string) {
+    async fulfill(id: string, fulfilledById: string, ip?: string) {
         const request = await this.findOne(id);
         this.assertStatus(request, SupplyRequestStatus.APPROVED);
+        const before = request.toObject();
 
         for (const item of request.items) {
             if (item.catalogItemId) {
@@ -100,16 +132,29 @@ export class SupplyRequestsService {
         request.status = SupplyRequestStatus.FULFILLED;
         request.fulfilledBy = fulfilledById as any;
         request.fulfilledAt = new Date();
-        return request.save();
+        const saved = await request.save();
+
+        await this.auditLogsService.log(
+            fulfilledById,
+            'SUPPLY_REQUEST_FULFILLED',
+            'SupplyRequest',
+            id,
+            before,
+            saved.toObject(),
+            ip,
+        );
+
+        return saved;
     }
 
     // "Admin: ... bulk fulfillment" — fulfills each id independently and reports
     // per-id success/failure rather than failing the whole batch on one bad request.
-    async bulkFulfill(ids: string[], fulfilledById: string) {
+    // No separate audit call here — fulfill() above already logs each successful item.
+    async bulkFulfill(ids: string[], fulfilledById: string, ip?: string) {
         const results: { id: string; success: boolean; error?: string }[] = [];
         for (const id of ids) {
             try {
-                await this.fulfill(id, fulfilledById);
+                await this.fulfill(id, fulfilledById, ip);
                 results.push({ id, success: true });
             } catch (err: any) {
                 results.push({ id, success: false, error: err?.message ?? 'Unknown error' });
