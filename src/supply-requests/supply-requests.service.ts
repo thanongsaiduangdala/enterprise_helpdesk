@@ -120,13 +120,26 @@ export class SupplyRequestsService {
         this.assertStatus(request, SupplyRequestStatus.APPROVED);
         const before = request.toObject();
 
-        for (const item of request.items) {
-            if (item.catalogItemId) {
-                // If any single item lacks stock, adjustStock throws and the whole
-                // fulfillment aborts before status flips — nothing is partially deducted
-                // since we haven't saved the request yet.
-                await this.catalogService.adjustStock(item.catalogItemId.toString(), -item.quantity);
+        // Look up every catalog-linked item first, and confirm ALL of them have enough
+        // stock, before deducting ANY of them. This avoids the previous bug where item 3
+        // failing left items 1-2 already deducted with the request stuck un-fulfilled.
+        const catalogLinkedItems = request.items.filter((item) => item.catalogItemId);
+        const catalogItems = await Promise.all(
+            catalogLinkedItems.map((item) => this.catalogService.findOne(item.catalogItemId!.toString())),
+        );
+
+        for (const item of catalogLinkedItems) {
+            const catalogItem = catalogItems.find((c) => c._id === item.catalogItemId);
+            if (!catalogItem || catalogItem.stockQty < item.quantity) {
+                throw new BadRequestException(
+                    `Insufficient stock for "${item.name}": have ${catalogItem?.stockQty ?? 0}, requested ${item.quantity}`,
+                );
             }
+        }
+
+        // Now safe to deduct — every item above is confirmed available.
+        for (const item of catalogLinkedItems) {
+            await this.catalogService.adjustStock(item.catalogItemId!.toString(), -item.quantity);
         }
 
         request.status = SupplyRequestStatus.FULFILLED;
@@ -135,13 +148,7 @@ export class SupplyRequestsService {
         const saved = await request.save();
 
         await this.auditLogsService.log(
-            fulfilledById,
-            'SUPPLY_REQUEST_FULFILLED',
-            'SupplyRequest',
-            id,
-            before,
-            saved.toObject(),
-            ip,
+            fulfilledById, 'SUPPLY_REQUEST_FULFILLED', 'SupplyRequest', id, before, saved.toObject(), ip,
         );
 
         return saved;

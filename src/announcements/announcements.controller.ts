@@ -41,14 +41,8 @@ export class AnnouncementsController {
     // see the NOTE in the service about wiring these from the authenticated user's own record.
     @Get('active')
     @RequirePermission('announcements', 'read')
-    @ApiQuery({ name: 'branchId', required: false })
-    @ApiQuery({ name: 'departmentId', required: false })
-    findActive(
-        @Req() req: any,
-        @Query('branchId') branchId?: string,
-        @Query('departmentId') departmentId?: string,
-    ): Promise<Array<Record<string, any>>> {
-        return this.announcementsService.findActiveForUser(req.user.userId, branchId, departmentId);
+    findActive(@Req() req: any): Promise<Array<Record<string, any>>> {
+        return this.announcementsService.findActiveForUser(req.user.userId);
     }
 
     @Get(':id')

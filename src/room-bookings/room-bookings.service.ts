@@ -61,24 +61,68 @@ export class RoomBookingsService {
         }
     }
 
+    private async generateIdBatch(count: number): Promise<string[]> {
+        const bookings = await this.bookingModel.find({ _id: /^RB\d{3}$/ }, { _id: 1 }).exec();
+        const usedNumbers = new Set(bookings.map((b) => parseInt(b._id.slice(2), 10)));
+        const ids: string[] = [];
+        let seq = 1;
+        while (ids.length < count) {
+            if (!usedNumbers.has(seq)) {
+                ids.push(`RB${String(seq).padStart(3, '0')}`);
+                usedNumbers.add(seq);
+            }
+            seq++;
+        }
+        return ids;
+    }
+
     async create(dto: CreateRoomBookingDto, bookedBy: string) {
         await this.roomsService.findOne(dto.roomId);
         const startAt = new Date(dto.startAt);
         const endAt = new Date(dto.endAt);
-        await this.assertNoOverlap(dto.roomId, startAt, endAt);
 
-        const _id = await this.generateId();
-        const booking = new this.bookingModel({
-            _id,
+        // Non-recurring: unchanged single-booking path.
+        if (!dto.recurrence) {
+            await this.assertNoOverlap(dto.roomId, startAt, endAt);
+            const [_id] = await this.generateIdBatch(1);
+            const booking = new this.bookingModel({ _id, roomId: dto.roomId, bookedBy, startAt, endAt });
+            return booking.save();
+        }
+
+        // Recurring: generate every occurrence's start/end (same time-of-day and duration,
+        // stepping daily or weekly) up to and including `until`.
+        const until = new Date(dto.recurrence.until);
+        const stepDays = dto.recurrence.frequency === 'daily' ? 1 : 7;
+        const durationMs = endAt.getTime() - startAt.getTime();
+
+        const occurrences: { startAt: Date; endAt: Date }[] = [];
+        let cursor = new Date(startAt);
+        while (cursor <= until) {
+            occurrences.push({ startAt: new Date(cursor), endAt: new Date(cursor.getTime() + durationMs) });
+            cursor = new Date(cursor.getTime() + stepDays * 24 * 60 * 60 * 1000);
+        }
+
+        // Check every occurrence for a clash BEFORE creating any of them — one conflicting
+        // slot shouldn't leave a partially-created series behind.
+        for (const occ of occurrences) {
+            await this.assertNoOverlap(dto.roomId, occ.startAt, occ.endAt);
+        }
+
+        const ids = await this.generateIdBatch(occurrences.length);
+        const seriesId = ids[0];
+        const recurrence = { frequency: dto.recurrence.frequency, until };
+
+        const bookingsToInsert = occurrences.map((occ, i) => ({
+            _id: ids[i],
             roomId: dto.roomId,
             bookedBy,
-            startAt,
-            endAt,
-            recurrence: dto.recurrence
-                ? { frequency: dto.recurrence.frequency, until: new Date(dto.recurrence.until) }
-                : undefined,
-        });
-        return booking.save();
+            startAt: occ.startAt,
+            endAt: occ.endAt,
+            recurrence,
+            seriesId,
+        }));
+
+        return this.bookingModel.insertMany(bookingsToInsert);
     }
 
     findMyBookings(userId: string) {

@@ -22,3 +22,4 @@ export class Department {
 }
 
 export const DepartmentSchema = SchemaFactory.createForClass(Department);
+DepartmentSchema.index({ branchId: 1, name: 1 }, { unique: true });

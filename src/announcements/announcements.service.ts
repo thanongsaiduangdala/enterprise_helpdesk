@@ -91,18 +91,16 @@ export class AnnouncementsService {
     // NOTE: branchId/departmentId are passed in explicitly rather than derived from the
     // JWT, since we don't know whether your token payload carries them — wire these up
     // from wherever the caller's branch/department actually live (req.user, or a Users lookup).
-    async findActiveForUser(
-        userId: string,
-        branchId?: string,
-        departmentId?: string,
-    ): Promise<Array<Record<string, any>>> {
+    // branchId/departmentId are no longer accepted as parameters — they're derived from
+    // the user's own record, not trusted from the caller, so an employee can't view
+    // another branch's or department's feed just by passing a different query param.
+    async findActiveForUser(userId: string): Promise<Array<Record<string, any>>> {
+        const user = await this.usersService.findOne(userId);
         const now = new Date();
         const scopeConditions: any[] = [{ scope: AnnouncementScope.COMPANY }];
-        if (branchId) scopeConditions.push({ scope: AnnouncementScope.BRANCH, branchId });
-        if (departmentId) scopeConditions.push({ scope: AnnouncementScope.DEPARTMENT, departmentId });
+        if (user.branchId) scopeConditions.push({ scope: AnnouncementScope.BRANCH, branchId: user.branchId });
+        if (user.departmentId) scopeConditions.push({ scope: AnnouncementScope.DEPARTMENT, departmentId: user.departmentId });
 
-        // Two separate $or clauses can't both be top-level keys on the same object literal —
-        // the second silently overwrites the first in JS. $and combines them correctly.
         const announcements = await this.announcementModel
             .find({
                 $and: [

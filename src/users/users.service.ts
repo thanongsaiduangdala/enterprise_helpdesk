@@ -105,7 +105,8 @@ export class UsersService {
 
         // Role reassignment gets its own action name — the spec calls out "role changes"
         // as a specifically sensitive action distinct from a generic profile edit.
-        const action = dto.role && dto.role !== before.role?.toString() ? 'USER_ROLE_CHANGED' : 'USER_UPDATED';
+        const action = dto.role && dto.role !== (before.role as any)?._id?.toString()
+            ? 'USER_ROLE_CHANGED' : 'USER_UPDATED';
 
         await this.auditLogsService.log(
             actorId,

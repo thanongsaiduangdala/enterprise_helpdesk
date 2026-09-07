@@ -20,7 +20,7 @@ class Recurrence {
 @Schema({ timestamps: true })
 export class RoomBooking {
     @Prop({ type: String })
-    _id!: string; // e.g. 'RB001'
+    _id!: string;
 
     @Prop({ type: String, ref: 'Room', required: true })
     roomId!: string;
@@ -36,6 +36,10 @@ export class RoomBooking {
 
     @Prop({ type: Recurrence })
     recurrence?: Recurrence;
+
+    // Groups every occurrence of a recurring booking together. Undefined for one-off bookings.
+    @Prop()
+    seriesId?: string;
 
     @Prop({ enum: BookingStatus, default: BookingStatus.CONFIRMED })
     status!: BookingStatus;

@@ -4,12 +4,14 @@ import { Model } from 'mongoose';
 import { TicketMessage, TicketMessageDocument } from './schemas/ticket-message.schema';
 import { CreateTicketMessageDto } from './dto/create-ticket-message.dto';
 import { CannedResponsesService } from '../canned-responses/canned-responses.service';
+import { TicketsService } from '../tickets/tickets.service';
 
 @Injectable()
 export class TicketMessagesService {
     constructor(
         @InjectModel(TicketMessage.name) private messageModel: Model<TicketMessageDocument>,
         private cannedResponsesService: CannedResponsesService,
+        private ticketsService: TicketsService,
     ) { }
 
     // Same gap-filling pattern as the other custom-ID collections.
@@ -25,6 +27,8 @@ export class TicketMessagesService {
     }
 
     async create(dto: CreateTicketMessageDto, senderId: string) {
+        await this.ticketsService.findOne(dto.ticketId); // throws 404 if the ticket doesn't exist
+
         if (dto.isCannedResponse) {
             if (!dto.cannedResponseId) {
                 throw new BadRequestException('cannedResponseId is required when isCannedResponse is true');

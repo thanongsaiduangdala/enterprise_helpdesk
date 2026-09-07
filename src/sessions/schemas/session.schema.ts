@@ -40,3 +40,5 @@ export class Session {
 }
 
 export const SessionSchema = SchemaFactory.createForClass(Session);
+SessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // auto-deletes expired sessions
+SessionSchema.index({ userId: 1 }); // speeds up findAllForUser / revokeOwn lookups

@@ -30,7 +30,10 @@ export class DepartmentsService {
         return `DX${String(nextSeq).padStart(3, '0')}`;
     }
 
-    private async withTicketTypes(department: DepartmentDocument) {
+    // Explicit return type (Record<string, any>) — without it, TypeScript tries to infer
+    // the full shape of "DepartmentDocument's plain object + a ticketTypes array" and the
+    // resulting type is too complex for the compiler to serialize (TS7056).
+    private async withTicketTypes(department: DepartmentDocument): Promise<Record<string, any>> {
         const allTypes = await this.ticketTypesService.findAll();
         const ticketTypes = allTypes.filter(
             (t) => t.defaultDepartmentId === department._id,
@@ -38,7 +41,7 @@ export class DepartmentsService {
         return { ...department.toObject(), ticketTypes };
     }
 
-    async create(dto: CreateDepartmentDto, actorId: string, ip?: string) {
+    async create(dto: CreateDepartmentDto, actorId: string, ip?: string): Promise<DepartmentDocument> {
         await this.branchesService.findOne(dto.branchId); // throws 404 if branch doesn't exist
 
         const existing = await this.departmentModel.findOne({
@@ -52,34 +55,57 @@ export class DepartmentsService {
         }
 
         const _id = await this.generateId();
-        const department = new this.departmentModel({ _id, ...dto });
-        const saved = await department.save();
 
-        await this.auditLogsService.log(
-            actorId,
-            'DEPARTMENT_CREATED',
-            'Department',
-            saved._id,
-            undefined,
-            saved.toObject(),
-            ip,
-        );
+        try {
+            const department = new this.departmentModel({ _id, ...dto });
+            const saved = await department.save();
 
-        return saved;
+            await this.auditLogsService.log(
+                actorId,
+                'DEPARTMENT_CREATED',
+                'Department',
+                saved._id,
+                undefined,
+                saved.toObject(),
+                ip,
+            );
+
+            return saved;
+        } catch (error: any) {
+            if (error.code === 11000) {
+                throw new ConflictException(
+                    `Department "${dto.name}" already exists in this branch`,
+                );
+            }
+            throw error;
+        }
     }
 
-    async findAll() {
-        const departments = await this.departmentModel.find().exec();
-        return Promise.all(departments.map((d) => this.withTicketTypes(d)));
+    // Explicit return type — same reasoning as withTicketTypes above: mapping documents
+    // into plain objects with an extra field produces a type too complex to infer cleanly.
+    async findAll(): Promise<Record<string, any>[]> {
+        const [departments, allTypes] = await Promise.all([
+            this.departmentModel.find().exec(),
+            this.ticketTypesService.findAll(),
+        ]);
+        return departments.map((d) => ({
+            ...d.toObject(),
+            ticketTypes: allTypes.filter((t) => t.defaultDepartmentId === d._id),
+        }));
     }
 
-    async findOne(id: string) {
+    async findOne(id: string): Promise<Record<string, any>> {
         const department = await this.departmentModel.findById(id).exec();
         if (!department) throw new NotFoundException('Department not found');
         return this.withTicketTypes(department);
     }
 
-    async update(id: string, dto: UpdateDepartmentDto, actorId: string, ip?: string) {
+    async update(
+        id: string,
+        dto: UpdateDepartmentDto,
+        actorId: string,
+        ip?: string,
+    ): Promise<Record<string, any>> {
         if (dto.branchId) {
             await this.branchesService.findOne(dto.branchId);
         }
@@ -108,7 +134,7 @@ export class DepartmentsService {
         return this.withTicketTypes(department);
     }
 
-    async remove(id: string, actorId: string, ip?: string) {
+    async remove(id: string, actorId: string, ip?: string): Promise<{ deleted: boolean }> {
         const before = await this.departmentModel.findById(id).exec();
         if (!before) throw new NotFoundException('Department not found');
 
