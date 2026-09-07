@@ -28,9 +28,6 @@ export class UsersService {
         private auditLogsService: AuditLogsService,
     ) { }
 
-
-
-
     async create(dto: CreateUserDto, actorId: string, ip?: string) {
         await this.rolesService.findOne(dto.role);
 
