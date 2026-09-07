@@ -22,11 +22,19 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { SlaPoliciesModule } from './sla-policies/sla-policies.module';
 import { DepartmentsModule } from './departments/departments.module';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     MongooseModule.forRoot(process.env.MONGODB_URI as string),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 100,
+      },
+    ]),
     RolesModule,
     UsersModule,
     AuthModule,
@@ -47,6 +55,13 @@ import { DepartmentsModule } from './departments/departments.module';
     NotificationsModule,
     AuditLogsModule,
     TicketsModule,
+  ],
+
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule implements NestModule {

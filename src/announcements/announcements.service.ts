@@ -84,16 +84,6 @@ export class AnnouncementsService {
         return announcement;
     }
 
-
-
-    // or their department), pinned items first. Also flags isRead per item for this user.
-    //
-    // NOTE: branchId/departmentId are passed in explicitly rather than derived from the
-    // JWT, since we don't know whether your token payload carries them — wire these up
-    // from wherever the caller's branch/department actually live (req.user, or a Users lookup).
-    // branchId/departmentId are no longer accepted as parameters — they're derived from
-    // the user's own record, not trusted from the caller, so an employee can't view
-    // another branch's or department's feed just by passing a different query param.
     async findActiveForUser(userId: string): Promise<Array<Record<string, any>>> {
         const user = await this.usersService.findOne(userId);
         const now = new Date();
@@ -134,11 +124,10 @@ export class AnnouncementsService {
     async remove(id: string) {
         const result = await this.announcementModel.findByIdAndDelete(id).exec();
         if (!result) throw new NotFoundException('Announcement not found');
-        await this.readModel.deleteMany({ announcementId: id }).exec(); // clean up orphaned read records
+        await this.readModel.deleteMany({ announcementId: id }).exec();
         return { deleted: true };
     }
 
-    // Idempotent — marking read twice just no-ops on the second call, thanks to the unique index.
     async markRead(announcementId: string, userId: string) {
         await this.announcementModel.findById(announcementId).exec().then((a) => {
             if (!a) throw new NotFoundException('Announcement not found');
@@ -146,12 +135,11 @@ export class AnnouncementsService {
         try {
             await this.readModel.create({ announcementId, userId, readAt: new Date() });
         } catch (err: any) {
-            if (err.code !== 11000) throw err; // 11000 = duplicate key, i.e. already marked read — fine, ignore
+            if (err.code !== 11000) throw err;
         }
         return { read: true };
     }
 
-    // Admin "who has seen this" view.
     whoRead(announcementId: string) {
         return this.readModel.find({ announcementId }).populate('userId', 'employeeCode firstName lastName email').exec();
     }

@@ -30,14 +30,11 @@ export class AnnouncementsController {
         return this.announcementsService.create(dto, req.user.userId);
     }
 
-
     @Get()
     @RequirePermission('announcements', 'read')
     findAll() {
         return this.announcementsService.findAll();
     }
-
-
 
     @Get('active')
     @RequirePermission('announcements', 'read')

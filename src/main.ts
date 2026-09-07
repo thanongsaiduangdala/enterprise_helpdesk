@@ -5,13 +5,18 @@ import { AppModule } from "./app.module";
 import { ResponseInterceptor } from "./common/interceptors/response/response.interceptor";
 import { HttpExceptionFilter } from "./common/filters/http-exception/http-exception.filter";
 
+
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
+
+  const allowedOrigins = (process.env.FRONTEND_URLS || 'http://localhost:5173').split(',');
   app.enableCors({
-    origin: 'http://localhost:5173',
+    origin: allowedOrigins,
     credentials: true,
   });
+
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.useGlobalInterceptors(new ResponseInterceptor());
   app.useGlobalFilters(new HttpExceptionFilter());

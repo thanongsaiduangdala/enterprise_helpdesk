@@ -1,4 +1,5 @@
 import { Body, Controller, Post, Req } from "@nestjs/common";
+import { Throttle } from '@nestjs/throttler';
 import { UAParser } from 'ua-parser-js';
 import { AuthService } from "./auth.service";
 import { LoginDto } from "./dto/login.dto";
@@ -8,6 +9,7 @@ export class AuthController {
     constructor(private authService: AuthService) { }
 
     @Post('login')
+    @Throttle({ default: { limit: 5, ttl: 60000 } })
     login(@Body() dto: LoginDto, @Req() req: any) {
         const parser = new UAParser(req.headers['user-agent']);
         const deviceInfo = {
