@@ -149,4 +149,3 @@ export const TicketSchema = SchemaFactory.createForClass(Ticket);
 TicketSchema.index({ branchId: 1, departmentId: 1, status: 1 });
 TicketSchema.index({ assignedAgent: 1, status: 1 });
 TicketSchema.index({ raisedBy: 1 });
-TicketSchema.index({ ticketNumber: 1 }, { unique: true });

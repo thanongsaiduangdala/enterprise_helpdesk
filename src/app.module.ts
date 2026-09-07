@@ -5,9 +5,7 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { RolesModule } from './roles/roles.module';
 import { TicketTypesModule } from './ticket-types/ticket-type.module';
-import { SlaPoliciesModule } from './sla_policy/sla-policies.module';
 import { BranchesModule } from './branches/branches.module';
-import { DepartmentsModule } from './department/departments.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 import { RoomsModule } from './rooms/rooms.module';
@@ -22,6 +20,8 @@ import { AnnouncementsModule } from './announcements/announcements.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { TicketsModule } from './tickets/tickets.module';
+import { SlaPoliciesModule } from './sla-policies/sla-policies.module';
+import { DepartmentsModule } from './departments/departments.module';
 
 @Module({
   imports: [
