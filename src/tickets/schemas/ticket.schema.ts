@@ -21,7 +21,7 @@ class SlaPausedInterval {
     pausedAt!: Date;
 
     @Prop()
-    resumedAt?: Date; // absent while still paused
+    resumedAt?: Date;
 }
 
 @Schema({ _id: false })
@@ -32,7 +32,7 @@ class TicketSla {
     @Prop()
     resolutionDueAt?: Date;
 
-    // Flipped by the (not-yet-built) SLA breach cron — never written to directly here.
+
     @Prop({ default: false })
     breached!: boolean;
 
@@ -43,7 +43,7 @@ class TicketSla {
 @Schema({ _id: false })
 class TicketAttachment {
     @Prop({ required: true })
-    url!: string; // S3 object URL — the upload itself happens outside this service
+    url!: string;
 
     @Prop({ required: true })
     filename!: string;
@@ -58,7 +58,7 @@ class TicketAttachment {
 @Schema({ _id: false })
 class TicketHistoryEntry {
     @Prop({ required: true })
-    action!: string; // e.g. 'CREATED', 'ASSIGNED', 'STATUS_CHANGED', 'FEEDBACK_SUBMITTED'
+    action!: string;
 
     @Prop({ type: Types.ObjectId, ref: 'User', required: true })
     actorId!: Types.ObjectId;
@@ -67,12 +67,12 @@ class TicketHistoryEntry {
     timestamp!: Date;
 
     @Prop()
-    note?: string; // free text, e.g. "OPEN -> ASSIGNED"
+    note?: string;
 
-    // NOTE: this is the user-facing per-ticket timeline (spec: "Ticket history/timeline
-    // log"), separate from the compliance-grade AuditLogs collection. Sensitive actions
-    // (assign/reassign, status change, delete) get written to BOTH — this one for anyone
-    // viewing the ticket, AuditLogs for the tamper-evident admin/auditor trail.
+
+
+
+
 }
 
 @Schema({ _id: false })
@@ -89,10 +89,10 @@ class TicketCsat {
 
 @Schema({ timestamps: true })
 export class Ticket {
-    // Human-facing identifier, e.g. 'TCK-000042'. Kept separate from _id (which stays a
-    // normal auto-generated ObjectId here, unlike the AN/BX/DX/R custom-_id collections)
-    // since a ticket number is display/reference text, not a routing key other
-    // collections join against.
+
+
+
+
     @Prop({ required: true, unique: true })
     ticketNumber!: string;
 
@@ -114,7 +114,7 @@ export class Ticket {
     @Prop({ type: Types.ObjectId, ref: 'User', required: true })
     raisedBy!: Types.ObjectId;
 
-    // Absent until the ticket is first assigned.
+
     @Prop({ type: Types.ObjectId, ref: 'User' })
     assignedAgent?: Types.ObjectId;
 
@@ -124,8 +124,8 @@ export class Ticket {
     @Prop({ required: true, enum: TICKET_PRIORITIES })
     priority!: TicketPriority;
 
-    // Snapshot of which policy applied at creation time — if the underlying SlaPolicy
-    // is edited later, this ticket's due dates shouldn't silently drift with it.
+
+
     @Prop({ type: Types.ObjectId, ref: 'SlaPolicy' })
     slaPolicyId?: Types.ObjectId;
 

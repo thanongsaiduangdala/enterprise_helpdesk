@@ -35,8 +35,8 @@ export class RoomBookingsService {
         return `RB${String(seq).padStart(3, '0')}`;
     }
 
-    // Core overlap check: two CONFIRMED bookings on the same room clash if
-    // (existing.start < newEnd) AND (existing.end > newStart).
+
+
     private async assertNoOverlap(
         roomId: string,
         startAt: Date,
@@ -81,7 +81,7 @@ export class RoomBookingsService {
         const startAt = new Date(dto.startAt);
         const endAt = new Date(dto.endAt);
 
-        // Non-recurring: unchanged single-booking path.
+
         if (!dto.recurrence) {
             await this.assertNoOverlap(dto.roomId, startAt, endAt);
             const [_id] = await this.generateIdBatch(1);
@@ -89,8 +89,8 @@ export class RoomBookingsService {
             return booking.save();
         }
 
-        // Recurring: generate every occurrence's start/end (same time-of-day and duration,
-        // stepping daily or weekly) up to and including `until`.
+
+
         const until = new Date(dto.recurrence.until);
         const stepDays = dto.recurrence.frequency === 'daily' ? 1 : 7;
         const durationMs = endAt.getTime() - startAt.getTime();
@@ -102,8 +102,8 @@ export class RoomBookingsService {
             cursor = new Date(cursor.getTime() + stepDays * 24 * 60 * 60 * 1000);
         }
 
-        // Check every occurrence for a clash BEFORE creating any of them — one conflicting
-        // slot shouldn't leave a partially-created series behind.
+
+
         for (const occ of occurrences) {
             await this.assertNoOverlap(dto.roomId, occ.startAt, occ.endAt);
         }
@@ -132,7 +132,7 @@ export class RoomBookingsService {
             .exec();
     }
 
-    // Room calendar view (day/week): pass `from`/`to` as the window boundaries.
+
     findForRoom(roomId: string, from: Date, to: Date) {
         return this.bookingModel
             .find({
@@ -158,7 +158,7 @@ export class RoomBookingsService {
         }
         const startAt = new Date(dto.startAt);
         const endAt = new Date(dto.endAt);
-        // exclude the booking's own current slot from the clash check, or it'd always conflict with itself
+
         await this.assertNoOverlap(booking.roomId.toString(), startAt, endAt, id);
         booking.startAt = startAt;
         booking.endAt = endAt;
@@ -170,12 +170,12 @@ export class RoomBookingsService {
         if (booking.bookedBy.toString() !== requesterId) {
             throw new BadRequestException('You can only cancel your own bookings');
         }
-        // soft-cancel (status flip) rather than hard delete, so history/audit stays intact
+
         booking.status = BookingStatus.CANCELLED;
         return booking.save();
     }
 
-    // Used by RoomsService to compute a room's "live" status (Available vs Booked-right-now).
+
     async isRoomBookedAt(roomId: string, at: Date): Promise<boolean> {
         const clash = await this.bookingModel
             .findOne({
@@ -188,7 +188,7 @@ export class RoomBookingsService {
         return !!clash;
     }
 
-    // Org-wide room utilization report: total booked minutes + booking count per room.
+
     async utilizationReport(from: Date, to: Date) {
         return this.bookingModel.aggregate([
             {

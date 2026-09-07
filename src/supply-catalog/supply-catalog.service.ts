@@ -17,7 +17,7 @@ export class SupplyCatalogService {
         private catalogModel: Model<SupplyCatalogItemDocument>,
     ) { }
 
-    // Finds the SMALLEST unused number, reusing gaps from deleted items.
+
     private async generateId(): Promise<string> {
         const items = await this.catalogModel
             .find({ _id: /^SC\d{3}$/ }, { _id: 1 })
@@ -38,8 +38,8 @@ export class SupplyCatalogService {
         return new this.catalogModel({ _id, ...dto }).save();
     }
 
-    // "Admin: stock/inventory view, low-stock indicator" — pass lowStockOnly=true to filter
-    // to items where stockQty has dropped to/below their own lowStockThreshold.
+
+
     findAll(lowStockOnly = false) {
         if (lowStockOnly) {
             return this.catalogModel
@@ -61,8 +61,8 @@ export class SupplyCatalogService {
         return item;
     }
 
-    // Called by SupplyRequestsService on fulfillment (delta negative), and available
-    // directly for manual admin restocks/corrections (delta positive or negative).
+
+
     async adjustStock(id: string, delta: number) {
         const item = await this.findOne(id);
         const newQty = item.stockQty + delta;

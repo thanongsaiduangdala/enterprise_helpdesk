@@ -8,8 +8,8 @@ import { RoomBookingsModule } from '../room-bookings/room-bookings.module';
 @Module({
     imports: [
         MongooseModule.forFeature([{ name: Room.name, schema: RoomSchema }]),
-        // circular: RoomsService needs RoomBookingsService for live status + utilization,
-        // and RoomBookingsService needs RoomsService to validate a room exists on create.
+
+
         forwardRef(() => RoomBookingsModule),
     ],
     controllers: [RoomsController],

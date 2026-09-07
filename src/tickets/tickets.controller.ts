@@ -28,29 +28,29 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 export class TicketsController {
     constructor(private ticketsService: TicketsService) { }
 
-    // Any employee can raise a ticket.
+
     @Post()
     @RequirePermission('tickets', 'create')
     create(@Body() dto: CreateTicketDto, @Req() req: any) {
         return this.ticketsService.create(dto, req.user.userId);
     }
 
-    // Personal "my tickets" dashboard widget. Placed before ':id' so it isn't swallowed
-    // by that route.
+
+
     @Get('my')
     @RequirePermission('tickets', 'read')
     findMine(@Req() req: any) {
         return this.ticketsService.findMine(req.user.userId);
     }
 
-    // Agent's personal queue.
+
     @Get('assigned-to-me')
     @RequirePermission('tickets', 'read')
     findAssignedToMe(@Req() req: any) {
         return this.ticketsService.findAssignedToMe(req.user.userId);
     }
 
-    // Admin/manager filtered view — e.g. ?departmentId=DX001&status=OPEN
+
     @Get()
     @RequirePermission('tickets', 'read')
     @ApiQuery({ name: 'branchId', required: false })
@@ -74,7 +74,7 @@ export class TicketsController {
         return this.ticketsService.findOne(id);
     }
 
-    // Title/description only — see UpdateTicketDto for why.
+
     @Patch(':id')
     @RequirePermission('tickets', 'update')
     update(@Param('id') id: string, @Body() dto: UpdateTicketDto) {
@@ -93,8 +93,8 @@ export class TicketsController {
         return this.ticketsService.changeStatus(id, dto, req.user.userId, req.ip);
     }
 
-    // The ticket raiser rating their own resolved/closed ticket — a personal action, same
-    // reasoning as announcements' markRead being gated on 'read' rather than 'update'.
+
+
     @Post(':id/feedback')
     @RequirePermission('tickets', 'read')
     submitFeedback(@Param('id') id: string, @Body() dto: SubmitTicketFeedbackDto, @Req() req: any) {

@@ -38,7 +38,7 @@ export class RoomsController {
         return this.roomsService.findAll(branchId);
     }
 
-    // Org-wide room utilization report. Placed before ':id' so it isn't swallowed by that route.
+
     @Get('utilization')
     @RequirePermission('rooms', 'read')
     utilization(@Query('from') from: string, @Query('to') to: string) {

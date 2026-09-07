@@ -17,6 +17,6 @@ export class CreateCannedResponseDto {
     @IsString()
     body!: string;
 
-    // createdBy is intentionally NOT here — taken from the authenticated user, same
-    // reasoning as everywhere else: never trust who "created" something from the request body.
+
+
 }

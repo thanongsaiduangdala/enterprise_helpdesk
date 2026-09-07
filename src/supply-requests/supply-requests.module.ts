@@ -9,7 +9,7 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 @Module({
     imports: [
         MongooseModule.forFeature([{ name: SupplyRequest.name, schema: SupplyRequestSchema }]),
-        SupplyCatalogModule, // one-directional dependency — no forwardRef needed, unlike rooms/room-bookings
+        SupplyCatalogModule,
         AuditLogsModule,
     ],
     controllers: [SupplyRequestsController],

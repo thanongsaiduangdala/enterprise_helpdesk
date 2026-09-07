@@ -7,8 +7,8 @@ import {
 } from "@nestjs/common";
 
 import { Response } from 'express';
-// FIX: removed `import { stat } from "fs"` - unused import left over from
-// somewhere else, not related to this file at all.
+
+
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -21,7 +21,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       statusCode = exception.getStatus();
-      const exceptionResponse = exception.getResponse(); // FIX: typo "exceptionReponse" -> "exceptionResponse"
+      const exceptionResponse = exception.getResponse();
 
       if (typeof exceptionResponse == 'string') {
         message = exceptionResponse;

@@ -17,7 +17,7 @@ export class AnnouncementsService {
         private notificationsService: NotificationsService,
     ) { }
 
-    // Same gap-filling pattern as the other custom-ID collections.
+
     private async generateId(): Promise<string> {
         const items = await this.announcementModel
             .find({ _id: /^AN\d{3}$/ }, { _id: 1 })
@@ -73,7 +73,7 @@ export class AnnouncementsService {
         );
     }
 
-    // Admin management view — everything, regardless of publish window.
+
     findAll() {
         return this.announcementModel.find().sort({ createdAt: -1 }).exec();
     }
@@ -84,8 +84,8 @@ export class AnnouncementsService {
         return announcement;
     }
 
-    // The actual dashboard feed: only announcements currently inside their publish/expire
-    // window, scoped to what this specific user should see (company-wide, their branch,
+
+
     // or their department), pinned items first. Also flags isRead per item for this user.
     //
     // NOTE: branchId/departmentId are passed in explicitly rather than derived from the

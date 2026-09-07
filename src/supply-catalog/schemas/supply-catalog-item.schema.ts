@@ -6,10 +6,10 @@ export type SupplyCatalogItemDocument = SupplyCatalogItem & Omit<Document, '_id'
 @Schema({ timestamps: true })
 export class SupplyCatalogItem {
     @Prop({ type: String })
-    _id!: string; // e.g. 'SC001'
+    _id!: string;
 
     @Prop({ required: true })
-    name!: string; // e.g. 'Ballpoint Pen (Blue)'
+    name!: string;
 
     @Prop({ required: true })
     category!: string;

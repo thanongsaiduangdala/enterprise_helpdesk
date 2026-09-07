@@ -68,9 +68,9 @@ export class SlaPoliciesService {
             .exec();
         if (!policy) throw new NotFoundException('SLA policy not found');
 
-        // Timer changes affect every ticket under this policy going forward — worth its
-        // own action name so it's easy to filter "who changed our SLA timers" separately
-        // from other policy edits (escalation rules, active flag, etc.).
+
+
+
         const timersChanged = dto.responseTimeMinutes !== undefined || dto.resolutionTimeMinutes !== undefined;
         const action = timersChanged ? 'SLA_POLICY_TIMERS_CHANGED' : 'SLA_POLICY_UPDATED';
 

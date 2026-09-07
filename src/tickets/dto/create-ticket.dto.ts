@@ -31,7 +31,7 @@ export class CreateTicketDto {
     @IsIn(TICKET_PRIORITIES)
     priority?: string;
 
-    // raisedBy is intentionally NOT here — taken from the authenticated user, same
-    // pattern as announcements/supply requests: never trust who's "raising" this from
-    // the request body.
+
+
+
 }

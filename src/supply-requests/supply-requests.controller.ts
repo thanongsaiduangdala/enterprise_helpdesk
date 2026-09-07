@@ -25,21 +25,21 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 export class SupplyRequestsController {
     constructor(private requestsService: SupplyRequestsService) { }
 
-    // Any employee can submit a request.
+
     @Post()
     @RequirePermission('supplies', 'create')
     create(@Body() dto: CreateSupplyRequestDto, @Req() req: any) {
         return this.requestsService.create(dto, req.user.userId);
     }
 
-    // "My requests" history.
+
     @Get('my')
     @RequirePermission('supplies', 'read')
     findMine(@Req() req: any) {
         return this.requestsService.findMine(req.user.userId);
     }
 
-    // Manager/admin queue — e.g. ?status=REQUESTED to see what's pending approval.
+
     @Get()
     @RequirePermission('supplies', 'read')
     @ApiQuery({ name: 'status', required: false, enum: SupplyRequestStatus })
@@ -53,7 +53,7 @@ export class SupplyRequestsController {
         return this.requestsService.findOne(id);
     }
 
-    // Dept Manager approval step.
+
     @Patch(':id/approve')
     @RequirePermission('supplies', 'approve')
     approve(@Param('id') id: string, @Req() req: any) {
@@ -66,7 +66,7 @@ export class SupplyRequestsController {
         return this.requestsService.reject(id, req.user.userId, dto.reason, req.ip);
     }
 
-    // Procurement/Admin fulfillment step — deducts catalog stock, see service for details.
+
     @Patch(':id/fulfill')
     @RequirePermission('supplies', 'fulfill')
     fulfill(@Param('id') id: string, @Req() req: any) {

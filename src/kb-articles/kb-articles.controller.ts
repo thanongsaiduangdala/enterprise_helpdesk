@@ -49,28 +49,28 @@ export class KbArticlesController {
         });
     }
 
-    // Full search box — e.g. ?q=vpn+reset
+
     @Get('search')
     @RequirePermission('kb', 'read')
     search(@Query('q') q: string) {
         return this.articlesService.search(q);
     }
 
-    // Live suggestions while typing a new ticket's title.
+
     @Get('suggest')
     @RequirePermission('kb', 'read')
     suggest(@Query('q') q: string) {
         return this.articlesService.suggest(q);
     }
 
-    // "Admin/Agent: ... view most-viewed/least-helpful articles" — before ':id' so it's not swallowed by that route.
+
     @Get('analytics')
     @RequirePermission('kb', 'read')
     analytics() {
         return this.articlesService.analytics();
     }
 
-    // Increments viewCount as a side effect of reading — see service for the caveat on that.
+
     @Get(':id')
     @RequirePermission('kb', 'read')
     findOne(@Param('id') id: string) {
@@ -101,8 +101,8 @@ export class KbArticlesController {
         return this.articlesService.remove(id);
     }
 
-    // Any authenticated employee can vote — deliberately not gated behind 'update'/'create',
-    // since reading + voting should be available to whoever can read the article.
+
+
     @Post(':id/feedback')
     @RequirePermission('kb', 'read')
     submitFeedback(@Param('id') id: string, @Body() dto: KbArticleFeedbackDto, @Req() req: any) {

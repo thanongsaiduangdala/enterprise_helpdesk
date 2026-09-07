@@ -11,8 +11,8 @@ export class CannedResponsesService {
         @InjectModel(CannedResponse.name) private responseModel: Model<CannedResponseDocument>,
     ) { }
 
-    // Same gap-filling pattern as Rooms/SupplyCatalog/etc: finds the SMALLEST unused
-    // number, so a deleted CR006 gets reused by the next canned response instead of skipped.
+
+
     private async generateId(): Promise<string> {
         const responses = await this.responseModel
             .find({ _id: /^CR\d{3}$/ }, { _id: 1 })
@@ -36,7 +36,7 @@ export class CannedResponsesService {
         return new this.responseModel({ _id, ...dto, createdBy }).save();
     }
 
-    // Agent's dropdown/picker when replying to a ticket — filter to their department.
+
     findAll(departmentId?: string) {
         const filter = departmentId ? { departmentId } : {};
         return this.responseModel.find(filter).sort({ title: 1 }).exec();

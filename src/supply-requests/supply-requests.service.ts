@@ -29,7 +29,7 @@ export class SupplyRequestsService {
         return `SR${String(seq).padStart(3, '0')}`;
     }
 
-    // Not logged — routine employee action, not a sensitive one.
+
     async create(dto: CreateSupplyRequestDto, requestedBy: string) {
         for (const item of dto.items) {
             if (item.catalogItemId) {
@@ -40,12 +40,12 @@ export class SupplyRequestsService {
         return new this.requestModel({ _id, requestedBy, items: dto.items }).save();
     }
 
-    // "My requests" history view.
+
     findMine(userId: string) {
         return this.requestModel.find({ requestedBy: userId }).sort({ createdAt: -1 }).exec();
     }
 
-    // Manager/admin queue view, optionally filtered by status (e.g. ?status=REQUESTED for pending approvals).
+
     findAll(status?: SupplyRequestStatus) {
         const filter = status ? { status } : {};
         return this.requestModel.find(filter).sort({ createdAt: -1 }).exec();
@@ -57,7 +57,7 @@ export class SupplyRequestsService {
         return request;
     }
 
-    // Status stepper: Requested -> Approved/Rejected -> Fulfilled.
+
     private assertStatus(request: SupplyRequestDocument, expected: SupplyRequestStatus) {
         if (request.status !== expected) {
             throw new BadRequestException(
@@ -113,16 +113,16 @@ export class SupplyRequestsService {
         return saved;
     }
 
-    // Deducts stock for every catalog-linked item, then marks FULFILLED.
-    // Free-text "other" items (no catalogItemId) are skipped — nothing to deduct.
+
+
     async fulfill(id: string, fulfilledById: string, ip?: string) {
         const request = await this.findOne(id);
         this.assertStatus(request, SupplyRequestStatus.APPROVED);
         const before = request.toObject();
 
-        // Look up every catalog-linked item first, and confirm ALL of them have enough
-        // stock, before deducting ANY of them. This avoids the previous bug where item 3
-        // failing left items 1-2 already deducted with the request stuck un-fulfilled.
+
+
+
         const catalogLinkedItems = request.items.filter((item) => item.catalogItemId);
         const catalogItems = await Promise.all(
             catalogLinkedItems.map((item) => this.catalogService.findOne(item.catalogItemId!.toString())),
@@ -137,7 +137,7 @@ export class SupplyRequestsService {
             }
         }
 
-        // Now safe to deduct — every item above is confirmed available.
+
         for (const item of catalogLinkedItems) {
             await this.catalogService.adjustStock(item.catalogItemId!.toString(), -item.quantity);
         }
@@ -154,9 +154,9 @@ export class SupplyRequestsService {
         return saved;
     }
 
-    // "Admin: ... bulk fulfillment" — fulfills each id independently and reports
-    // per-id success/failure rather than failing the whole batch on one bad request.
-    // No separate audit call here — fulfill() above already logs each successful item.
+
+
+
     async bulkFulfill(ids: string[], fulfilledById: string, ip?: string) {
         const results: { id: string; success: boolean; error?: string }[] = [];
         for (const id of ids) {

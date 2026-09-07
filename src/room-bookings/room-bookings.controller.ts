@@ -24,11 +24,11 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 export class RoomBookingsController {
     constructor(private bookingsService: RoomBookingsService) { }
 
-    // NOTE: assumes JwtAuthGuard attaches the decoded token to req.user (req.user.userId).
-    // Swap @Req() for whatever @CurrentUser() decorator the rest of the codebase already uses, if one exists.
+
+
 
     @Post()
-    @RequirePermission('rooms', 'read') // any authenticated employee can book a room — rename to a 'bookings' permission if you want it tracked separately from room admin
+    @RequirePermission('rooms', 'read')
     create(@Body() dto: CreateRoomBookingDto, @Req() req: any) {
         return this.bookingsService.create(dto, req.user.userId);
     }
@@ -39,7 +39,7 @@ export class RoomBookingsController {
         return this.bookingsService.findMyBookings(req.user.userId);
     }
 
-    // Room calendar view (day/week) — e.g. ?roomId=...&from=2026-09-01&to=2026-09-08
+
     @Get()
     @RequirePermission('rooms', 'read')
     findForRoom(
@@ -56,7 +56,7 @@ export class RoomBookingsController {
         return this.bookingsService.reschedule(id, dto, req.user.userId);
     }
 
-    // Cancel is a soft delete (status -> CANCELLED), not a hard delete — see service layer.
+
     @Delete(':id')
     @RequirePermission('rooms', 'read')
     cancel(@Param('id') id: string, @Req() req: any) {

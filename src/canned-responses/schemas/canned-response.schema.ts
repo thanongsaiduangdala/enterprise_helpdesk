@@ -6,7 +6,7 @@ export type CannedResponseDocument = CannedResponse & Omit<Document, '_id'>;
 @Schema({ timestamps: true })
 export class CannedResponse {
     @Prop({ type: String })
-    _id!: string; // e.g. 'CR001' — see CannedResponsesService.generateId() for the gap-filling logic
+    _id!: string;
 
     @Prop({ type: String, ref: 'Department', required: true })
     departmentId!: string;

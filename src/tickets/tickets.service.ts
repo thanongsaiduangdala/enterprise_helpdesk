@@ -19,10 +19,10 @@ import { BranchesService } from '../branches/branches.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
-// Status stepper: which transitions are legal from each state. WAITING_ON_USER can fall
-// back to IN_PROGRESS (user replied, agent resumes work). RESOLVED can fall back to
-// IN_PROGRESS too (the fix didn't hold, ticket gets reopened) rather than being a hard
-// dead end. CLOSED is the only true terminal state.
+
+
+
+
 const ALLOWED_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
     [TicketStatus.OPEN]: [TicketStatus.ASSIGNED, TicketStatus.IN_PROGRESS],
     [TicketStatus.ASSIGNED]: [TicketStatus.IN_PROGRESS],
@@ -44,9 +44,9 @@ export class TicketsService {
         private auditLogsService: AuditLogsService,
     ) { }
 
-    // Same gap-filling pattern as the other custom-identifier collections, just applied
-    // to the ticketNumber field instead of _id (see ticket.schema.ts for why _id itself
-    // stays a plain ObjectId here).
+
+
+
     private async generateTicketNumber(): Promise<string> {
         const tickets = await this.ticketModel
             .find({ ticketNumber: /^TCK-\d{6}$/ }, { ticketNumber: 1 })
@@ -58,11 +58,11 @@ export class TicketsService {
         return `TCK-${String(seq).padStart(6, '0')}`;
     }
 
-    // Naive due-date math: startAt + N minutes, flat wall-clock. The spec calls for these
-    // timers to run against the branch's business hours + holiday calendar instead of raw
-    // wall-clock (module 6) — that calendar-aware calculation isn't built yet, so this is
-    // a placeholder that at least gets *a* deadline on the ticket rather than leaving the
-    // SLA fields empty. Swap this out once the business-hours engine exists.
+
+
+
+
+
     private computeDueDates(startAt: Date, responseTimeMinutes: number, resolutionTimeMinutes: number) {
         return {
             responseDueAt: new Date(startAt.getTime() + responseTimeMinutes * 60_000),
@@ -76,11 +76,11 @@ export class TicketsService {
     }
 
     async create(dto: CreateTicketDto, raisedBy: string) {
-        // ASSUMPTION: TicketTypesService.findOne(id) returns an object exposing
-        // defaultDepartmentId / defaultPriority, matching the field list in your spec's
-        // ticketTypes collection (row 6). Adjust this call if your actual service's
-        // method name or return shape differs — I don't have ticket-types.service.ts
-        // to verify against.
+
+
+
+
+
         const ticketType = await this.ticketTypesService.findOne(dto.ticketTypeId);
         await this.branchesService.findOne(dto.branchId);
 
@@ -121,12 +121,12 @@ export class TicketsService {
         });
         this.pushHistory(ticket, 'CREATED', raisedBy);
 
-        // Not sent to AuditLogsService — ticket creation is routine employee usage, not a
-        // sensitive admin action, same reasoning applied to supply-request creation.
+
+
         return ticket.save();
     }
 
-    // Admin/manager filtered view — e.g. ?departmentId=DX001&status=OPEN
+
     findAll(filters: {
         branchId?: string;
         departmentId?: string;
@@ -143,12 +143,12 @@ export class TicketsService {
         return this.ticketModel.find(query).sort({ createdAt: -1 }).exec();
     }
 
-    // "My tickets" — the Employee's own dashboard widget.
+
     findMine(userId: string) {
         return this.ticketModel.find({ raisedBy: userId }).sort({ createdAt: -1 }).exec();
     }
 
-    // Agent's personal queue — "tickets assigned to them".
+
     findAssignedToMe(userId: string) {
         return this.ticketModel.find({ assignedAgent: userId }).sort({ createdAt: -1 }).exec();
     }
@@ -159,17 +159,17 @@ export class TicketsService {
         return ticket;
     }
 
-    // Narrow, side-effect-free field edit — see UpdateTicketDto for why this only covers
-    // title/description.
+
+
     async update(id: string, dto: UpdateTicketDto) {
         const ticket = await this.ticketModel.findByIdAndUpdate(id, dto, { new: true }).exec();
         if (!ticket) throw new NotFoundException('Ticket not found');
         return ticket;
     }
 
-    // Assigns or reassigns in one method — mirrors AssetsService.assign()'s pattern of
-    // figuring out first-assignment vs reassignment purely from whether assignedAgent was
-    // already set, so the caller doesn't need to know which case it is.
+
+
+
     async assign(id: string, dto: AssignTicketDto, actorId: string, ip?: string) {
         const ticket = await this.findOne(id);
         if (ticket.status === TicketStatus.CLOSED) {
@@ -209,10 +209,10 @@ export class TicketsService {
         return saved;
     }
 
-    // Status stepper. Enforces ALLOWED_TRANSITIONS above, auto-pauses/resumes the SLA
-    // clock around WAITING_ON_USER, stamps the per-ticket history timeline, and logs to
-    // the compliance audit trail — status changes were explicitly called out as worth
-    // tracking alongside reassignment.
+
+
+
+
     async changeStatus(id: string, dto: ChangeTicketStatusDto, actorId: string, ip?: string) {
         const ticket = await this.findOne(id);
         const legalNext = ALLOWED_TRANSITIONS[ticket.status] ?? [];
@@ -224,7 +224,7 @@ export class TicketsService {
         const before = ticket.toObject();
         const fromStatus = ticket.status;
 
-        // Pause the SLA clock on the way into WAITING_ON_USER, resume on the way out.
+
         if (dto.status === TicketStatus.WAITING_ON_USER) {
             ticket.sla.pausedIntervals.push({ pausedAt: new Date() });
         } else if (fromStatus === TicketStatus.WAITING_ON_USER) {
@@ -249,9 +249,9 @@ export class TicketsService {
         return saved;
     }
 
-    // Post-resolution CSAT — only the person who raised the ticket can rate it, and only
-    // once it's actually resolved/closed. Not sent to the audit log — feedback isn't a
-    // sensitive admin action, same category as ticket creation.
+
+
+
     async submitFeedback(id: string, dto: SubmitTicketFeedbackDto, userId: string) {
         const ticket = await this.findOne(id);
         if (ticket.raisedBy.toString() !== userId) {

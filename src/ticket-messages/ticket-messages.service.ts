@@ -14,7 +14,7 @@ export class TicketMessagesService {
         private ticketsService: TicketsService,
     ) { }
 
-    // Same gap-filling pattern as the other custom-ID collections.
+
     private async generateId(): Promise<string> {
         const messages = await this.messageModel
             .find({ _id: /^TM\d{3}$/ }, { _id: 1 })
@@ -27,19 +27,19 @@ export class TicketMessagesService {
     }
 
     async create(dto: CreateTicketMessageDto, senderId: string) {
-        await this.ticketsService.findOne(dto.ticketId); // throws 404 if the ticket doesn't exist
+        await this.ticketsService.findOne(dto.ticketId);
 
         if (dto.isCannedResponse) {
             if (!dto.cannedResponseId) {
                 throw new BadRequestException('cannedResponseId is required when isCannedResponse is true');
             }
-            await this.cannedResponsesService.findOne(dto.cannedResponseId); // throws 404 if missing
+            await this.cannedResponsesService.findOne(dto.cannedResponseId);
         }
         const _id = await this.generateId();
         return new this.messageModel({ _id, ...dto, senderId }).save();
     }
 
-    // Per-ticket message timeline, oldest first — the chat view.
+
     findForTicket(ticketId: string) {
         return this.messageModel.find({ ticketId }).sort({ createdAt: 1 }).exec();
     }

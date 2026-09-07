@@ -20,10 +20,10 @@ export class RoomsService {
         private roomBookingsService: RoomBookingsService,
     ) { }
 
-    // Finds the SMALLEST unused number, not just "last + 1" — so deleting R006 and
-    // creating a new room reuses R006 instead of jumping to R00(last+1).
-    // Note: this scans all room IDs on every create, so it's fine at hundreds of rooms
-    // but isn't the right approach if this collection ever grows into the tens of thousands.
+
+
+
+
     private async generateId(): Promise<string> {
         const rooms = await this.roomModel
             .find({ _id: /^R\d{3}$/ }, { _id: 1 })
@@ -55,8 +55,8 @@ export class RoomsService {
         return room;
     }
 
-    // "Live" status = admin flag (Maintenance wins outright) OR whether a confirmed
-    // booking currently covers "now". Booked is never stored, always derived.
+
+
     async findOneWithLiveStatus(id: string) {
         const room = await this.findOne(id);
         if (room.status === RoomStatus.MAINTENANCE) {
@@ -72,7 +72,7 @@ export class RoomsService {
         return room;
     }
 
-    // Dedicated endpoint for "disable a room (maintenance)" so it doesn't need a full update payload.
+
     async setStatus(id: string, status: RoomStatus) {
         const room = await this.roomModel.findByIdAndUpdate(id, { status }, { new: true }).exec();
         if (!room) throw new NotFoundException('Room not found');

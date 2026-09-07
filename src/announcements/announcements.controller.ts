@@ -30,15 +30,15 @@ export class AnnouncementsController {
         return this.announcementsService.create(dto, req.user.userId);
     }
 
-    // Admin management list — everything, any publish window.
+
     @Get()
     @RequirePermission('announcements', 'read')
     findAll() {
         return this.announcementsService.findAll();
     }
 
-    // The actual dashboard feed. branchId/departmentId passed as query params for now —
-    // see the NOTE in the service about wiring these from the authenticated user's own record.
+
+
     @Get('active')
     @RequirePermission('announcements', 'read')
     findActive(@Req() req: any): Promise<Array<Record<string, any>>> {
@@ -75,8 +75,8 @@ export class AnnouncementsController {
         return this.announcementsService.remove(id);
     }
 
-    // Marking read is a personal action, not an admin one — gated on 'read' rather than
-    // 'update' since every role that can see announcements should be able to mark them read.
+
+
     @Post(':id/read')
     @RequirePermission('announcements', 'read')
     markRead(@Param('id') id: string, @Req() req: any) {

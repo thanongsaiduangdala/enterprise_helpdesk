@@ -49,18 +49,18 @@ export class SupplyCatalogController {
         return this.catalogService.update(id, dto);
     }
 
-    // Manual admin stock correction/restock — NOT used by the request-fulfillment flow,
-    // which calls catalogService.adjustStock() directly from SupplyRequestsService.
+
+
     @Patch(':id/adjust-stock')
     @RequirePermission('supplies', 'update')
     adjustStock(@Param('id') id: string, @Body() dto: AdjustStockDto) {
         return this.catalogService.adjustStock(id, dto.delta);
     }
 
-    // NOTE: your current permissions JSON for the 'supplies' module only lists
-    // create/read/update/approve/fulfill — no 'delete'. This will 403 until you add
-    // 'delete' to that permission set, or you may prefer items are only ever
-    // deactivated (isActive: false via PATCH) rather than hard-deleted.
+
+
+
+
     @Delete(':id')
     @RequirePermission('supplies', 'delete')
     remove(@Param('id') id: string) {

@@ -12,9 +12,9 @@ export class KbArticleFeedback {
     userId!: Types.ObjectId;
 
     @Prop({ required: true })
-    helpful!: boolean; // true = 👍, false = 👎
+    helpful!: boolean;
 }
 
 export const KbArticleFeedbackSchema = SchemaFactory.createForClass(KbArticleFeedback);
-// One vote per user per article — re-voting updates this record instead of creating a duplicate.
+
 KbArticleFeedbackSchema.index({ articleId: 1, userId: 1 }, { unique: true });

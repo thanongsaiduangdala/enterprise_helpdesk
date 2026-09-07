@@ -8,8 +8,8 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { RolesService } from '../roles/roles.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
-// Fields never written to the audit log, even in "after" snapshots — a password hash
-// has no business sitting in a searchable, exported audit trail.
+
+
 const SENSITIVE_FIELDS = ['passwordHash', 'password'];
 
 function sanitize(obj: Record<string, any> | null | undefined) {
@@ -28,9 +28,9 @@ export class UsersService {
         private auditLogsService: AuditLogsService,
     ) { }
 
-    // actorId/ip identify who did this and from where — both required by the audit-log
-    // spec ("filter by actor") and only available at the controller layer (from the JWT
-    // and the request), so they're threaded through as parameters rather than looked up here.
+
+
+
     async create(dto: CreateUserDto, actorId: string, ip?: string) {
         await this.rolesService.findOne(dto.role);
 
@@ -45,7 +45,7 @@ export class UsersService {
                 'USER_CREATED',
                 'User',
                 saved._id.toString(),
-                undefined, // no "before" — nothing existed yet
+                undefined,
                 sanitize(saved),
                 ip,
             );
@@ -67,8 +67,8 @@ export class UsersService {
         return this.userModel.find().populate('role').exec();
     }
 
-    // Used by AnnouncementsService to determine who to notify for each scope.
-    // Only active users — no point notifying someone who's been deactivated/offboarded.
+
+
     findActiveByBranch(branchId: string) {
         return this.userModel.find({ branchId, isActive: true }).exec();
     }
@@ -92,8 +92,8 @@ export class UsersService {
             await this.rolesService.findOne(dto.role);
         }
 
-        // Fetched separately (rather than relying on findByIdAndUpdate's pre-update doc)
-        // so "before" reflects the exact same shape/population as "after" for a clean diff.
+
+
         const before = await this.userModel.findById(id).populate('role').exec();
         if (!before) throw new NotFoundException('User not found');
 
@@ -103,8 +103,8 @@ export class UsersService {
             .exec();
         if (!user) throw new NotFoundException('User not found');
 
-        // Role reassignment gets its own action name — the spec calls out "role changes"
-        // as a specifically sensitive action distinct from a generic profile edit.
+
+
         const action = dto.role && dto.role !== (before.role as any)?._id?.toString()
             ? 'USER_ROLE_CHANGED' : 'USER_UPDATED';
 
@@ -134,7 +134,7 @@ export class UsersService {
             'User',
             id,
             sanitize(before),
-            undefined, // no "after" — nothing exists post-delete
+            undefined,
             ip,
         );
 

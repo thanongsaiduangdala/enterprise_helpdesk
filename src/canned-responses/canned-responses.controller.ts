@@ -18,9 +18,9 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 
-// NOTE: gated under the existing 'tickets' permission — your permissions JSON has no
-// dedicated 'canned-responses' module. Swap this for a new module name if you want
-// canned-response management tracked separately from general ticket permissions.
+
+
+
 
 @Controller('canned-responses')
 @UseGuards(JwtAuthGuard, PermissionsGuard)

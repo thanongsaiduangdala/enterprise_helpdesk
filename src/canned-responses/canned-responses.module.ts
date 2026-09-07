@@ -10,6 +10,6 @@ import { CannedResponsesController } from './canned-responses.controller';
     ],
     controllers: [CannedResponsesController],
     providers: [CannedResponsesService],
-    exports: [CannedResponsesService], // exported so TicketMessagesModule can validate cannedResponseId on insert
+    exports: [CannedResponsesService],
 })
 export class CannedResponsesModule { }

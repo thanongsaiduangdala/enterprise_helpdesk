@@ -18,10 +18,10 @@ class IdleReminder {
     enabled!: boolean;
 
     @Prop()
-    intervalMinutes?: number; // how often to re-nudge while idle
+    intervalMinutes?: number;
 
     @Prop()
-    escalateAfterReminders?: number; // e.g. after 3 nudges, notify the agent's manager too
+    escalateAfterReminders?: number;
 }
 
 @Schema({ timestamps: true })

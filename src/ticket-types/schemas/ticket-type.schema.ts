@@ -9,7 +9,7 @@ export class TicketType {
     _id!: string;
 
     @Prop({ required: true, unique: true })
-    name!: string; // e.g. 'VPN Access Issue'
+    name!: string;
 
     @Prop({ required: true })
     defaultDepartmentId!: string;

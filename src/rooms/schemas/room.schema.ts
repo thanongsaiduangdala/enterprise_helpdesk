@@ -20,7 +20,7 @@ export class Room {
     name!: string;
 
     @Prop()
-    location?: string; // e.g. '3rd Floor, East Wing' — where in the branch, distinct from branch.location
+    location?: string;
 
     @Prop({ required: true })
     capacity!: number;
@@ -28,9 +28,9 @@ export class Room {
     @Prop({ type: [String], default: [] })
     amenities!: string[];
 
-    // Admin-controlled flag only (Available / Maintenance). "Booked" is NOT stored here —
-    // it's computed live by checking roomBookings for a confirmed booking covering "now".
-    // A room can be AVAILABLE and still show as live-booked for the current hour.
+
+
+
     @Prop({ enum: RoomStatus, default: RoomStatus.AVAILABLE })
     status!: RoomStatus;
 

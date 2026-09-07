@@ -29,6 +29,6 @@ export class CreateKbArticleDto {
     @IsString({ each: true })
     tags?: string[];
 
-    // status and authorId are intentionally NOT here — every new article starts DRAFT,
-    // and authorId is taken from the authenticated user, not trusted from the request body.
+
+
 }

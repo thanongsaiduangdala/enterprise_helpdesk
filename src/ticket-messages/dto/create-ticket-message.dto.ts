@@ -29,5 +29,5 @@ export class CreateTicketMessageDto {
     @Matches(/^CR\d{3}$/, { message: 'cannedResponseId must look like CR001' })
     cannedResponseId?: string;
 
-    // senderId is intentionally NOT here — taken from the authenticated user.
+
 }

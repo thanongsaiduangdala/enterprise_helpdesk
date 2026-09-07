@@ -13,7 +13,7 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 export class SessionsController {
     constructor(private sessionsService: SessionsService) { }
 
-    // Self-service — any logged-in user manages their own sessions
+
     @Get('me')
     findMine(@Req() req: any) {
         return this.sessionsService.findAllForUser(req.user.userId);
@@ -24,7 +24,7 @@ export class SessionsController {
         return this.sessionsService.revokeOwn(id, req.user.userId);
     }
 
-    // Admin — view/revoke any user's sessions
+
     @Get('user/:userId')
     @UseGuards(PermissionsGuard)
     @RequirePermission('sessions', 'read')

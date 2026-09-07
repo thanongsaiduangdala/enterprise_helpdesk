@@ -14,7 +14,7 @@ class Recurrence {
     frequency!: string;
 
     @Prop({ required: true })
-    until!: Date; // last date this recurrence pattern applies to
+    until!: Date;
 }
 
 @Schema({ timestamps: true })
@@ -37,7 +37,7 @@ export class RoomBooking {
     @Prop({ type: Recurrence })
     recurrence?: Recurrence;
 
-    // Groups every occurrence of a recurring booking together. Undefined for one-off bookings.
+
     @Prop()
     seriesId?: string;
 
@@ -46,6 +46,6 @@ export class RoomBooking {
 }
 
 export const RoomBookingSchema = SchemaFactory.createForClass(RoomBooking);
-// Speeds up both the conflict check and the room-calendar view (both filter by roomId + time range)
+
 RoomBookingSchema.index({ roomId: 1, startAt: 1, endAt: 1 });
 RoomBookingSchema.index({ bookedBy: 1, status: 1 });

@@ -10,6 +10,6 @@ import { SupplyCatalogController } from './supply-catalog.controller';
     ],
     controllers: [SupplyCatalogController],
     providers: [SupplyCatalogService],
-    exports: [SupplyCatalogService], // exported so SupplyRequestsModule can decrement stock on fulfillment
+    exports: [SupplyCatalogService],
 })
 export class SupplyCatalogModule { }

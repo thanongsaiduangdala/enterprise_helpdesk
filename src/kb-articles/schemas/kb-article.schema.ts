@@ -12,7 +12,7 @@ export enum KbArticleStatus {
 @Schema({ timestamps: true })
 export class KbArticle {
     @Prop({ type: String })
-    _id!: string; // e.g. 'KB001' — see KbArticlesService.generateId() for the gap-filling logic
+    _id!: string;
 
     @Prop({ required: true })
     title!: string;
@@ -47,5 +47,5 @@ export class KbArticle {
 
 export const KbArticleSchema = SchemaFactory.createForClass(KbArticle);
 KbArticleSchema.index({ departmentId: 1, status: 1 });
-// Powers both the search box and the "suggest while typing a ticket" feature.
+
 KbArticleSchema.index({ title: 'text', body: 'text', tags: 'text' });

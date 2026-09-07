@@ -10,6 +10,6 @@ import { NotificationsController } from './notifications.controller';
     ],
     controllers: [NotificationsController],
     providers: [NotificationsService],
-    exports: [NotificationsService], // exported so any other module can inject and call .notify()
+    exports: [NotificationsService],
 })
 export class NotificationsModule { }

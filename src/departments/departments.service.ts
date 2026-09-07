@@ -30,9 +30,9 @@ export class DepartmentsService {
         return `DX${String(nextSeq).padStart(3, '0')}`;
     }
 
-    // Explicit return type (Record<string, any>) — without it, TypeScript tries to infer
-    // the full shape of "DepartmentDocument's plain object + a ticketTypes array" and the
-    // resulting type is too complex for the compiler to serialize (TS7056).
+
+
+
     private async withTicketTypes(department: DepartmentDocument): Promise<Record<string, any>> {
         const allTypes = await this.ticketTypesService.findAll();
         const ticketTypes = allTypes.filter(
@@ -42,7 +42,7 @@ export class DepartmentsService {
     }
 
     async create(dto: CreateDepartmentDto, actorId: string, ip?: string): Promise<DepartmentDocument> {
-        await this.branchesService.findOne(dto.branchId); // throws 404 if branch doesn't exist
+        await this.branchesService.findOne(dto.branchId);
 
         const existing = await this.departmentModel.findOne({
             branchId: dto.branchId,
@@ -81,8 +81,8 @@ export class DepartmentsService {
         }
     }
 
-    // Explicit return type — same reasoning as withTicketTypes above: mapping documents
-    // into plain objects with an extra field produces a type too complex to infer cleanly.
+
+
     async findAll(): Promise<Record<string, any>[]> {
         const [departments, allTypes] = await Promise.all([
             this.departmentModel.find().exec(),
@@ -118,8 +118,8 @@ export class DepartmentsService {
             .exec();
         if (!department) throw new NotFoundException('Department not found');
 
-        // Manager reassignment gets its own action name — worth being able to filter for
-        // "who put this person in charge of this department" separately from a plain edit.
+
+
         const action = dto.managerIds ? 'DEPARTMENT_MANAGER_CHANGED' : 'DEPARTMENT_UPDATED';
         await this.auditLogsService.log(
             actorId,

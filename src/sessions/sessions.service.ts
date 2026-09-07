@@ -28,7 +28,7 @@ export class SessionsService {
     }
 
     async touch(sessionId: string) {
-        // fire-and-forget style update; not critical if it occasionally misses
+
         await this.sessionModel
             .updateOne({ _id: sessionId }, { $set: { lastSeenAt: new Date() } })
             .exec();

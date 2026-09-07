@@ -9,15 +9,15 @@ export class Notification {
     userId!: Types.ObjectId;
 
     @Prop({ required: true })
-    type!: string; // e.g. 'SLA_BREACH', 'TICKET_ASSIGNED', 'SUPPLY_APPROVED', 'ANNOUNCEMENT'
+    type!: string;
 
-    // Polymorphic reference — refModel tells you which collection refId points into.
-    // Kept as plain strings rather than a typed ref since it varies per notification type.
+
+
     @Prop({ required: true })
     refId!: string;
 
     @Prop({ required: true })
-    refModel!: string; // e.g. 'Ticket', 'Announcement', 'SupplyRequest'
+    refModel!: string;
 
     @Prop({ required: true })
     title!: string;
