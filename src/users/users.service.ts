@@ -53,7 +53,9 @@ export class UsersService {
             return saved;
         } catch (error: any) {
             if (error.code === 11000) {
-                throw new ConflictException('Email already in use');
+                const field = Object.keys(error.keyPattern || {})[0] || 'field';
+                const value = error.keyValue?.[field];
+                throw new ConflictException(`${field} "${value}" is already in use`);
             }
             throw error;
         }

@@ -9,15 +9,19 @@ import { SlaPolicy, SlaPolicyDocument } from './schemas/sla-policy.schema';
 import { CreateSlaPolicyDto } from './dto/create-sla-policy.dto';
 import { UpdateSlaPolicyDto } from './dto/update-sla-policy.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { TicketTypesService } from '../ticket-types/ticket-types.service';
 
 @Injectable()
 export class SlaPoliciesService {
     constructor(
         @InjectModel(SlaPolicy.name) private slaPolicyModel: Model<SlaPolicyDocument>,
         private auditLogsService: AuditLogsService,
+        private ticketTypesService: TicketTypesService,
     ) { }
 
     async create(dto: CreateSlaPolicyDto, actorId: string, ip?: string) {
+        await this.ticketTypesService.findOne(dto.ticketTypeId);
+
         const existing = await this.slaPolicyModel.findOne({
             ticketTypeId: dto.ticketTypeId,
             priority: dto.priority,
@@ -60,7 +64,12 @@ export class SlaPoliciesService {
     }
 
     async update(id: string, dto: UpdateSlaPolicyDto, actorId: string, ip?: string) {
+        if (dto.ticketTypeId) {
+            await this.ticketTypesService.findOne(dto.ticketTypeId);
+        }
+
         const before = await this.slaPolicyModel.findById(id).exec();
+
         if (!before) throw new NotFoundException('SLA policy not found');
 
         const policy = await this.slaPolicyModel
