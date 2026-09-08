@@ -9,7 +9,6 @@ export class ReportsService {
         @InjectModel(Ticket.name) private ticketModel: Model<TicketDocument>,
     ) { }
 
-    // 1. SLA compliance — met vs breached, trend over time (grouped by ISO week).
     async slaComplianceReport(from?: Date, to?: Date) {
         const match: any = {};
         if (from || to) {
@@ -45,7 +44,7 @@ export class ReportsService {
         };
     }
 
-    // 2. Tickets by department / branch / type / agent — simple grouped counts.
+
     async ticketsBreakdown() {
         const [byDepartment, byBranch, byType, byAgent] = await Promise.all([
             this.ticketModel.aggregate([{ $group: { _id: '$departmentId', count: { $sum: 1 } } }]),
@@ -59,12 +58,12 @@ export class ReportsService {
         return { byDepartment, byBranch, byType, byAgent };
     }
 
-    // 3. Agent workload & performance.
-    // NOTE on avgResolutionMinutes: there's no dedicated `resolvedAt` field on Ticket,
-    // so this uses `updatedAt` as a proxy for "when it was last touched" among
-    // resolved/closed tickets. It's an approximation, not exact — a ticket touched after
-    // being resolved (e.g. a late comment) would skew this. A precise version would scan
-    // `history` for the STATUS_CHANGED entry into RESOLVED, which is a heavier query.
+
+
+
+
+
+
     async agentWorkload() {
         return this.ticketModel.aggregate([
             { $match: { assignedAgent: { $exists: true } } },
@@ -90,7 +89,7 @@ export class ReportsService {
         ]);
     }
 
-    // 4. CSAT trend — average rating by agent / department.
+
     async csatTrend() {
         const match = { 'csat.rating': { $exists: true } };
         const [byAgent, byDepartment] = await Promise.all([
@@ -108,7 +107,6 @@ export class ReportsService {
         return { byAgent, byDepartment };
     }
 
-    // Bundles all four for the digest email / a combined export.
     async fullSummary() {
         const [sla, tickets, workload, csat] = await Promise.all([
             this.slaComplianceReport(),
@@ -119,7 +117,6 @@ export class ReportsService {
         return { sla, tickets, workload, csat };
     }
 
-    // Flattens one report type into rows suitable for CSV/PDF export.
     async getFlatRows(type: 'sla' | 'tickets' | 'workload' | 'csat'): Promise<Record<string, any>[]> {
         switch (type) {
             case 'sla': {

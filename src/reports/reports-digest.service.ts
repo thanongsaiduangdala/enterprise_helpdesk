@@ -17,15 +17,15 @@ export class ReportsDigestService {
         private mailService: MailService,
     ) { }
 
-    // Every Monday at 8:00 AM server time.
+
     @Cron('0 8 * * 1')
     async sendWeeklyDigest() {
         this.logger.log('Running weekly report digest...');
         await this.runDigest();
     }
 
-    // Extracted so it can also be triggered manually via a controller route for
-    // testing/demo purposes, without waiting for the actual scheduled time.
+
+
     async runDigest() {
         const roles = await this.rolesService.findRolesWithPermission('reports', 'read');
         const roleIds = roles.map((r) => r._id);
@@ -73,8 +73,7 @@ export class ReportsDigestService {
         return `
             <h2>Weekly Helpdesk Report Digest</h2>
             <h3>SLA Compliance</h3>
-            <p>Met: ${sla.met} | Breached: ${sla.breached} | Compliance rate: ${
-                sla.complianceRate !== null ? (sla.complianceRate * 100).toFixed(1) + '%' : 'N/A'
+            <p>Met: ${sla.met} | Breached: ${sla.breached} | Compliance rate: ${sla.complianceRate !== null ? (sla.complianceRate * 100).toFixed(1) + '%' : 'N/A'
             }</p>
             <h3>Top Agent Workload</h3>
             <ul>${topAgents || '<li>No assigned tickets yet.</li>'}</ul>

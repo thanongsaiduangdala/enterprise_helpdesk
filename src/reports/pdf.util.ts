@@ -1,8 +1,8 @@
 import PDFDocument from 'pdfkit';
 
-// Renders a simple titled table of flat rows into a PDF Buffer. Deliberately basic
-// (no styling library) — good enough for an internal admin report, not a polished
-// customer-facing document.
+
+
+
 export function rowsToPdfBuffer(title: string, rows: Record<string, any>[]): Promise<Buffer> {
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument({ margin: 40, size: 'A4' });

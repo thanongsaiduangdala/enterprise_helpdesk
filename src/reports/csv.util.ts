@@ -1,5 +1,5 @@
-// Small, dependency-free CSV converter for flat report rows. Not meant for deeply
-// nested objects — report data is flattened before being passed in here.
+
+
 export function toCsv(rows: Record<string, any>[]): string {
     if (!rows.length) return '';
     const headerSet = new Set<string>();
@@ -10,7 +10,7 @@ export function toCsv(rows: Record<string, any>[]): string {
 
     const escape = (value: any) => {
         const str = value === null || value === undefined ? '' : String(value);
-        // Quote every field and escape internal quotes — safest default for CSV.
+
         return `"${str.replace(/"/g, '""')}"`;
     };
 

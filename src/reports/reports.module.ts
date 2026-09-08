@@ -10,10 +10,6 @@ import { MailModule } from '../mail/mail.module';
 
 @Module({
     imports: [
-        // Registering the Ticket schema again here is safe — Mongoose/Nest just reuses
-        // the same underlying model. Done this way (rather than importing TicketsModule)
-        // so Reports can run its own aggregation queries directly without needing
-        // TicketsService's business-logic methods.
         MongooseModule.forFeature([{ name: Ticket.name, schema: TicketSchema }]),
         RolesModule,
         UsersModule,

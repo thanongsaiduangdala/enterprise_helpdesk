@@ -66,8 +66,8 @@ export class ReportsController {
         return this.reportsService.fullSummary();
     }
 
-    // Exportable reports (CSV). Uses @Res() to bypass the global ResponseInterceptor's
-    // JSON-wrapping, since a file download must NOT be wrapped in { response, msg, data }.
+
+
     @Get('export/csv')
     @RequirePermission('reports', 'export')
     @ApiQuery({ name: 'type', enum: ['sla', 'tickets', 'workload', 'csat'] })
@@ -83,7 +83,7 @@ export class ReportsController {
         res.send(csv);
     }
 
-    // Exportable reports (PDF). Same @Res() bypass reasoning as the CSV export above.
+
     @Get('export/pdf')
     @RequirePermission('reports', 'export')
     @ApiQuery({ name: 'type', enum: ['sla', 'tickets', 'workload', 'csat'] })
