@@ -1,11 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { SetUserActiveDto } from './dto/set-user-active.dto';
+
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -19,10 +21,23 @@ export class UsersController {
         return this.usersService.create(dto, req.user.userId, req.ip);
     }
 
+    @Patch(':id/status')
+    @RequirePermission('users', 'update')
+    setActive(@Param('id') id: string, @Body() dto: SetUserActiveDto, @Req() req: any) {
+        return this.usersService.setActive(id, dto.isActive, req.user.userId, req.ip);
+    }
+
     @Get()
     @RequirePermission('users', 'read')
-    findAll() {
-        return this.usersService.findAll();
+    @ApiQuery({ name: 'branchId', required: false })
+    @ApiQuery({ name: 'departmentId', required: false })
+    @ApiQuery({ name: 'role', required: false, description: 'A roles._id' })
+    findAll(
+        @Query('branchId') branchId?: string,
+        @Query('departmentId') departmentId?: string,
+        @Query('role') role?: string,
+    ) {
+        return this.usersService.findAll({ branchId, departmentId, role });
     }
 
     @Get(':id')

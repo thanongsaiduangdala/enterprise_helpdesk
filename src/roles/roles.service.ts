@@ -55,6 +55,12 @@ export class RolesService {
         return this.roleModel.find().exec();
     }
 
+    async findRolesWithPermission(module: string, action: string) {
+        return this.roleModel.find({
+            permissions: { $elemMatch: { module, actions: action } },
+        }).exec();
+    }
+
     async findOne(id: string) {
         const role = await this.roleModel.findById(id).exec();
         if (!role) throw new NotFoundException('Role not found');

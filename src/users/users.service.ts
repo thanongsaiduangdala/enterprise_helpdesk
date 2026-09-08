@@ -62,11 +62,41 @@ export class UsersService {
         return this.userModel.findOne({ email }).populate('role').exec();
     }
 
-    findAll() {
-        return this.userModel.find().populate('role').exec();
+    async setActive(id: string, isActive: boolean, actorId: string, ip?: string) {
+        const before = await this.userModel.findById(id).exec();
+        if (!before) throw new NotFoundException('User not found');
+
+        const update: any = { isActive };
+        if (!isActive) update.deactivatedAt = new Date();
+        else update.deactivatedAt = undefined;
+
+        const user = await this.userModel.findByIdAndUpdate(id, update, { new: true }).exec();
+        if (!user) throw new NotFoundException('User not found');
+
+        await this.auditLogsService.log(
+            actorId,
+            isActive ? 'USER_REACTIVATED' : 'USER_DEACTIVATED',
+            'User',
+            id,
+            sanitize(before),
+            sanitize(user),
+            ip,
+        );
+
+        return user;
     }
 
+    findActiveByRoleIds(roleIds: string[]) {
+        return this.userModel.find({ role: { $in: roleIds }, isActive: true }).exec();
+    }
 
+    findAll(filters: { branchId?: string; departmentId?: string; role?: string } = {}) {
+        const query: any = {};
+        if (filters.branchId) query.branchId = filters.branchId;
+        if (filters.departmentId) query.departmentId = filters.departmentId;
+        if (filters.role) query.role = filters.role;
+        return this.userModel.find(query).populate('role').exec();
+    }
 
     findActiveByBranch(branchId: string) {
         return this.userModel.find({ branchId, isActive: true }).exec();

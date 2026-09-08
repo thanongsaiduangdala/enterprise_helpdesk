@@ -24,6 +24,9 @@ import { SlaPoliciesModule } from './sla-policies/sla-policies.module';
 import { DepartmentsModule } from './departments/departments.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
+import { MailModule } from './mail/mail.module';
+import { ReportsModule } from './reports/reports.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -55,6 +58,9 @@ import { APP_GUARD } from '@nestjs/core';
     NotificationsModule,
     AuditLogsModule,
     TicketsModule,
+    MailModule,
+    ReportsModule,
+    ScheduleModule.forRoot(),
   ],
 
   providers: [

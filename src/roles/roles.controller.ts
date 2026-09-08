@@ -6,10 +6,11 @@ import {
     Param,
     Patch,
     Post,
+    Query,
     Req,
     UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { RolesService } from './roles.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
@@ -47,9 +48,18 @@ export class RolesController {
         return this.rolesService.update(id, dto, req.user.userId, req.ip);
     }
 
+    @Get('audit/who-can')
+    @RequirePermission('roles', 'read')
+    @ApiQuery({ name: 'module', required: true, description: 'e.g. "tickets"' })
+    @ApiQuery({ name: 'action', required: true, description: 'e.g. "delete"' })
+    whoCan(@Query('module') module: string, @Query('action') action: string) {
+        return this.rolesService.findRolesWithPermission(module, action);
+    }
+
     @Delete(':id')
     @RequirePermission('roles', 'delete')
     remove(@Param('id') id: string, @Req() req: any) {
         return this.rolesService.remove(id, req.user.userId, req.ip);
     }
+
 }
