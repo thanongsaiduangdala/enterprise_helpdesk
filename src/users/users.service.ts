@@ -60,12 +60,12 @@ export class UsersService {
         }
     }
 
-    // "Bulk import (CSV) for large org onboarding" — expects a CSV with headers:
-    // employeeCode,firstName,lastName,email,phone,role,branchId,departmentId
-    // (no password column — a random temp password is generated per user and emailed
-    // to them). Each row is processed independently: one bad row (duplicate email,
-    // unknown role, missing field) doesn't stop the rest of the batch, mirroring the
-    // per-item try/catch pattern used in SupplyRequestsService.bulkFulfill().
+
+
+
+
+
+
     async bulkImport(fileBuffer: Buffer, actorId: string, ip?: string) {
         let rows: Record<string, string>[];
         try {
@@ -78,14 +78,14 @@ export class UsersService {
 
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
-            const rowNumber = i + 2; // +2 accounts for the header row and 1-based counting
+            const rowNumber = i + 2;
 
             try {
                 if (!row.email || !row.firstName || !row.lastName || !row.role || !row.branchId || !row.employeeCode) {
                     throw new Error('Missing one or more required fields (employeeCode, firstName, lastName, email, role, branchId)');
                 }
 
-                const tempPassword = crypto.randomBytes(6).toString('hex'); // 12-char temp password
+                const tempPassword = crypto.randomBytes(6).toString('hex');
 
                 const dto: CreateUserDto = {
                     employeeCode: row.employeeCode,
@@ -172,8 +172,8 @@ export class UsersService {
         return this.userModel.find({ isActive: true }).exec();
     }
 
-    // Used by ReportsDigestService to find who should receive the weekly digest —
-    // anyone active whose role is in the given list of role IDs.
+
+
     findActiveByRoleIds(roleIds: string[]) {
         return this.userModel.find({ role: { $in: roleIds }, isActive: true }).exec();
     }
@@ -214,10 +214,10 @@ export class UsersService {
         return user;
     }
 
-    // --- MFA ---
 
-    // Generates and stores a new TOTP secret (not yet "enabled" until confirmed via
-    // confirmMfaEnabled). Called both for voluntary self-setup and forced setup.
+
+
+
     async setMfaSecret(id: string, secret: string) {
         const user = await this.userModel.findByIdAndUpdate(
             id,
@@ -239,8 +239,8 @@ export class UsersService {
     }
 
     async findOneRaw(id: string) {
-        // Unlike findOne(), this doesn't populate role — used internally by AuthService
-        // where only mfa.secret / passwordHash are needed, not the full role object.
+
+
         const user = await this.userModel.findById(id).exec();
         if (!user) throw new NotFoundException('User not found');
         return user;

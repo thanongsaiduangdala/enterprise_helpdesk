@@ -12,7 +12,7 @@ import { MailModule } from '../mail/mail.module';
         MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
         RolesModule,
         AuditLogsModule,
-        MailModule, // needed for bulk-import's "here's your temp password" email
+        MailModule,
     ],
     controllers: [UsersController],
     providers: [UsersService],

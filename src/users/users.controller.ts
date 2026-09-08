@@ -35,9 +35,9 @@ export class UsersController {
         return this.usersService.create(dto, req.user.userId, req.ip);
     }
 
-    // "Bulk import (CSV) for large org onboarding". Expects a multipart/form-data
-    // upload with field name 'file', containing a CSV with headers:
-    // employeeCode,firstName,lastName,email,phone,role,branchId,departmentId
+
+
+
     @Post('bulk-import')
     @RequirePermission('users', 'create')
     @UseInterceptors(FileInterceptor('file'))
