@@ -1,0 +1,192 @@
+ENTERPRISE HELPDESK — BACKEND DEPENDENCIES
+============================================
+Generated from `npm list --depth=0` on the backend project.
+
+NOTE: Node.js/npm projects do NOT use a requirements.txt (that's a Python convention).
+The real source of truth for dependencies is package.json + package-lock.json.
+For Docker, you don't manually list these — you COPY package.json + package-lock.json
+into the image and run `npm ci` (or `npm install`), and npm installs everything below
+automatically. This file is just a human-readable reference/inventory.
+
+--------------------------------------------
+CORE FRAMEWORK (NestJS)
+--------------------------------------------
+@nestjs/common@11.2.2
+@nestjs/core@11.2.2
+@nestjs/platform-express@11.2.2
+@nestjs/cli@11.0.24              (dev)
+@nestjs/schematics@11.1.0        (dev)
+@nestjs/testing@11.2.2           (dev)
+reflect-metadata@0.2.2
+rxjs@7.8.2
+
+--------------------------------------------
+DATABASE
+--------------------------------------------
+@nestjs/mongoose@11.0.4
+mongoose@9.9.3
+
+--------------------------------------------
+CONFIGURATION
+--------------------------------------------
+@nestjs/config@4.0.4             — loads .env files
+
+--------------------------------------------
+AUTHENTICATION & SECURITY
+--------------------------------------------
+@nestjs/jwt@11.0.2               — JWT signing/verification
+@nestjs/passport@11.0.5
+passport@0.7.0
+passport-jwt@4.0.1
+@types/passport-jwt@4.0.1        (dev)
+bcrypt@6.0.0                     — password hashing
+@types/bcrypt@6.0.0              (dev)
+@nestjs/throttler@6.5.0          — rate limiting (login brute-force protection)
+
+--------------------------------------------
+MULTI-FACTOR AUTHENTICATION (MFA)
+--------------------------------------------
+otplib@13.5.0                    — TOTP code generation/verification
+qrcode@1.5.4                     — QR code generation for authenticator app setup
+@types/qrcode@1.5.6              (dev)
+
+--------------------------------------------
+VALIDATION
+--------------------------------------------
+class-validator@0.15.1
+class-transformer@0.5.1
+
+--------------------------------------------
+API DOCUMENTATION
+--------------------------------------------
+@nestjs/swagger@11.4.7           — auto-generated Swagger/OpenAPI docs
+
+--------------------------------------------
+SCHEDULED JOBS
+--------------------------------------------
+@nestjs/schedule@12.0.1          — cron jobs (weekly report digest)
+
+--------------------------------------------
+EMAIL
+--------------------------------------------
+nodemailer@10.0.1                — SMTP email sending (Gmail)
+@types/nodemailer@8.0.1          (dev)
+
+--------------------------------------------
+REPORTS / EXPORTS
+--------------------------------------------
+pdfkit@0.20.2                    — PDF report generation
+@types/pdfkit@0.17.6             (dev)
+csv-parse@7.0.2                  — CSV parsing (bulk user import)
+
+--------------------------------------------
+FILE UPLOADS
+--------------------------------------------
+multer@2.3.0                     — multipart/form-data file uploads
+@types/multer@2.2.0              (dev)
+
+--------------------------------------------
+MISC UTILITIES
+--------------------------------------------
+ua-parser-js@2.0.10              — parses User-Agent header for session device info
+@types/ua-parser-js@0.7.39       (dev)
+
+--------------------------------------------
+TESTING
+--------------------------------------------
+jest@30.4.2                      (dev)
+ts-jest@29.4.12                  (dev)
+@types/jest@30.0.0               (dev)
+supertest@7.2.2                  (dev)
+@types/supertest@7.2.1           (dev)
+
+--------------------------------------------
+BUILD / DEV TOOLING
+--------------------------------------------
+typescript@5.9.3                 (dev)
+ts-node@10.9.2                   (dev)
+ts-loader@9.6.2                  (dev)
+tsconfig-paths@4.2.0             (dev)
+source-map-support@0.5.21
+@types/express@5.0.6             (dev)
+@types/node@24.13.3              (dev)
+typescript-eslint@8.68.0         (dev)
+eslint@9.39.5                    (dev)
+eslint-config-prettier@10.1.8    (dev)
+eslint-plugin-prettier@5.5.6     (dev)
+@eslint/js@9.39.5                (dev)
+@eslint/eslintrc@3.3.6           (dev)
+globals@17.11.0                  (dev)
+prettier@3.9.6                   (dev)
+
+--------------------------------------------
+DOCKER SETUP (reference)
+--------------------------------------------
+In your Dockerfile, dependencies are installed via:
+
+    COPY package.json package-lock.json ./
+    RUN npm ci --omit=dev    (production image — skips devDependencies)
+
+or for a dev/build image:
+
+    COPY package.json package-lock.json ./
+    RUN npm install
+
+You do NOT need to list these packages individually anywhere in Docker —
+package.json + package-lock.json already fully describe them.
+
+├── @eslint/eslintrc@3.3.6
+├── @eslint/js@9.39.5
+├── @nestjs/cli@11.0.24
+├── @nestjs/common@11.2.2
+├── @nestjs/config@4.0.4
+├── @nestjs/core@11.2.2
+├── @nestjs/jwt@11.0.2
+├── @nestjs/mongoose@11.0.4
+├── @nestjs/passport@11.0.5
+├── @nestjs/platform-express@11.2.2
+├── @nestjs/schedule@12.0.1
+├── @nestjs/schematics@11.1.0
+├── @nestjs/swagger@11.4.7
+├── @nestjs/testing@11.2.2
+├── @nestjs/throttler@6.5.0
+├── @types/bcrypt@6.0.0
+├── @types/express@5.0.6
+├── @types/jest@30.0.0
+├── @types/multer@2.2.0
+├── @types/node@24.13.3
+├── @types/nodemailer@8.0.1
+├── @types/passport-jwt@4.0.1
+├── @types/pdfkit@0.17.6
+├── @types/qrcode@1.5.6
+├── @types/supertest@7.2.1
+├── @types/ua-parser-js@0.7.39
+├── bcrypt@6.0.0
+├── class-transformer@0.5.1
+├── class-validator@0.15.1
+├── csv-parse@7.0.2
+├── eslint-config-prettier@10.1.8
+├── eslint-plugin-prettier@5.5.6
+├── eslint@9.39.5
+├── globals@17.11.0
+├── jest@30.4.2
+├── mongoose@9.9.3
+├── multer@2.3.0
+├── nodemailer@10.0.1
+├── otplib@13.5.0
+├── passport-jwt@4.0.1
+├── passport@0.7.0
+├── pdfkit@0.20.2
+├── prettier@3.9.6
+├── qrcode@1.5.4
+├── reflect-metadata@0.2.2
+├── rxjs@7.8.2
+├── source-map-support@0.5.21
+├── supertest@7.2.2
+├── ts-jest@29.4.12
+├── ts-loader@9.6.2
+├── ts-node@10.9.2
+├── tsconfig-paths@4.2.0
+├── typescript-eslint@8.68.0
+├── typescript@5.9.3
+└── ua-parser-js@2.0.10
