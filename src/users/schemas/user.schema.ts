@@ -9,6 +9,9 @@ class Mfa {
 
     @Prop()
     method?: string;
+
+    @Prop()
+    secret?: string;
 }
 
 @Schema({ _id: false })
@@ -28,6 +31,7 @@ class NotificationPrefs {
     toJSON: {
         transform: (_doc, ret: Record<string, any>) => {
             delete ret.passwordHash;
+            if (ret.mfa) delete ret.mfa.secret;
             return ret;
         },
     },
