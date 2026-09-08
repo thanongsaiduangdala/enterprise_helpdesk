@@ -12,8 +12,8 @@ export class AuditLogsService {
         @InjectModel(AuditLog.name) private auditLogModel: Model<AuditLogDocument>,
     ) { }
 
-    // Deterministic hash of one entry's content + the hash it chains from. Same inputs
-    // always produce the same hash — that's what lets verify() recompute and compare.
+
+
     private computeHash(entry: {
         actorId: string;
         action: string;
@@ -39,16 +39,16 @@ export class AuditLogsService {
         return crypto.createHash('sha256').update(payload).digest('hex');
     }
 
-    // Called by OTHER services via dependency injection whenever a sensitive action
-    // happens (role change, permission edit, deletion, etc.) — never exposed as a public
-    // HTTP endpoint, since anyone able to POST arbitrary entries defeats the whole point
-    // of a tamper-evident log.
-    //
-    // NOTE: fetching "the last entry" then writing a new one is not atomic — two audit
-    // log() calls firing at the exact same instant could both read the same prevHash and
-    // create a fork in the chain. Low-probability for how infrequently sensitive actions
-    // happen, but worth knowing; a fully rigorous implementation would serialize writes
-    // (e.g. a dedicated write queue) rather than relying on this read-then-write pattern.
+
+
+
+
+
+
+
+
+
+
     async log(
         actorId: string,
         action: string,
@@ -69,7 +69,7 @@ export class AuditLogsService {
         });
     }
 
-    // Filtered search — "Filter by actor, entity, date range" per spec.
+
     findAll(filters: {
         actorId?: string;
         entityType?: string;
@@ -95,10 +95,10 @@ export class AuditLogsService {
         return entry;
     }
 
-    // Walks the entire chain in creation order, recomputing each entry's hash from its
-    // stored content and comparing it against what's actually stored — and checking that
-    // each entry's prevHash matches the PREVIOUS entry's actual hash. Either mismatch
-    // means something in the collection was altered after the fact.
+
+
+
+
     async verifyChain() {
         const entries = await this.auditLogModel.find().sort({ _id: 1 }).exec();
 

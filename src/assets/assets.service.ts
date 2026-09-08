@@ -13,7 +13,7 @@ export class AssetsService {
         @InjectModel(Asset.name) private assetModel: Model<AssetDocument>,
     ) { }
 
-    // Same gap-filling pattern as the other custom-ID collections.
+
     private async generateId(): Promise<string> {
         const assets = await this.assetModel
             .find({ _id: /^AS\d{3}$/ }, { _id: 1 })
@@ -34,7 +34,7 @@ export class AssetsService {
         return new this.assetModel({ _id, ...dto }).save();
     }
 
-    // Filterable registry view — e.g. ?branchId=BX001&status=AVAILABLE
+
     findAll(filters: { branchId?: string; status?: AssetStatus; assigneeId?: string }) {
         const query: any = {};
         if (filters.branchId) query.branchId = filters.branchId;
@@ -49,17 +49,17 @@ export class AssetsService {
         return asset;
     }
 
-    // General field update (type, purchaseDate, warrantyExpiry, branchId...). Status
-    // and assignment can't be changed through here — see assign()/returnAsset()/setStatus().
+
+
     async update(id: string, dto: UpdateAssetDto) {
         const asset = await this.assetModel.findByIdAndUpdate(id, dto, { new: true }).exec();
         if (!asset) throw new NotFoundException('Asset not found');
         return asset;
     }
 
-    // Assigns to a new person. If the asset is already assigned to someone else,
-    // that prior assignment is closed out (returnedAt set) before the new one opens —
-    // this is what makes it work as "reassign" too, not just first-time assign.
+
+
+
     async assign(id: string, dto: AssignAssetDto) {
         const asset = await this.findOne(id);
         if (asset.status === AssetStatus.RETIRED) {
@@ -69,7 +69,7 @@ export class AssetsService {
         const now = new Date();
         const openEntry = asset.assignmentHistory.find((h) => !h.returnedAt);
         if (openEntry) {
-            openEntry.returnedAt = now; // close out the previous holder before reassigning
+            openEntry.returnedAt = now;
         }
 
         asset.assignmentHistory.push({
@@ -82,8 +82,8 @@ export class AssetsService {
         return asset.save();
     }
 
-    // Returns the asset — closes the open history entry, clears the assignee,
-    // and defaults status back to AVAILABLE (use /status afterward for e.g. UNDER_REPAIR).
+
+
     async returnAsset(id: string, dto: ReturnAssetDto) {
         const asset = await this.findOne(id);
         if (asset.status !== AssetStatus.ASSIGNED) {
@@ -99,9 +99,9 @@ export class AssetsService {
         return asset.save();
     }
 
-    // Admin override for Available / Under Repair / Retired — deliberately can't set
-    // ASSIGNED here (see SetAssetStatusDto). Also clears any assignee, since an asset
-    // under repair or retired shouldn't still show as held by someone.
+
+
+
     async setStatus(id: string, status: 'AVAILABLE' | 'UNDER_REPAIR' | 'RETIRED') {
         const asset = await this.findOne(id);
         if (asset.status === AssetStatus.ASSIGNED) {
@@ -119,11 +119,11 @@ export class AssetsService {
         return { deleted: true };
     }
 
-    // "Admin: asset audit report (who has what, overdue returns)" — finds assets still
-    // marked ASSIGNED where the current assignee's user record is now inactive
-    // (offboarded/transferred but the physical item was never returned).
-    // ASSUMES the Users collection is named 'users' — adjust the $lookup `from` field
-    // if your Mongoose collection name differs.
+
+
+
+
+
     async findOverdueReturns() {
         return this.assetModel.aggregate([
             { $match: { status: AssetStatus.ASSIGNED, currentAssigneeId: { $exists: true } } },

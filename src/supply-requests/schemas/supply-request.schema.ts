@@ -12,7 +12,7 @@ export enum SupplyRequestStatus {
 
 @Schema({ _id: false })
 class SupplyRequestItem {
-    // Omitted for free-text "other" items that aren't in the catalog.
+
     @Prop({ type: String, ref: 'SupplyCatalogItem' })
     catalogItemId?: string;
 
@@ -29,7 +29,7 @@ class SupplyRequestItem {
 @Schema({ timestamps: true })
 export class SupplyRequest {
     @Prop({ type: String })
-    _id!: string; // e.g. 'SR001'
+    _id!: string;
 
     @Prop({ type: Types.ObjectId, ref: 'User', required: true })
     requestedBy!: Types.ObjectId;

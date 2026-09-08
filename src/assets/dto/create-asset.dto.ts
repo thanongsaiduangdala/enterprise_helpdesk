@@ -27,6 +27,6 @@ export class CreateAssetDto {
     @IsDateString()
     warrantyExpiry?: string;
 
-    // status and currentAssigneeId are intentionally NOT here — a new asset always
-    // starts AVAILABLE with no assignee. Use the /assign endpoint to assign it.
+
+
 }

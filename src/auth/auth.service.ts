@@ -23,8 +23,8 @@ export class AuthService {
             throw new UnauthorizedException('This account has been deactivated');
         }
 
-        const role = user.role as any; // populated Role document
-        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // matches JwtModule's 1d expiry
+        const role = user.role as any;
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
         const session = await this.sessionsService.create(
             String(user._id),

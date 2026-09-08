@@ -8,9 +8,9 @@ describe('AuthController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
-      // FIX: AuthController depends on AuthService via constructor
-      // injection. Without providing it (even as a mock), Nest can't
-      // build the module and this test throws before it even runs.
+
+
+
       providers: [
         {
           provide: AuthService,

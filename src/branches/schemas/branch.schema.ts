@@ -15,7 +15,7 @@ class Location {
     country!: string;
 
     @Prop({ required: true })
-    timezone!: string; // e.g. 'Asia/Vientiane' — IANA tz name, needed for SLA business-hours math
+    timezone!: string;
 }
 
 @Schema({ _id: false })
@@ -30,7 +30,7 @@ class DayHours {
     isOpen!: boolean;
 
     @Prop({ example: '09:00' })
-    open?: string; // 24h "HH:mm", omit/ignore when isOpen is false
+    open?: string;
 
     @Prop({ example: '18:00' })
     close?: string;
@@ -42,7 +42,7 @@ class Holiday {
     date!: Date;
 
     @Prop({ required: true })
-    name!: string; // e.g. 'Lao New Year'
+    name!: string;
 }
 
 @Schema({ timestamps: true })

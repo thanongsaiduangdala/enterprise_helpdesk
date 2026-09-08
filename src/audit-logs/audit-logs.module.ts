@@ -10,6 +10,6 @@ import { AuditLogsController } from './audit-logs.controller';
     ],
     controllers: [AuditLogsController],
     providers: [AuditLogsService],
-    exports: [AuditLogsService], // exported so any other module can inject and call .log()
+    exports: [AuditLogsService],
 })
 export class AuditLogsModule { }

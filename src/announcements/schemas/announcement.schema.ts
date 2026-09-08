@@ -12,7 +12,7 @@ export enum AnnouncementScope {
 @Schema({ timestamps: true })
 export class Announcement {
     @Prop({ type: String })
-    _id!: string; // e.g. 'AN001' — see AnnouncementsService.generateId() for the gap-filling logic
+    _id!: string;
 
     @Prop({ required: true })
     title!: string;
@@ -23,15 +23,15 @@ export class Announcement {
     @Prop({ enum: AnnouncementScope, required: true })
     scope!: AnnouncementScope;
 
-    // Only set when scope is BRANCH (company-wide announcements leave this unset).
+
     @Prop({ type: String, ref: 'Branch' })
     branchId?: string;
 
-    // Only set when scope is DEPARTMENT.
+
     @Prop({ type: String, ref: 'Department' })
     departmentId?: string;
 
-    // Defaults to "now" at creation if omitted — see service. Gates visibility on the dashboard feed.
+
     @Prop({ required: true })
     publishAt!: Date;
 

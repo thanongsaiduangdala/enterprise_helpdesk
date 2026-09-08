@@ -22,7 +22,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         if (!valid) {
             throw new UnauthorizedException('Session has been revoked or expired');
         }
-        this.sessionsService.touch(payload.sessionId); // not awaited — don't block the request on this
+        this.sessionsService.touch(payload.sessionId);
 
         return {
             userId: payload.sub,

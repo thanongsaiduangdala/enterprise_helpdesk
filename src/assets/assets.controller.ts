@@ -46,7 +46,7 @@ export class AssetsController {
         return this.assetsService.findAll({ branchId, status, assigneeId });
     }
 
-    // Placed before ':id' so it isn't swallowed by that route.
+
     @Get('overdue')
     @RequirePermission('assets', 'read')
     findOverdue() {

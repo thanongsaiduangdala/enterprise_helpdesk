@@ -43,6 +43,6 @@ export class CreateSupplyRequestDto {
     @Type(() => SupplyRequestItemDto)
     items!: SupplyRequestItemDto[];
 
-    // requestedBy is intentionally NOT here — taken from the authenticated user, same
-    // reasoning as room bookings: never trust who's "requesting" from the request body.
+
+
 }

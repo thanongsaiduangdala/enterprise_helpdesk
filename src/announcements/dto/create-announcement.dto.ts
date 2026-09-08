@@ -44,5 +44,4 @@ export class CreateAnnouncementDto {
     @IsBoolean()
     pinned?: boolean;
 
-    // createdBy is intentionally NOT here — taken from the authenticated user.
 }

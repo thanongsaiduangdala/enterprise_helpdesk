@@ -19,7 +19,7 @@ class AssignmentHistoryEntry {
     assignedAt!: Date;
 
     @Prop()
-    returnedAt?: Date; // absent while the assignment is still active
+    returnedAt?: Date;
 
     @Prop()
     note?: string;
@@ -28,18 +28,18 @@ class AssignmentHistoryEntry {
 @Schema({ timestamps: true })
 export class Asset {
     @Prop({ type: String })
-    _id!: string; // e.g. 'AS001' — see AssetsService.generateId() for the gap-filling logic
+    _id!: string;
 
     @Prop({ required: true, unique: true })
-    assetTag!: string; // the physical inventory label, e.g. 'A-1042'
+    assetTag!: string;
 
     @Prop({ required: true })
-    type!: string; // e.g. 'Laptop', 'Monitor', 'ID Card', 'Phone'
+    type!: string;
 
     @Prop({ enum: AssetStatus, default: AssetStatus.AVAILABLE })
     status!: AssetStatus;
 
-    // Only set while status is ASSIGNED. Cleared on return.
+
     @Prop({ type: Types.ObjectId, ref: 'User' })
     currentAssigneeId?: Types.ObjectId;
 
@@ -52,8 +52,8 @@ export class Asset {
     @Prop()
     warrantyExpiry?: Date;
 
-    // Full audit trail of every assignment, newest last. The most recent entry
-    // with no returnedAt (if any) is the current assignment.
+
+
     @Prop({ type: [AssignmentHistoryEntry], default: [] })
     assignmentHistory!: AssignmentHistoryEntry[];
 }

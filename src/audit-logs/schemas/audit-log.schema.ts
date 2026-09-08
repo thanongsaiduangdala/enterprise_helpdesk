@@ -3,27 +3,27 @@ import { Document, Types } from 'mongoose';
 
 export type AuditLogDocument = AuditLog & Document;
 
-@Schema({ timestamps: false }) // 'timestamp' below is the authoritative time — see AuditLogsService
+@Schema({ timestamps: false })
 export class AuditLog {
     @Prop({ type: Types.ObjectId, ref: 'User', required: true })
     actorId!: Types.ObjectId;
 
     @Prop({ required: true })
-    action!: string; // e.g. 'ROLE_PERMISSION_CHANGED', 'USER_DELETED', 'TICKET_REASSIGNED'
+    action!: string;
 
     @Prop({ required: true })
-    entityType!: string; // e.g. 'User', 'Role', 'Ticket'
+    entityType!: string;
 
-    // Kept as a plain string, not a typed ref — entityType varies per entry, and the
-    // referenced collections use different ID formats (some ObjectId, some custom strings).
+
+
     @Prop({ required: true })
     entityId!: string;
 
     @Prop({ type: Object })
-    before?: Record<string, any>; // absent for CREATE actions — nothing existed before
+    before?: Record<string, any>;
 
     @Prop({ type: Object })
-    after?: Record<string, any>; // absent for DELETE actions — nothing exists after
+    after?: Record<string, any>;
 
     @Prop()
     ip?: string;
@@ -31,14 +31,14 @@ export class AuditLog {
     @Prop({ required: true })
     timestamp!: Date;
 
-    // The chain: this entry's hash covers its own content AND the previous entry's hash.
-    // Altering any past entry changes its hash, which no longer matches what the NEXT
-    // entry's prevHash recorded — that mismatch is exactly what makes tampering detectable.
+
+
+
     @Prop({ required: true })
     hash!: string;
 
     @Prop({ required: true })
-    prevHash!: string; // 'GENESIS' for the very first entry in the collection
+    prevHash!: string;
 }
 
 export const AuditLogSchema = SchemaFactory.createForClass(AuditLog);
