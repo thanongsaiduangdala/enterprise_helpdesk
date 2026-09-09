@@ -3,13 +3,13 @@ import { JwtService } from '@nestjs/jwt';
 import { SessionsService } from '../sessions/sessions.service';
 import { validateSessionPayload } from './session-token.util';
 
-// Deliberately separate from JwtAuthGuard/JwtStrategy rather than extending them, so this
-// narrow two-endpoint special case can't accidentally loosen what every OTHER authenticated
-// route in the app accepts. Two valid token shapes:
-//   1. purpose: 'mfa_setup_required' — short-lived, no session, issued by AuthService.login()
-//      when a role mandates MFA but it hasn't been configured yet.
-//   2. A normal full session token — the existing "already logged in, enabling MFA
-//      voluntarily from account settings" path.
+
+
+
+
+
+
+
 @Injectable()
 export class MfaSetupGuard implements CanActivate {
     constructor(

@@ -7,8 +7,8 @@ import { UsersService } from '../users/users.service';
 import { SessionsService, DeviceInfoInput } from '../sessions/sessions.service';
 import { MfaAttemptsService } from '../mfa-attempts/mfa-attempts.service';
 
-const MFA_CHALLENGE_TTL_SECONDS = 5 * 60; // matches the mfaToken's own JWT expiry — keep these in sync
-const MFA_LOGIN_LOCKOUT_TTL_SECONDS = 15 * 60; // how long a login-lockout persists once triggered
+const MFA_CHALLENGE_TTL_SECONDS = 5 * 60;
+const MFA_LOGIN_LOCKOUT_TTL_SECONDS = 15 * 60;
 const MFA_ENABLE_LOCKOUT_TTL_SECONDS = 15 * 60;
 const MFA_SETUP_REQUIRED_TTL = '15m';
 
@@ -33,9 +33,9 @@ export class AuthService {
         }
 
         if (user.mfa?.enabled) {
-            // Account-level lockout check happens BEFORE a new challenge is even issued —
-            // this is what actually closes the bypass: no amount of re-calling /auth/login
-            // resets this, since it's keyed on the user, not the token.
+
+
+
             await this.mfaAttemptsService.assertNotLockedOut(`login:${user._id}`);
 
             const mfaToken = this.jwtService.sign(
@@ -80,9 +80,9 @@ export class AuthService {
         const user = await this.usersService.findOneRaw(userId);
 
         const secret = generateSecret();
-        // Writes to mfa.pendingSecret, NOT the live mfa.secret — so re-running setup on an
-        // account that already has working MFA can't break it. The old secret keeps
-        // working right up until the new one is actually confirmed via /auth/mfa/enable.
+
+
+
         await this.usersService.setPendingMfaSecret(userId, secret);
 
         const otpauthUrl = generateURI({
@@ -111,7 +111,7 @@ export class AuthService {
         }
 
         await this.mfaAttemptsService.reset(key);
-        // Promotes pendingSecret -> the live secret, only now that it's actually verified.
+
         await this.usersService.confirmMfaEnabled(userId);
 
         if (deviceInfo) {
@@ -137,8 +137,8 @@ export class AuthService {
         const tokenKey = this.mfaAttemptsService.hashKey(mfaToken);
         const lockoutKey = `login:${payload.sub}`;
 
-        // Two independent checks now: has THIS token been used already, and is the
-        // ACCOUNT locked out from repeated wrong codes across any number of tokens.
+
+
         await this.mfaAttemptsService.assertNotConsumed(tokenKey);
         await this.mfaAttemptsService.assertNotLockedOut(lockoutKey);
 

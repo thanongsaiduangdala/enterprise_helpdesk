@@ -29,8 +29,8 @@ export class AuthController {
         return this.authService.login(dto.email, dto.password, extractDeviceInfo(req));
     }
 
-    // Swapped from JwtAuthGuard to MfaSetupGuard so this also accepts the short-lived
-    // mfa_setup_required token from the FORCED setup flow, not just a normal session.
+
+
     @Post('mfa/setup')
     @UseGuards(MfaSetupGuard)
     @ApiBearerAuth()
@@ -43,10 +43,10 @@ export class AuthController {
     @ApiBearerAuth()
     @Throttle({ default: { limit: 5, ttl: 60000 } })
     enableMfa(@Body() dto: MfaCodeDto, @Req() req: any) {
-        // Only pass deviceInfo when this came from the forced pre-session flow — that's
-        // the signal AuthService.enableMfa() uses to decide whether to complete the login
-        // and hand back a real accessToken, versus the voluntary flow where a session
-        // already exists and none of that is needed.
+
+
+
+
         const isForcedSetupFlow = req.user.purpose === 'mfa_setup_required';
         return this.authService.enableMfa(
             req.user.userId,

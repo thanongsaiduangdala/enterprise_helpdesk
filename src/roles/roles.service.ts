@@ -61,6 +61,12 @@ export class RolesService {
         }).exec();
     }
 
+    // Used by the SLA escalation cron to resolve a generic notifyRole string (e.g.
+    // 'BRANCH_ADMIN') into an actual role document it can then find active users for.
+    findByName(name: string) {
+        return this.roleModel.findOne({ name }).exec();
+    }
+
     async findOne(id: string) {
         const role = await this.roleModel.findById(id).exec();
         if (!role) throw new NotFoundException('Role not found');

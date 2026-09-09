@@ -32,12 +32,17 @@ class TicketSla {
     @Prop()
     resolutionDueAt?: Date;
 
-
     @Prop({ default: false })
     breached!: boolean;
 
     @Prop({ type: [SlaPausedInterval], default: [] })
     pausedIntervals!: SlaPausedInterval[];
+
+    // Tracks which escalation rules (by their afterMinutesOverdue threshold) have already
+    // fired for this ticket, so the breach cron doesn't re-notify on every tick once a
+    // threshold has been crossed.
+    @Prop({ type: [Number], default: [] })
+    escalationsTriggered!: number[];
 }
 
 @Schema({ _id: false })
@@ -68,11 +73,6 @@ class TicketHistoryEntry {
 
     @Prop()
     note?: string;
-
-
-
-
-
 }
 
 @Schema({ _id: false })
@@ -87,12 +87,17 @@ class TicketCsat {
     submittedAt?: Date;
 }
 
+@Schema({ _id: false })
+class TicketIdleReminderState {
+    @Prop({ default: 0 })
+    reminderCount!: number;
+
+    @Prop()
+    lastReminderAt?: Date;
+}
+
 @Schema({ timestamps: true })
 export class Ticket {
-
-
-
-
     @Prop({ required: true, unique: true })
     ticketNumber!: string;
 
@@ -114,7 +119,6 @@ export class Ticket {
     @Prop({ type: Types.ObjectId, ref: 'User', required: true })
     raisedBy!: Types.ObjectId;
 
-
     @Prop({ type: Types.ObjectId, ref: 'User' })
     assignedAgent?: Types.ObjectId;
 
@@ -123,8 +127,6 @@ export class Ticket {
 
     @Prop({ required: true, enum: TICKET_PRIORITIES })
     priority!: TicketPriority;
-
-
 
     @Prop({ type: Types.ObjectId, ref: 'SlaPolicy' })
     slaPolicyId?: Types.ObjectId;
@@ -140,6 +142,9 @@ export class Ticket {
 
     @Prop({ type: TicketCsat, default: () => ({}) })
     csat!: TicketCsat;
+
+    @Prop({ type: TicketIdleReminderState, default: () => ({}) })
+    idleReminderState!: TicketIdleReminderState;
 
     @Prop({ required: true, default: Date.now })
     lastActivityAt!: Date;
