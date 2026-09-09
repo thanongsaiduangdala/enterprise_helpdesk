@@ -9,16 +9,16 @@ import { RolesService } from '../roles/roles.service';
 import { UsersService } from '../users/users.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
+// WAITING_ON_USER is deliberately NOT in here — a paused ticket's SLA clock isn't
+// running, so it has no business being flagged as breached while paused. See
+// computeEffectiveDueDate() for how a ticket that RESUMES from a pause gets its
+// deadline pushed out by however long it spent paused.
 const OPEN_STATUSES = [
     TicketStatus.OPEN,
     TicketStatus.ASSIGNED,
     TicketStatus.IN_PROGRESS,
-    TicketStatus.WAITING_ON_USER,
 ];
 
-// Only these two statuses count as "actively being worked" for idle-reminder purposes.
-// OPEN (nobody's picked it up yet) and WAITING_ON_USER (the employee is the one holding
-// things up, not the agent) shouldn't generate a nag aimed at an agent.
 const IDLE_TRACKED_STATUSES = [TicketStatus.ASSIGNED, TicketStatus.IN_PROGRESS];
 
 @Injectable()
@@ -34,12 +34,6 @@ export class SlaMonitorService {
         private notificationsService: NotificationsService,
     ) { }
 
-    // Resolves who an escalation rule's notifyRole actually points at. 'DEPT_MANAGER' is
-    // handled specially — it means THIS ticket's own department manager(s), pulled from
-    // Department.managerIds, not a global broadcast to every manager in the company.
-    // Any other value is treated as a literal role name and notifies every active user
-    // holding that role, company-wide. This is an interpretation of intent, not something
-    // your schema states explicitly — adjust if other role names need department-scoping too.
     private async resolveRecipients(ticket: TicketDocument, notifyRole: string): Promise<string[]> {
         if (notifyRole === 'DEPT_MANAGER') {
             const department = await this.departmentsService.findOne(ticket.departmentId);
@@ -54,26 +48,42 @@ export class SlaMonitorService {
         return users.map((u: any) => u._id.toString());
     }
 
-    // Every 5 minutes: find tickets whose resolution deadline has passed, flip
-    // sla.breached the first time that happens, and fire whichever escalation rules have
-    // now come due based on how many minutes overdue the ticket is. Each rule fires at
-    // most once per ticket — tracked via sla.escalationsTriggered — so a ticket sitting
-    // breached for days doesn't re-notify everyone on every single tick.
+    // Adds up every CLOSED paused interval (has both pausedAt and resumedAt) and pushes
+    // the stored resolutionDueAt out by that total — so time spent waiting on the user
+    // doesn't count against the agent's SLA. A currently-open pause (no resumedAt yet)
+    // contributes nothing here, because that ticket is WAITING_ON_USER right now and
+    // already excluded from OPEN_STATUSES above, so it never reaches this calculation
+    // while still paused.
+    private computeEffectiveDueDate(ticket: TicketDocument): Date | undefined {
+        if (!ticket.sla?.resolutionDueAt) return undefined;
+
+        const totalPausedMs = (ticket.sla.pausedIntervals ?? []).reduce((sum, interval) => {
+            if (interval.pausedAt && interval.resumedAt) {
+                return sum + (new Date(interval.resumedAt).getTime() - new Date(interval.pausedAt).getTime());
+            }
+            return sum;
+        }, 0);
+
+        return new Date(ticket.sla.resolutionDueAt.getTime() + totalPausedMs);
+    }
+
     @Cron(CronExpression.EVERY_5_MINUTES)
     async checkBreaches() {
         const now = new Date();
         const candidates = await this.ticketModel.find({
             status: { $in: OPEN_STATUSES },
-            'sla.resolutionDueAt': { $exists: true, $lte: now },
+            'sla.resolutionDueAt': { $exists: true },
         }).exec();
 
         if (!candidates.length) return;
-        this.logger.log(`Checking ${candidates.length} ticket(s) against their SLA deadline...`);
 
+        let checkedCount = 0;
         for (const ticket of candidates) {
-            const minutesOverdue = Math.floor(
-                (now.getTime() - ticket.sla.resolutionDueAt!.getTime()) / 60_000,
-            );
+            const effectiveDueDate = this.computeEffectiveDueDate(ticket);
+            if (!effectiveDueDate || now <= effectiveDueDate) continue;
+            checkedCount++;
+
+            const minutesOverdue = Math.floor((now.getTime() - effectiveDueDate.getTime()) / 60_000);
 
             if (!ticket.sla.breached) {
                 ticket.sla.breached = true;
@@ -121,15 +131,12 @@ export class SlaMonitorService {
 
             await ticket.save();
         }
+
+        if (checkedCount > 0) {
+            this.logger.log(`SLA breach check: processed ${checkedCount} overdue ticket(s)`);
+        }
     }
 
-    // Every minute: for tickets actively being worked, checks whether it's been idle
-    // longer than the policy's configured interval since the last reminder (or since
-    // last real activity, if no reminder has fired yet), and if so nudges the assigned
-    // agent again. Every time the reminder count reaches a multiple of
-    // escalateAfterReminders, also nudges the department manager — this repeats for as
-    // long as the ticket stays idle, matching the spec's "repeating until it's closed"
-    // rather than escalating just once.
     @Cron(CronExpression.EVERY_MINUTE)
     async checkIdleTickets() {
         const now = new Date();
