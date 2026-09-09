@@ -5,6 +5,11 @@ import { generateSecret, generate, verify, generateURI } from 'otplib';
 import * as qrcode from 'qrcode';
 import { UsersService } from '../users/users.service';
 import { SessionsService, DeviceInfoInput } from '../sessions/sessions.service';
+import { MfaAttemptsService } from '../mfa-attempts/mfa-attempts.service';
+
+const MFA_CHALLENGE_TTL_SECONDS = 5 * 60; // matches the mfaToken's own JWT expiry — keep these in sync
+const MFA_ENABLE_LOCKOUT_TTL_SECONDS = 15 * 60;
+const MFA_SETUP_REQUIRED_TTL = '15m';
 
 @Injectable()
 export class AuthService {
@@ -12,6 +17,7 @@ export class AuthService {
         private usersService: UsersService,
         private jwtService: JwtService,
         private sessionsService: SessionsService,
+        private mfaAttemptsService: MfaAttemptsService,
     ) { }
 
     async login(email: string, password: string, deviceInfo: DeviceInfoInput) {
@@ -25,23 +31,31 @@ export class AuthService {
             throw new UnauthorizedException('This account has been deactivated');
         }
 
-
         if (user.mfa?.enabled) {
             const mfaToken = this.jwtService.sign(
                 { sub: user._id, purpose: 'mfa_challenge' },
                 { expiresIn: '5m' },
             );
+            await this.mfaAttemptsService.createChallenge(mfaToken, MFA_CHALLENGE_TTL_SECONDS);
             return { mfaRequired: true, mfaToken };
         }
 
-        const result = await this.completeLogin(user, deviceInfo);
-
         const role = user.role as any;
-        if (role?.mfaRequired && !user.mfa?.enabled) {
-            return { ...result, mfaSetupRequired: true };
+        if (role?.mfaRequired) {
+            // Role mandates MFA and it isn't configured yet — do NOT call completeLogin here.
+            // No session is created, no accessToken is issued. Instead, a narrow, short-lived
+            // token is handed out that ONLY satisfies MfaSetupGuard on /auth/mfa/setup and
+            // /auth/mfa/enable — it cannot be used to call any other authenticated endpoint,
+            // since every other route uses JwtAuthGuard, which requires a sessionId this
+            // token deliberately doesn't carry.
+            const setupToken = this.jwtService.sign(
+                { sub: user._id, purpose: 'mfa_setup_required' },
+                { expiresIn: MFA_SETUP_REQUIRED_TTL },
+            );
+            return { mfaSetupRequired: true, setupToken };
         }
 
-        return result;
+        return this.completeLogin(user, deviceInfo);
     }
 
     private async completeLogin(user: any, deviceInfo: DeviceInfoInput) {
@@ -78,18 +92,36 @@ export class AuthService {
         return { otpauthUrl, qrCodeDataUrl };
     }
 
-    async enableMfa(userId: string, code: string) {
+    // deviceInfo is only passed when this is called via the FORCED setup flow (no session
+    // exists yet) — see MfaSetupGuard / the controller. When present, a real session is
+    // created here and a real accessToken returned, so the person doesn't have to type
+    // their password again immediately after finishing MFA setup. When absent (the
+    // voluntary "enable MFA from account settings" path, where a session already exists),
+    // this just confirms enablement and returns as before.
+    async enableMfa(userId: string, code: string, deviceInfo?: DeviceInfoInput) {
         const user = await this.usersService.findOneRaw(userId);
         if (!user.mfa?.secret) {
             throw new BadRequestException('Call /auth/mfa/setup first to generate a secret before enabling MFA');
         }
 
+        const key = `enable:${userId}`;
+        await this.mfaAttemptsService.assertUsable(key);
+
         const result = await verify({ secret: user.mfa.secret, token: code });
         if (!result.valid) {
+            await this.mfaAttemptsService.recordFailure(key, MFA_ENABLE_LOCKOUT_TTL_SECONDS);
             throw new BadRequestException('Invalid MFA code');
         }
 
+        await this.mfaAttemptsService.reset(key);
         await this.usersService.confirmMfaEnabled(userId);
+
+        if (deviceInfo) {
+            const fullUser = await this.usersService.findOne(userId);
+            const loginResult = await this.completeLogin(fullUser, deviceInfo);
+            return { enabled: true, ...loginResult };
+        }
+
         return { enabled: true };
     }
 
@@ -104,6 +136,9 @@ export class AuthService {
             throw new UnauthorizedException('Invalid token for this operation');
         }
 
+        const key = this.mfaAttemptsService.hashKey(mfaToken);
+        await this.mfaAttemptsService.assertUsable(key);
+
         const user = await this.usersService.findOne(payload.sub);
         if (!user) throw new NotFoundException('User not found');
         if (!user.mfa?.secret) {
@@ -112,9 +147,11 @@ export class AuthService {
 
         const result = await verify({ secret: user.mfa.secret, token: code });
         if (!result.valid) {
+            await this.mfaAttemptsService.recordFailure(key, MFA_CHALLENGE_TTL_SECONDS);
             throw new UnauthorizedException('Invalid MFA code');
         }
 
+        await this.mfaAttemptsService.markConsumed(key);
         return this.completeLogin(user, deviceInfo);
     }
 }

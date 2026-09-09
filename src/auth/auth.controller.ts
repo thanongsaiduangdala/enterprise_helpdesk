@@ -1,11 +1,13 @@
 import { Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { UAParser } from 'ua-parser-js';
 import { AuthService } from "./auth.service";
 import { LoginDto } from "./dto/login.dto";
 import { MfaCodeDto } from "./dto/mfa-code.dto";
 import { MfaVerifyLoginDto } from "./dto/mfa-verify-login.dto";
 import { JwtAuthGuard } from "./jwt-auth.guard";
+import { MfaSetupGuard } from "./mfa-setup.guard";
 
 function extractDeviceInfo(req: any) {
     const parser = new UAParser(req.headers['user-agent']);
@@ -22,25 +24,39 @@ export class AuthController {
     constructor(private authService: AuthService) { }
 
     @Post('login')
+    @Throttle({ default: { limit: 10, ttl: 60000 } })
     login(@Body() dto: LoginDto, @Req() req: any) {
         return this.authService.login(dto.email, dto.password, extractDeviceInfo(req));
     }
 
+    // Swapped from JwtAuthGuard to MfaSetupGuard so this also accepts the short-lived
+    // mfa_setup_required token from the FORCED setup flow, not just a normal session.
     @Post('mfa/setup')
-    @UseGuards(JwtAuthGuard)
+    @UseGuards(MfaSetupGuard)
     @ApiBearerAuth()
     setupMfa(@Req() req: any) {
         return this.authService.setupMfa(req.user.userId);
     }
 
     @Post('mfa/enable')
-    @UseGuards(JwtAuthGuard)
+    @UseGuards(MfaSetupGuard)
     @ApiBearerAuth()
+    @Throttle({ default: { limit: 5, ttl: 60000 } })
     enableMfa(@Body() dto: MfaCodeDto, @Req() req: any) {
-        return this.authService.enableMfa(req.user.userId, dto.code);
+        // Only pass deviceInfo when this came from the forced pre-session flow — that's
+        // the signal AuthService.enableMfa() uses to decide whether to complete the login
+        // and hand back a real accessToken, versus the voluntary flow where a session
+        // already exists and none of that is needed.
+        const isForcedSetupFlow = req.user.purpose === 'mfa_setup_required';
+        return this.authService.enableMfa(
+            req.user.userId,
+            dto.code,
+            isForcedSetupFlow ? extractDeviceInfo(req) : undefined,
+        );
     }
 
     @Post('mfa/verify-login')
+    @Throttle({ default: { limit: 5, ttl: 60000 } })
     verifyMfaLogin(@Body() dto: MfaVerifyLoginDto, @Req() req: any) {
         return this.authService.verifyMfaLogin(dto.mfaToken, dto.code, extractDeviceInfo(req));
     }
