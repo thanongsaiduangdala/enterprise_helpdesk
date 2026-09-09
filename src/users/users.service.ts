@@ -214,10 +214,6 @@ export class UsersService {
         return user;
     }
 
-
-
-
-
     async setMfaSecret(id: string, secret: string) {
         const user = await this.userModel.findByIdAndUpdate(
             id,
@@ -228,14 +224,35 @@ export class UsersService {
         return user;
     }
 
-    async confirmMfaEnabled(id: string) {
+    async setPendingMfaSecret(id: string, secret: string) {
         const user = await this.userModel.findByIdAndUpdate(
             id,
-            { 'mfa.enabled': true, 'mfa.method': 'totp' },
+            { 'mfa.pendingSecret': secret },
             { new: true },
         ).exec();
         if (!user) throw new NotFoundException('User not found');
         return user;
+    }
+
+    async confirmMfaEnabled(id: string) {
+        const user = await this.userModel.findById(id).exec();
+        if (!user) throw new NotFoundException('User not found');
+        if (!user.mfa?.pendingSecret) {
+            throw new NotFoundException('No pending MFA secret to confirm');
+        }
+
+        const updated = await this.userModel.findByIdAndUpdate(
+            id,
+            {
+                'mfa.enabled': true,
+                'mfa.method': 'totp',
+                'mfa.secret': user.mfa.pendingSecret,
+                $unset: { 'mfa.pendingSecret': '' },
+            },
+            { new: true },
+        ).exec();
+        if (!updated) throw new NotFoundException('User not found');
+        return updated;
     }
 
     async findOneRaw(id: string) {

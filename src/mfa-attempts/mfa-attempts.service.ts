@@ -16,8 +16,6 @@ export class MfaAttemptsService {
         return crypto.createHash('sha256').update(input).digest('hex');
     }
 
-
-
     async createChallenge(mfaToken: string, ttlSeconds: number) {
         const key = this.hashKey(mfaToken);
         await this.mfaAttemptModel.create({
@@ -28,19 +26,19 @@ export class MfaAttemptsService {
         });
     }
 
-
-
-    async assertUsable(key: string) {
+    async assertNotConsumed(key: string) {
         const record = await this.mfaAttemptModel.findOne({ key }).exec();
-        if (!record) return;
-        if (record.consumed) {
+        if (record?.consumed) {
             throw new UnauthorizedException('This code has already been used — please log in again');
-        }
-        if (record.failureCount >= MAX_ATTEMPTS) {
-            throw new UnauthorizedException('Too many failed attempts — please log in again');
         }
     }
 
+    async assertNotLockedOut(key: string) {
+        const record = await this.mfaAttemptModel.findOne({ key }).exec();
+        if (record && record.failureCount >= MAX_ATTEMPTS) {
+            throw new UnauthorizedException('Too many failed attempts — please try again later');
+        }
+    }
 
     async recordFailure(key: string, ttlSeconds: number) {
         await this.mfaAttemptModel.updateOne(
@@ -56,8 +54,6 @@ export class MfaAttemptsService {
     async markConsumed(key: string) {
         await this.mfaAttemptModel.updateOne({ key }, { $set: { consumed: true } }).exec();
     }
-
-
 
     async reset(key: string) {
         await this.mfaAttemptModel.deleteOne({ key }).exec();

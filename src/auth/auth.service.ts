@@ -8,6 +8,7 @@ import { SessionsService, DeviceInfoInput } from '../sessions/sessions.service';
 import { MfaAttemptsService } from '../mfa-attempts/mfa-attempts.service';
 
 const MFA_CHALLENGE_TTL_SECONDS = 5 * 60; // matches the mfaToken's own JWT expiry — keep these in sync
+const MFA_LOGIN_LOCKOUT_TTL_SECONDS = 15 * 60; // how long a login-lockout persists once triggered
 const MFA_ENABLE_LOCKOUT_TTL_SECONDS = 15 * 60;
 const MFA_SETUP_REQUIRED_TTL = '15m';
 
@@ -32,6 +33,11 @@ export class AuthService {
         }
 
         if (user.mfa?.enabled) {
+            // Account-level lockout check happens BEFORE a new challenge is even issued —
+            // this is what actually closes the bypass: no amount of re-calling /auth/login
+            // resets this, since it's keyed on the user, not the token.
+            await this.mfaAttemptsService.assertNotLockedOut(`login:${user._id}`);
+
             const mfaToken = this.jwtService.sign(
                 { sub: user._id, purpose: 'mfa_challenge' },
                 { expiresIn: '5m' },
@@ -42,12 +48,6 @@ export class AuthService {
 
         const role = user.role as any;
         if (role?.mfaRequired) {
-            // Role mandates MFA and it isn't configured yet — do NOT call completeLogin here.
-            // No session is created, no accessToken is issued. Instead, a narrow, short-lived
-            // token is handed out that ONLY satisfies MfaSetupGuard on /auth/mfa/setup and
-            // /auth/mfa/enable — it cannot be used to call any other authenticated endpoint,
-            // since every other route uses JwtAuthGuard, which requires a sessionId this
-            // token deliberately doesn't carry.
             const setupToken = this.jwtService.sign(
                 { sub: user._id, purpose: 'mfa_setup_required' },
                 { expiresIn: MFA_SETUP_REQUIRED_TTL },
@@ -80,7 +80,10 @@ export class AuthService {
         const user = await this.usersService.findOneRaw(userId);
 
         const secret = generateSecret();
-        await this.usersService.setMfaSecret(userId, secret);
+        // Writes to mfa.pendingSecret, NOT the live mfa.secret — so re-running setup on an
+        // account that already has working MFA can't break it. The old secret keeps
+        // working right up until the new one is actually confirmed via /auth/mfa/enable.
+        await this.usersService.setPendingMfaSecret(userId, secret);
 
         const otpauthUrl = generateURI({
             issuer: 'Enterprise Helpdesk',
@@ -92,28 +95,23 @@ export class AuthService {
         return { otpauthUrl, qrCodeDataUrl };
     }
 
-    // deviceInfo is only passed when this is called via the FORCED setup flow (no session
-    // exists yet) — see MfaSetupGuard / the controller. When present, a real session is
-    // created here and a real accessToken returned, so the person doesn't have to type
-    // their password again immediately after finishing MFA setup. When absent (the
-    // voluntary "enable MFA from account settings" path, where a session already exists),
-    // this just confirms enablement and returns as before.
     async enableMfa(userId: string, code: string, deviceInfo?: DeviceInfoInput) {
         const user = await this.usersService.findOneRaw(userId);
-        if (!user.mfa?.secret) {
+        if (!user.mfa?.pendingSecret) {
             throw new BadRequestException('Call /auth/mfa/setup first to generate a secret before enabling MFA');
         }
 
         const key = `enable:${userId}`;
-        await this.mfaAttemptsService.assertUsable(key);
+        await this.mfaAttemptsService.assertNotLockedOut(key);
 
-        const result = await verify({ secret: user.mfa.secret, token: code });
+        const result = await verify({ secret: user.mfa.pendingSecret, token: code });
         if (!result.valid) {
             await this.mfaAttemptsService.recordFailure(key, MFA_ENABLE_LOCKOUT_TTL_SECONDS);
             throw new BadRequestException('Invalid MFA code');
         }
 
         await this.mfaAttemptsService.reset(key);
+        // Promotes pendingSecret -> the live secret, only now that it's actually verified.
         await this.usersService.confirmMfaEnabled(userId);
 
         if (deviceInfo) {
@@ -136,8 +134,13 @@ export class AuthService {
             throw new UnauthorizedException('Invalid token for this operation');
         }
 
-        const key = this.mfaAttemptsService.hashKey(mfaToken);
-        await this.mfaAttemptsService.assertUsable(key);
+        const tokenKey = this.mfaAttemptsService.hashKey(mfaToken);
+        const lockoutKey = `login:${payload.sub}`;
+
+        // Two independent checks now: has THIS token been used already, and is the
+        // ACCOUNT locked out from repeated wrong codes across any number of tokens.
+        await this.mfaAttemptsService.assertNotConsumed(tokenKey);
+        await this.mfaAttemptsService.assertNotLockedOut(lockoutKey);
 
         const user = await this.usersService.findOne(payload.sub);
         if (!user) throw new NotFoundException('User not found');
@@ -147,11 +150,12 @@ export class AuthService {
 
         const result = await verify({ secret: user.mfa.secret, token: code });
         if (!result.valid) {
-            await this.mfaAttemptsService.recordFailure(key, MFA_CHALLENGE_TTL_SECONDS);
+            await this.mfaAttemptsService.recordFailure(lockoutKey, MFA_LOGIN_LOCKOUT_TTL_SECONDS);
             throw new UnauthorizedException('Invalid MFA code');
         }
 
-        await this.mfaAttemptsService.markConsumed(key);
+        await this.mfaAttemptsService.markConsumed(tokenKey);
+        await this.mfaAttemptsService.reset(lockoutKey);
         return this.completeLogin(user, deviceInfo);
     }
 }
