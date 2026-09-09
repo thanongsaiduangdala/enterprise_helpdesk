@@ -5,6 +5,7 @@ import { TicketMessage, TicketMessageDocument } from './schemas/ticket-message.s
 import { CreateTicketMessageDto } from './dto/create-ticket-message.dto';
 import { CannedResponsesService } from '../canned-responses/canned-responses.service';
 import { TicketsService } from '../tickets/tickets.service';
+import { assertInvolvedInTicket } from '../common/utils/ticket-access.util';
 
 @Injectable()
 export class TicketMessagesService {
@@ -14,20 +15,9 @@ export class TicketMessagesService {
         private ticketsService: TicketsService,
     ) { }
 
-
-    private async generateId(): Promise<string> {
-        const messages = await this.messageModel
-            .find({ _id: /^TM\d{3}$/ }, { _id: 1 })
-            .sort({ _id: 1 })
-            .exec();
-        const usedNumbers = new Set(messages.map((m) => parseInt(m._id.slice(2), 10)));
-        let seq = 1;
-        while (usedNumbers.has(seq)) seq++;
-        return `TM${String(seq).padStart(3, '0')}`;
-    }
-
-    async create(dto: CreateTicketMessageDto, senderId: string) {
-        await this.ticketsService.findOne(dto.ticketId);
+    async create(dto: CreateTicketMessageDto, senderId: string, permissions: any[]) {
+        const ticket = await this.ticketsService.findOne(dto.ticketId);
+        assertInvolvedInTicket(ticket, senderId, permissions);
 
         if (dto.isCannedResponse) {
             if (!dto.cannedResponseId) {
@@ -35,18 +25,22 @@ export class TicketMessagesService {
             }
             await this.cannedResponsesService.findOne(dto.cannedResponseId);
         }
-        const _id = await this.generateId();
-        return new this.messageModel({ _id, ...dto, senderId }).save();
+        return new this.messageModel({ ...dto, senderId }).save();
     }
 
-
-    findForTicket(ticketId: string) {
+    async findForTicket(ticketId: string, userId: string, permissions: any[]) {
+        const ticket = await this.ticketsService.findOne(ticketId);
+        assertInvolvedInTicket(ticket, userId, permissions);
         return this.messageModel.find({ ticketId }).sort({ createdAt: 1 }).exec();
     }
 
-    async findOne(id: string) {
+    async findOne(id: string, userId: string, permissions: any[]) {
         const message = await this.messageModel.findById(id).exec();
         if (!message) throw new NotFoundException('Message not found');
+
+        const ticket = await this.ticketsService.findOne(message.ticketId);
+        assertInvolvedInTicket(ticket, userId, permissions);
+
         return message;
     }
 }

@@ -9,10 +9,10 @@ import { RolesService } from '../roles/roles.service';
 import { UsersService } from '../users/users.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
-// WAITING_ON_USER is deliberately NOT in here — a paused ticket's SLA clock isn't
-// running, so it has no business being flagged as breached while paused. See
-// computeEffectiveDueDate() for how a ticket that RESUMES from a pause gets its
-// deadline pushed out by however long it spent paused.
+
+
+
+
 const OPEN_STATUSES = [
     TicketStatus.OPEN,
     TicketStatus.ASSIGNED,
@@ -48,12 +48,12 @@ export class SlaMonitorService {
         return users.map((u: any) => u._id.toString());
     }
 
-    // Adds up every CLOSED paused interval (has both pausedAt and resumedAt) and pushes
-    // the stored resolutionDueAt out by that total — so time spent waiting on the user
-    // doesn't count against the agent's SLA. A currently-open pause (no resumedAt yet)
-    // contributes nothing here, because that ticket is WAITING_ON_USER right now and
-    // already excluded from OPEN_STATUSES above, so it never reaches this calculation
-    // while still paused.
+
+
+
+
+
+
     private computeEffectiveDueDate(ticket: TicketDocument): Date | undefined {
         if (!ticket.sla?.resolutionDueAt) return undefined;
 

@@ -2,7 +2,7 @@ import { IsArray, IsBoolean, IsNotEmpty, IsOptional, IsString, Matches } from 'c
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateTicketMessageDto {
-    @ApiProperty({ example: 'TT001', description: 'Must reference an existing ticket' })
+    @ApiProperty({ example: '665fbb1f2c1a4e3b9c8d0a11', description: "A ticket's _id — must reference an existing ticket" })
     @IsNotEmpty()
     @IsString()
     ticketId!: string;
@@ -28,6 +28,4 @@ export class CreateTicketMessageDto {
     @IsString()
     @Matches(/^CR\d{3}$/, { message: 'cannedResponseId must look like CR001' })
     cannedResponseId?: string;
-
-
 }

@@ -18,10 +18,6 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 
-
-
-
-
 @Controller('canned-responses')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
@@ -49,13 +45,13 @@ export class CannedResponsesController {
 
     @Patch(':id')
     @RequirePermission('tickets', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateCannedResponseDto) {
-        return this.responsesService.update(id, dto);
+    update(@Param('id') id: string, @Body() dto: UpdateCannedResponseDto, @Req() req: any) {
+        return this.responsesService.update(id, dto, req.user.userId, req.user.permissions);
     }
 
     @Delete(':id')
     @RequirePermission('tickets', 'delete')
-    remove(@Param('id') id: string) {
-        return this.responsesService.remove(id);
+    remove(@Param('id') id: string, @Req() req: any) {
+        return this.responsesService.remove(id, req.user.userId, req.user.permissions);
     }
 }

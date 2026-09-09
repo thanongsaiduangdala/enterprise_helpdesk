@@ -38,9 +38,6 @@ class TicketSla {
     @Prop({ type: [SlaPausedInterval], default: [] })
     pausedIntervals!: SlaPausedInterval[];
 
-    // Tracks which escalation rules (by their afterMinutesOverdue threshold) have already
-    // fired for this ticket, so the breach cron doesn't re-notify on every tick once a
-    // threshold has been crossed.
     @Prop({ type: [Number], default: [] })
     escalationsTriggered!: number[];
 }

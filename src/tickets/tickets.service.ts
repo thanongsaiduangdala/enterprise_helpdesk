@@ -5,7 +5,7 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Ticket, TicketDocument, TicketStatus } from './schemas/ticket.schema';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
@@ -18,10 +18,7 @@ import { DepartmentsService } from '../departments/departments.service';
 import { BranchesService } from '../branches/branches.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
-
-
-
-
+import { assertInvolvedInTicket } from '../common/utils/ticket-access.util';
 
 const ALLOWED_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
     [TicketStatus.OPEN]: [TicketStatus.ASSIGNED, TicketStatus.IN_PROGRESS],
@@ -44,9 +41,6 @@ export class TicketsService {
         private auditLogsService: AuditLogsService,
     ) { }
 
-
-
-
     private async generateTicketNumber(): Promise<string> {
         const tickets = await this.ticketModel
             .find({ ticketNumber: /^TCK-\d{6}$/ }, { ticketNumber: 1 })
@@ -57,11 +51,6 @@ export class TicketsService {
         while (used.has(seq)) seq++;
         return `TCK-${String(seq).padStart(6, '0')}`;
     }
-
-
-
-
-
 
     private computeDueDates(startAt: Date, responseTimeMinutes: number, resolutionTimeMinutes: number) {
         return {
@@ -76,11 +65,6 @@ export class TicketsService {
     }
 
     async create(dto: CreateTicketDto, raisedBy: string) {
-
-
-
-
-
         const ticketType = await this.ticketTypesService.findOne(dto.ticketTypeId);
         await this.branchesService.findOne(dto.branchId);
 
@@ -121,11 +105,8 @@ export class TicketsService {
         });
         this.pushHistory(ticket, 'CREATED', raisedBy);
 
-
-
         return ticket.save();
     }
-
 
     findAll(filters: {
         branchId?: string;
@@ -143,32 +124,39 @@ export class TicketsService {
         return this.ticketModel.find(query).sort({ createdAt: -1 }).exec();
     }
 
-
     findMine(userId: string) {
         return this.ticketModel.find({ raisedBy: userId }).sort({ createdAt: -1 }).exec();
     }
-
 
     findAssignedToMe(userId: string) {
         return this.ticketModel.find({ assignedAgent: userId }).sort({ createdAt: -1 }).exec();
     }
 
+    // Internal lookup — no ownership check. Used by other service methods (assign,
+    // changeStatus, remove, submitFeedback, and by TicketMessagesService) that already
+    // gate access some other way and need the raw document regardless of who's asking.
     async findOne(id: string) {
+        if (!Types.ObjectId.isValid(id)) {
+            throw new BadRequestException('Invalid ticket id');
+        }
         const ticket = await this.ticketModel.findById(id).exec();
         if (!ticket) throw new NotFoundException('Ticket not found');
         return ticket;
     }
 
-
+    // Public-facing lookup for GET /tickets/:id — this is the one that actually enforces
+    // "you can only view tickets you're involved in or have elevated access to."
+    async findOneForUser(id: string, userId: string, permissions: any[]) {
+        const ticket = await this.findOne(id);
+        assertInvolvedInTicket(ticket, userId, permissions);
+        return ticket;
+    }
 
     async update(id: string, dto: UpdateTicketDto) {
         const ticket = await this.ticketModel.findByIdAndUpdate(id, dto, { new: true }).exec();
         if (!ticket) throw new NotFoundException('Ticket not found');
         return ticket;
     }
-
-
-
 
     async assign(id: string, dto: AssignTicketDto, actorId: string, ip?: string) {
         const ticket = await this.findOne(id);
@@ -209,10 +197,6 @@ export class TicketsService {
         return saved;
     }
 
-
-
-
-
     async changeStatus(id: string, dto: ChangeTicketStatusDto, actorId: string, ip?: string) {
         const ticket = await this.findOne(id);
         const legalNext = ALLOWED_TRANSITIONS[ticket.status] ?? [];
@@ -223,7 +207,6 @@ export class TicketsService {
         }
         const before = ticket.toObject();
         const fromStatus = ticket.status;
-
 
         if (dto.status === TicketStatus.WAITING_ON_USER) {
             ticket.sla.pausedIntervals.push({ pausedAt: new Date() });
@@ -248,9 +231,6 @@ export class TicketsService {
 
         return saved;
     }
-
-
-
 
     async submitFeedback(id: string, dto: SubmitTicketFeedbackDto, userId: string) {
         const ticket = await this.findOne(id);

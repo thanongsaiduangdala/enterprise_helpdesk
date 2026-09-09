@@ -26,8 +26,8 @@ export class AssetsService {
         return `AS${String(seq).padStart(3, '0')}`;
     }
 
-    // Not audited — registering a new asset is routine inventory intake, not a sensitive
-    // action, same reasoning applied to ticket/supply-request creation.
+
+
     async create(dto: CreateAssetDto) {
         const existing = await this.assetModel.findOne({ assetTag: dto.assetTag });
         if (existing) {
@@ -51,15 +51,15 @@ export class AssetsService {
         return asset;
     }
 
-    // Not audited — general field edits (type, purchaseDate, warrantyExpiry, branchId).
+
     async update(id: string, dto: UpdateAssetDto) {
         const asset = await this.assetModel.findByIdAndUpdate(id, dto, { new: true }).exec();
         if (!asset) throw new NotFoundException('Asset not found');
         return asset;
     }
 
-    // "Who has what" is the whole point of asset tracking per your spec — assign/reassign
-    // is the most sensitive action in this module, so it always gets logged.
+
+
     async assign(id: string, dto: AssignAssetDto, actorId: string, ip?: string) {
         const asset = await this.findOne(id);
         if (asset.status === AssetStatus.RETIRED) {
@@ -125,8 +125,8 @@ export class AssetsService {
         return saved;
     }
 
-    // Admin override for AVAILABLE / UNDER_REPAIR / RETIRED — logged since RETIRED in
-    // particular is a permanent, consequential state change worth a paper trail.
+
+
     async setStatus(id: string, status: 'AVAILABLE' | 'UNDER_REPAIR' | 'RETIRED', actorId: string, ip?: string) {
         const asset = await this.findOne(id);
         const before = asset.toObject();
