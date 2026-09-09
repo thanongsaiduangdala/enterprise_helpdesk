@@ -7,6 +7,7 @@ import {
     Patch,
     Post,
     Query,
+    Req,
     UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
@@ -46,7 +47,6 @@ export class AssetsController {
         return this.assetsService.findAll({ branchId, status, assigneeId });
     }
 
-
     @Get('overdue')
     @RequirePermission('assets', 'read')
     findOverdue() {
@@ -67,25 +67,25 @@ export class AssetsController {
 
     @Patch(':id/assign')
     @RequirePermission('assets', 'assign')
-    assign(@Param('id') id: string, @Body() dto: AssignAssetDto) {
-        return this.assetsService.assign(id, dto);
+    assign(@Param('id') id: string, @Body() dto: AssignAssetDto, @Req() req: any) {
+        return this.assetsService.assign(id, dto, req.user.userId, req.ip);
     }
 
     @Patch(':id/return')
     @RequirePermission('assets', 'assign')
-    returnAsset(@Param('id') id: string, @Body() dto: ReturnAssetDto) {
-        return this.assetsService.returnAsset(id, dto);
+    returnAsset(@Param('id') id: string, @Body() dto: ReturnAssetDto, @Req() req: any) {
+        return this.assetsService.returnAsset(id, dto, req.user.userId, req.ip);
     }
 
     @Patch(':id/status')
     @RequirePermission('assets', 'update')
-    setStatus(@Param('id') id: string, @Body() dto: SetAssetStatusDto) {
-        return this.assetsService.setStatus(id, dto.status);
+    setStatus(@Param('id') id: string, @Body() dto: SetAssetStatusDto, @Req() req: any) {
+        return this.assetsService.setStatus(id, dto.status, req.user.userId, req.ip);
     }
 
     @Delete(':id')
     @RequirePermission('assets', 'delete')
-    remove(@Param('id') id: string) {
-        return this.assetsService.remove(id);
+    remove(@Param('id') id: string, @Req() req: any) {
+        return this.assetsService.remove(id, req.user.userId, req.ip);
     }
 }

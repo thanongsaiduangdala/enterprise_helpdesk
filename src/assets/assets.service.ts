@@ -6,13 +6,14 @@ import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { AssignAssetDto } from './dto/assign-asset.dto';
 import { ReturnAssetDto } from './dto/return-asset.dto';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class AssetsService {
     constructor(
         @InjectModel(Asset.name) private assetModel: Model<AssetDocument>,
+        private auditLogsService: AuditLogsService,
     ) { }
-
 
     private async generateId(): Promise<string> {
         const assets = await this.assetModel
@@ -25,6 +26,8 @@ export class AssetsService {
         return `AS${String(seq).padStart(3, '0')}`;
     }
 
+    // Not audited — registering a new asset is routine inventory intake, not a sensitive
+    // action, same reasoning applied to ticket/supply-request creation.
     async create(dto: CreateAssetDto) {
         const existing = await this.assetModel.findOne({ assetTag: dto.assetTag });
         if (existing) {
@@ -33,7 +36,6 @@ export class AssetsService {
         const _id = await this.generateId();
         return new this.assetModel({ _id, ...dto }).save();
     }
-
 
     findAll(filters: { branchId?: string; status?: AssetStatus; assigneeId?: string }) {
         const query: any = {};
@@ -49,22 +51,22 @@ export class AssetsService {
         return asset;
     }
 
-
-
+    // Not audited — general field edits (type, purchaseDate, warrantyExpiry, branchId).
     async update(id: string, dto: UpdateAssetDto) {
         const asset = await this.assetModel.findByIdAndUpdate(id, dto, { new: true }).exec();
         if (!asset) throw new NotFoundException('Asset not found');
         return asset;
     }
 
-
-
-
-    async assign(id: string, dto: AssignAssetDto) {
+    // "Who has what" is the whole point of asset tracking per your spec — assign/reassign
+    // is the most sensitive action in this module, so it always gets logged.
+    async assign(id: string, dto: AssignAssetDto, actorId: string, ip?: string) {
         const asset = await this.findOne(id);
         if (asset.status === AssetStatus.RETIRED) {
             throw new BadRequestException('Cannot assign a retired asset');
         }
+        const before = asset.toObject();
+        const wasAssigned = !!asset.currentAssigneeId;
 
         const now = new Date();
         const openEntry = asset.assignmentHistory.find((h) => !h.returnedAt);
@@ -79,16 +81,28 @@ export class AssetsService {
         });
         asset.currentAssigneeId = dto.assigneeId as any;
         asset.status = AssetStatus.ASSIGNED;
-        return asset.save();
+        const saved = await asset.save();
+
+        await this.auditLogsService.log(
+            actorId,
+            wasAssigned ? 'ASSET_REASSIGNED' : 'ASSET_ASSIGNED',
+            'Asset',
+            id,
+            before,
+            saved.toObject(),
+            ip,
+        );
+
+        return saved;
     }
 
-
-
-    async returnAsset(id: string, dto: ReturnAssetDto) {
+    async returnAsset(id: string, dto: ReturnAssetDto, actorId: string, ip?: string) {
         const asset = await this.findOne(id);
         if (asset.status !== AssetStatus.ASSIGNED) {
             throw new BadRequestException('This asset is not currently assigned');
         }
+        const before = asset.toObject();
+
         const openEntry = asset.assignmentHistory.find((h) => !h.returnedAt);
         if (openEntry) {
             openEntry.returnedAt = new Date();
@@ -96,33 +110,67 @@ export class AssetsService {
         }
         asset.currentAssigneeId = undefined;
         asset.status = AssetStatus.AVAILABLE;
-        return asset.save();
+        const saved = await asset.save();
+
+        await this.auditLogsService.log(
+            actorId,
+            'ASSET_RETURNED',
+            'Asset',
+            id,
+            before,
+            saved.toObject(),
+            ip,
+        );
+
+        return saved;
     }
 
-
-
-
-    async setStatus(id: string, status: 'AVAILABLE' | 'UNDER_REPAIR' | 'RETIRED') {
+    // Admin override for AVAILABLE / UNDER_REPAIR / RETIRED — logged since RETIRED in
+    // particular is a permanent, consequential state change worth a paper trail.
+    async setStatus(id: string, status: 'AVAILABLE' | 'UNDER_REPAIR' | 'RETIRED', actorId: string, ip?: string) {
         const asset = await this.findOne(id);
+        const before = asset.toObject();
+
         if (asset.status === AssetStatus.ASSIGNED) {
             const openEntry = asset.assignmentHistory.find((h) => !h.returnedAt);
             if (openEntry) openEntry.returnedAt = new Date();
             asset.currentAssigneeId = undefined;
         }
         asset.status = status as AssetStatus;
-        return asset.save();
+        const saved = await asset.save();
+
+        await this.auditLogsService.log(
+            actorId,
+            'ASSET_STATUS_CHANGED',
+            'Asset',
+            id,
+            before,
+            saved.toObject(),
+            ip,
+        );
+
+        return saved;
     }
 
-    async remove(id: string) {
+    async remove(id: string, actorId: string, ip?: string) {
+        const before = await this.assetModel.findById(id).exec();
+        if (!before) throw new NotFoundException('Asset not found');
+
         const result = await this.assetModel.findByIdAndDelete(id).exec();
         if (!result) throw new NotFoundException('Asset not found');
+
+        await this.auditLogsService.log(
+            actorId,
+            'ASSET_DELETED',
+            'Asset',
+            id,
+            before.toObject(),
+            undefined,
+            ip,
+        );
+
         return { deleted: true };
     }
-
-
-
-
-
 
     async findOverdueReturns() {
         return this.assetModel.aggregate([
