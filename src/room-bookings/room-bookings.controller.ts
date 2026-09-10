@@ -25,9 +25,6 @@ import { parseRequiredDate } from '../common/utils/parse-date.util';
 export class RoomBookingsController {
     constructor(private bookingsService: RoomBookingsService) { }
 
-    // Gated on 'create' rather than 'read' — booking a NEW slot isn't a personal action
-    // with anything to check ownership against yet, unlike reschedule/cancel below, so
-    // it deserves its own distinct permission rather than piggybacking on 'read'.
     @Post()
     @RequirePermission('rooms', 'create')
     create(@Body() dto: CreateRoomBookingDto, @Req() req: any) {
@@ -54,10 +51,6 @@ export class RoomBookingsController {
         );
     }
 
-    // Reschedule/cancel stay on 'read' deliberately — these are personal actions on your
-    // OWN booking, the same reasoning already applied to ticket-message creation and
-    // CSAT feedback elsewhere in this codebase. The real security boundary is the
-    // ownership check inside the service (bookedBy === requesterId), not this permission.
     @Patch(':id/reschedule')
     @RequirePermission('rooms', 'read')
     reschedule(@Param('id') id: string, @Body() dto: RescheduleRoomBookingDto, @Req() req: any) {

@@ -132,9 +132,6 @@ export class TicketsService {
         return this.ticketModel.find({ assignedAgent: userId }).sort({ createdAt: -1 }).exec();
     }
 
-    // Internal lookup — no ownership check. Used by other service methods (assign,
-    // changeStatus, remove, submitFeedback, and by TicketMessagesService) that already
-    // gate access some other way and need the raw document regardless of who's asking.
     async findOne(id: string) {
         if (!Types.ObjectId.isValid(id)) {
             throw new BadRequestException('Invalid ticket id');
@@ -144,8 +141,6 @@ export class TicketsService {
         return ticket;
     }
 
-    // Public-facing lookup for GET /tickets/:id — this is the one that actually enforces
-    // "you can only view tickets you're involved in or have elevated access to."
     async findOneForUser(id: string, userId: string, permissions: any[]) {
         const ticket = await this.findOne(id);
         assertInvolvedInTicket(ticket, userId, permissions);

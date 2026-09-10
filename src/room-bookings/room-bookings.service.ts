@@ -19,10 +19,10 @@ import { RescheduleRoomBookingDto } from './dto/reschedule-room-booking.dto';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomDocument, RoomStatus } from '../rooms/schemas/room.schema';
 
-// A daily recurrence with a distant "until" date would otherwise generate thousands of
-// occurrences, each needing its own overlap check — slow, and an easy accidental (or
-// deliberate) resource-exhaustion vector. This caps it to something sane: about a year
-// of weekly bookings, or two months of daily ones.
+
+
+
+
 const MAX_RECURRING_OCCURRENCES = 60;
 
 @Injectable()
@@ -83,9 +83,9 @@ export class RoomBookingsService {
         }
     }
 
-    // A room under maintenance or deactivated shouldn't be bookable at all — this was
-    // previously checked nowhere, meaning the "disable a room" admin feature had no
-    // actual effect on booking.
+
+
+
     private assertRoomBookable(room: RoomDocument) {
         if (room.status === RoomStatus.MAINTENANCE) {
             throw new BadRequestException('This room is currently under maintenance and cannot be booked');
@@ -95,11 +95,11 @@ export class RoomBookingsService {
         }
     }
 
-    // Serializes any booking-affecting operation for a single room. Acquire by
-    // inserting a lock document (fails with a duplicate-key error if someone else holds
-    // it), retry briefly on contention, always release in `finally`. This is what
-    // actually closes the double-booking race — see room-booking-lock.schema.ts for why
-    // a transaction alone wouldn't.
+
+
+
+
+
     private async withRoomLock<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
         const maxAttempts = 20;
         const retryDelayMs = 150;
@@ -157,9 +157,9 @@ export class RoomBookingsService {
                 );
             }
 
-            // Safe to check every occurrence concurrently here — the room-wide lock
-            // above already serializes this entire operation against any OTHER request
-            // for this room, so there's no external race for these checks to lose to.
+
+
+
             await Promise.all(occurrences.map((occ) => this.assertNoOverlap(dto.roomId, occ.startAt, occ.endAt)));
 
             const ids = await this.generateIdBatch(occurrences.length);
