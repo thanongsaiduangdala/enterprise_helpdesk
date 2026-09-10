@@ -36,10 +36,8 @@ export class ReportsController {
     @ApiQuery({ name: 'from', required: false, description: 'ISO date' })
     @ApiQuery({ name: 'to', required: false, description: 'ISO date' })
     slaCompliance(@Query('from') from?: string, @Query('to') to?: string) {
-        return this.reportsService.slaComplianceReport(
-            from ? new Date(from) : undefined,
-            to ? new Date(to) : undefined,
-        );
+        const range = this.reportsService.parseDateRange(from, to);
+        return this.reportsService.slaComplianceReport(range.from, range.to);
     }
 
     @Get('tickets-breakdown')
@@ -66,16 +64,22 @@ export class ReportsController {
         return this.reportsService.fullSummary();
     }
 
-
-
     @Get('export/csv')
     @RequirePermission('reports', 'export')
     @ApiQuery({ name: 'type', enum: ['sla', 'tickets', 'workload', 'csat'] })
-    async exportCsv(@Query('type') type: string, @Res() res: Response) {
+    @ApiQuery({ name: 'from', required: false, description: 'ISO date — only applies to type=sla' })
+    @ApiQuery({ name: 'to', required: false, description: 'ISO date — only applies to type=sla' })
+    async exportCsv(
+        @Query('type') type: string,
+        @Query('from') from: string | undefined,
+        @Query('to') to: string | undefined,
+        @Res() res: Response,
+    ) {
         if (!REPORT_TITLES[type]) {
             throw new BadRequestException(`type must be one of: ${Object.keys(REPORT_TITLES).join(', ')}`);
         }
-        const rows = await this.reportsService.getFlatRows(type as any);
+        const range = this.reportsService.parseDateRange(from, to);
+        const rows = await this.reportsService.getFlatRows(type as any, range.from, range.to);
         const csv = toCsv(rows);
 
         res.setHeader('Content-Type', 'text/csv');
@@ -83,15 +87,22 @@ export class ReportsController {
         res.send(csv);
     }
 
-
     @Get('export/pdf')
     @RequirePermission('reports', 'export')
     @ApiQuery({ name: 'type', enum: ['sla', 'tickets', 'workload', 'csat'] })
-    async exportPdf(@Query('type') type: string, @Res() res: Response) {
+    @ApiQuery({ name: 'from', required: false, description: 'ISO date — only applies to type=sla' })
+    @ApiQuery({ name: 'to', required: false, description: 'ISO date — only applies to type=sla' })
+    async exportPdf(
+        @Query('type') type: string,
+        @Query('from') from: string | undefined,
+        @Query('to') to: string | undefined,
+        @Res() res: Response,
+    ) {
         if (!REPORT_TITLES[type]) {
             throw new BadRequestException(`type must be one of: ${Object.keys(REPORT_TITLES).join(', ')}`);
         }
-        const rows = await this.reportsService.getFlatRows(type as any);
+        const range = this.reportsService.parseDateRange(from, to);
+        const rows = await this.reportsService.getFlatRows(type as any, range.from, range.to);
         const buffer = await rowsToPdfBuffer(REPORT_TITLES[type], rows);
 
         res.setHeader('Content-Type', 'application/pdf');

@@ -215,6 +215,10 @@ export class TicketsService {
             if (openInterval) openInterval.resumedAt = new Date();
         }
 
+        if (dto.status === TicketStatus.RESOLVED) {
+            ticket.resolvedAt = new Date();
+        }
+
         ticket.status = dto.status;
         this.pushHistory(ticket, 'STATUS_CHANGED', actorId, dto.note ?? `${fromStatus} -> ${dto.status}`);
         const saved = await ticket.save();

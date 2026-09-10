@@ -145,6 +145,9 @@ export class Ticket {
 
     @Prop({ required: true, default: Date.now })
     lastActivityAt!: Date;
+
+    @Prop()
+    resolvedAt?: Date;
 }
 
 export const TicketSchema = SchemaFactory.createForClass(Ticket);
