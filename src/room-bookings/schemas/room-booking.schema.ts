@@ -4,7 +4,9 @@ import { Document, Types } from 'mongoose';
 export type RoomBookingDocument = RoomBooking & Omit<Document, '_id'>;
 
 export enum BookingStatus {
+    PENDING = 'PENDING',
     CONFIRMED = 'CONFIRMED',
+    REJECTED = 'REJECTED',
     CANCELLED = 'CANCELLED',
 }
 
@@ -41,8 +43,14 @@ export class RoomBooking {
     @Prop()
     seriesId?: string;
 
-    @Prop({ enum: BookingStatus, default: BookingStatus.CONFIRMED })
+    @Prop({ enum: BookingStatus, default: BookingStatus.PENDING })
     status!: BookingStatus;
+
+    @Prop({ type: Types.ObjectId, ref: 'User' })
+    reviewedBy?: Types.ObjectId;
+
+    @Prop()
+    reviewedAt?: Date;
 }
 
 export const RoomBookingSchema = SchemaFactory.createForClass(RoomBooking);

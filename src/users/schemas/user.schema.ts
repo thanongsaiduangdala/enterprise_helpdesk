@@ -71,7 +71,7 @@ export class User {
     @Prop({ required: true })
     branchId!: string;
 
-    @Prop()
+    @Prop({ type: String, ref: 'Department' })
     departmentId?: string;
 
     @Prop({ default: true })

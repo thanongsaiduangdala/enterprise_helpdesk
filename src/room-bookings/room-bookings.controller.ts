@@ -37,6 +37,12 @@ export class RoomBookingsController {
         return this.bookingsService.findMyBookings(req.user.userId);
     }
 
+    @Get('pending')
+    @RequirePermission('rooms', 'approve')
+    findPending() {
+        return this.bookingsService.findPendingApprovals();
+    }
+
     @Get()
     @RequirePermission('rooms', 'read')
     findForRoom(
@@ -57,9 +63,27 @@ export class RoomBookingsController {
         return this.bookingsService.reschedule(id, dto, req.user.userId);
     }
 
+    @Patch(':id/approve')
+    @RequirePermission('rooms', 'approve')
+    approve(@Param('id') id: string, @Req() req: any) {
+        return this.bookingsService.approve(id, req.user.userId);
+    }
+
+    @Patch(':id/reject')
+    @RequirePermission('rooms', 'approve')
+    reject(@Param('id') id: string, @Req() req: any) {
+        return this.bookingsService.reject(id, req.user.userId);
+    }
+
     @Delete(':id')
     @RequirePermission('rooms', 'read')
     cancel(@Param('id') id: string, @Req() req: any) {
         return this.bookingsService.cancel(id, req.user.userId);
+    }
+
+    @Delete('series/:seriesId')
+    @RequirePermission('rooms', 'read')
+    cancelSeries(@Param('seriesId') seriesId: string, @Req() req: any) {
+        return this.bookingsService.cancelSeries(seriesId, req.user.userId);
     }
 }

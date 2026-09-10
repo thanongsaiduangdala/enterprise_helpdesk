@@ -179,7 +179,7 @@ export class UsersService {
     }
 
     async findOne(id: string) {
-        const user = await this.userModel.findById(id).populate('role').exec();
+        const user = await this.userModel.findById(id).populate('role').populate('departmentId').exec();
         if (!user) throw new NotFoundException('User not found');
         return user;
     }

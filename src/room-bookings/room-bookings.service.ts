@@ -175,7 +175,7 @@ export class RoomBookingsService {
 
     findMyBookings(userId: string) {
         return this.bookingModel
-            .find({ bookedBy: userId, status: BookingStatus.CONFIRMED })
+            .find({ bookedBy: userId, status: { $ne: BookingStatus.CANCELLED } })
             .sort({ startAt: 1 })
             .exec();
     }
@@ -196,6 +196,48 @@ export class RoomBookingsService {
         const booking = await this.bookingModel.findById(id).exec();
         if (!booking) throw new NotFoundException('Booking not found');
         return booking;
+    }
+
+    findPendingApprovals() {
+        return this.bookingModel
+            .find({ status: BookingStatus.PENDING })
+            .populate('roomId')
+            .populate('bookedBy')
+            .sort({ createdAt: 1 })
+            .exec();
+    }
+
+    async approve(id: string, approverId: string) {
+        const booking = await this.findOne(id);
+        if (booking.status !== BookingStatus.PENDING) {
+            throw new BadRequestException('This booking is not waiting for approval');
+        }
+
+        // Re-check for conflicts before locking it in — another request for the
+        // same slot may have already been approved while this one was pending.
+        await this.assertNoOverlap(
+            booking.roomId.toString(),
+            booking.startAt,
+            booking.endAt,
+            booking._id,
+        );
+
+        booking.status = BookingStatus.CONFIRMED;
+        booking.reviewedBy = approverId as any;
+        booking.reviewedAt = new Date();
+        return booking.save();
+    }
+
+    async reject(id: string, approverId: string) {
+        const booking = await this.findOne(id);
+        if (booking.status !== BookingStatus.PENDING) {
+            throw new BadRequestException('This booking is not waiting for approval');
+        }
+
+        booking.status = BookingStatus.REJECTED;
+        booking.reviewedBy = approverId as any;
+        booking.reviewedAt = new Date();
+        return booking.save();
     }
 
     async reschedule(id: string, dto: RescheduleRoomBookingDto, requesterId: string) {
@@ -225,6 +267,31 @@ export class RoomBookingsService {
 
         booking.status = BookingStatus.CANCELLED;
         return booking.save();
+    }
+
+    async cancelSeries(seriesId: string, requesterId: string) {
+        const bookings = await this.bookingModel.find({ seriesId }).exec();
+        if (bookings.length === 0) {
+            throw new NotFoundException('Booking series not found');
+        }
+        const notOwnedByRequester = bookings.some(
+            (b) => b.bookedBy.toString() !== requesterId,
+        );
+        if (notOwnedByRequester) {
+            throw new BadRequestException('You can only cancel your own bookings');
+        }
+
+        const cancellable = bookings.filter(
+            (b) => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING,
+        );
+        await this.bookingModel
+            .updateMany(
+                { seriesId, status: { $in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] } },
+                { $set: { status: BookingStatus.CANCELLED } },
+            )
+            .exec();
+
+        return { seriesId, cancelledCount: cancellable.length };
     }
 
     async isRoomBookedAt(roomId: string, at: Date): Promise<boolean> {

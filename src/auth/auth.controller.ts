@@ -1,8 +1,9 @@
-import { Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { UAParser } from 'ua-parser-js';
 import { AuthService } from "./auth.service";
+import { UsersService } from "../users/users.service";
 import { LoginDto } from "./dto/login.dto";
 import { MfaCodeDto } from "./dto/mfa-code.dto";
 import { MfaVerifyLoginDto } from "./dto/mfa-verify-login.dto";
@@ -23,12 +24,25 @@ function extractDeviceInfo(req: any) {
 
 @Controller('auth')
 export class AuthController {
-    constructor(private authService: AuthService) { }
+    constructor(
+        private authService: AuthService,
+        private usersService: UsersService,
+    ) { }
 
     @Post('login')
     @Throttle({ default: { limit: 10, ttl: 60000 } })
     login(@Body() dto: LoginDto, @Req() req: any) {
         return this.authService.login(dto.email, dto.password, extractDeviceInfo(req));
+    }
+
+    // Lightweight "who am I" endpoint — any authenticated user can read their
+    // own profile here, regardless of the 'users:read' permission (that one
+    // gates *other* people's profiles via GET /users/:id).
+    @Get('me')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    me(@Req() req: any) {
+        return this.usersService.findOne(req.user.userId);
     }
 
 
