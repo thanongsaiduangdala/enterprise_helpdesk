@@ -6,6 +6,8 @@ import { AuthService } from "./auth.service";
 import { LoginDto } from "./dto/login.dto";
 import { MfaCodeDto } from "./dto/mfa-code.dto";
 import { MfaVerifyLoginDto } from "./dto/mfa-verify-login.dto";
+import { SetupMfaDto } from "./dto/setup-mfa.dto";
+import { ResendMfaCodeDto } from "./dto/resend-mfa-code.dto";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { MfaSetupGuard } from "./mfa-setup.guard";
 
@@ -34,8 +36,16 @@ export class AuthController {
     @Post('mfa/setup')
     @UseGuards(MfaSetupGuard)
     @ApiBearerAuth()
-    setupMfa(@Req() req: any) {
-        return this.authService.setupMfa(req.user.userId);
+    setupMfa(@Body() dto: SetupMfaDto, @Req() req: any) {
+        return this.authService.setupMfa(req.user.userId, dto.method);
+    }
+
+    @Post('mfa/resend-code')
+    @UseGuards(MfaSetupGuard)
+    @ApiBearerAuth()
+    @Throttle({ default: { limit: 3, ttl: 60000 } })
+    resendSetupCode(@Req() req: any) {
+        return this.authService.resendSetupEmailCode(req.user.userId);
     }
 
     @Post('mfa/enable')
@@ -59,5 +69,11 @@ export class AuthController {
     @Throttle({ default: { limit: 5, ttl: 60000 } })
     verifyMfaLogin(@Body() dto: MfaVerifyLoginDto, @Req() req: any) {
         return this.authService.verifyMfaLogin(dto.mfaToken, dto.code, extractDeviceInfo(req));
+    }
+
+    @Post('mfa/login/resend-code')
+    @Throttle({ default: { limit: 3, ttl: 60000 } })
+    resendLoginCode(@Body() dto: ResendMfaCodeDto) {
+        return this.authService.resendLoginEmailCode(dto.mfaToken);
     }
 }

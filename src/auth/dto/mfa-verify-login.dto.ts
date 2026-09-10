@@ -7,7 +7,7 @@ export class MfaVerifyLoginDto {
     @IsString()
     mfaToken!: string;
 
-    @ApiProperty({ example: '123456', description: '6-digit code from the authenticator app' })
+    @ApiProperty({ example: '123456', description: '6-digit code from the authenticator app, or the code emailed to you' })
     @IsNotEmpty()
     @IsString()
     @Length(6, 6)

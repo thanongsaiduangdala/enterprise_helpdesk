@@ -227,7 +227,17 @@ export class UsersService {
     async setPendingMfaSecret(id: string, secret: string) {
         const user = await this.userModel.findByIdAndUpdate(
             id,
-            { 'mfa.pendingSecret': secret },
+            { 'mfa.pendingSecret': secret, 'mfa.pendingMethod': 'totp' },
+            { new: true },
+        ).exec();
+        if (!user) throw new NotFoundException('User not found');
+        return user;
+    }
+
+    async setPendingMfaMethod(id: string, method: string) {
+        const user = await this.userModel.findByIdAndUpdate(
+            id,
+            { 'mfa.pendingMethod': method, $unset: { 'mfa.pendingSecret': '' } },
             { new: true },
         ).exec();
         if (!user) throw new NotFoundException('User not found');
@@ -237,18 +247,29 @@ export class UsersService {
     async confirmMfaEnabled(id: string) {
         const user = await this.userModel.findById(id).exec();
         if (!user) throw new NotFoundException('User not found');
-        if (!user.mfa?.pendingSecret) {
-            throw new NotFoundException('No pending MFA secret to confirm');
+
+        const method = user.mfa?.pendingMethod;
+        if (!method) {
+            throw new NotFoundException('No pending MFA setup to confirm');
+        }
+
+        const set: Record<string, any> = {
+            'mfa.enabled': true,
+            'mfa.method': method,
+        };
+        const unset: Record<string, ''> = { 'mfa.pendingMethod': '' };
+
+        if (method === 'totp') {
+            if (!user.mfa?.pendingSecret) {
+                throw new NotFoundException('No pending MFA secret to confirm');
+            }
+            set['mfa.secret'] = user.mfa.pendingSecret;
+            unset['mfa.pendingSecret'] = '';
         }
 
         const updated = await this.userModel.findByIdAndUpdate(
             id,
-            {
-                'mfa.enabled': true,
-                'mfa.method': 'totp',
-                'mfa.secret': user.mfa.pendingSecret,
-                $unset: { 'mfa.pendingSecret': '' },
-            },
+            { $set: set, $unset: unset },
             { new: true },
         ).exec();
         if (!updated) throw new NotFoundException('User not found');

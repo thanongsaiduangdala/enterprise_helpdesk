@@ -51,6 +51,28 @@ export class MfaAttemptsService {
         ).exec();
     }
 
+    async issueCode(key: string, codeHash: string, ttlSeconds: number) {
+        await this.mfaAttemptModel.updateOne(
+            { key },
+            {
+                $set: {
+                    codeHash,
+                    failureCount: 0,
+                    consumed: false,
+                    expiresAt: new Date(Date.now() + ttlSeconds * 1000),
+                },
+            },
+            { upsert: true },
+        ).exec();
+    }
+
+    async verifyCode(key: string, codeHash: string): Promise<boolean> {
+        const record = await this.mfaAttemptModel.findOne({ key }).exec();
+        if (!record || !record.codeHash) return false;
+        if (record.expiresAt.getTime() < Date.now()) return false;
+        return record.codeHash === codeHash;
+    }
+
     async markConsumed(key: string) {
         await this.mfaAttemptModel.updateOne({ key }, { $set: { consumed: true } }).exec();
     }

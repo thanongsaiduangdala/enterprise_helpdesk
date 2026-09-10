@@ -5,6 +5,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UsersModule } from '../users/users.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { MfaAttemptsModule } from '../mfa-attempts/mfa-attempts.module';
+import { MailModule } from '../mail/mail.module';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
@@ -15,6 +16,7 @@ import { MfaSetupGuard } from './mfa-setup.guard';
     UsersModule,
     SessionsModule,
     MfaAttemptsModule,
+    MailModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

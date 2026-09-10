@@ -13,7 +13,8 @@ export class MfaAttempt {
     @Prop({ default: 0 })
     failureCount!: number;
 
-
+    @Prop()
+    codeHash?: string;
 
     @Prop({ default: false })
     consumed!: boolean;

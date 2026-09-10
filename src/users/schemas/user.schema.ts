@@ -15,6 +15,9 @@ class Mfa {
 
     @Prop()
     pendingSecret?: string;
+
+    @Prop()
+    pendingMethod?: string;
 }
 
 @Schema({ _id: false })
