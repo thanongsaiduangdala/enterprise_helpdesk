@@ -19,10 +19,6 @@ import { RescheduleRoomBookingDto } from './dto/reschedule-room-booking.dto';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomDocument, RoomStatus } from '../rooms/schemas/room.schema';
 
-
-
-
-
 const MAX_RECURRING_OCCURRENCES = 60;
 
 @Injectable()
@@ -156,9 +152,6 @@ export class RoomBookingsService {
                     `This recurrence would create ${occurrences.length} bookings, over the limit of ${MAX_RECURRING_OCCURRENCES}. Choose a shorter "until" date.`,
                 );
             }
-
-
-
 
             await Promise.all(occurrences.map((occ) => this.assertNoOverlap(dto.roomId, occ.startAt, occ.endAt)));
 
