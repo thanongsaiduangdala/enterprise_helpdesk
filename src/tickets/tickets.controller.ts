@@ -35,8 +35,6 @@ export class TicketsController {
         return this.ticketsService.create(dto, req.user.userId);
     }
 
-
-
     @Get('my')
     @RequirePermission('tickets', 'read')
     findMine(@Req() req: any) {

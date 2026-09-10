@@ -13,7 +13,7 @@ export class TicketMessagesController {
     constructor(private messagesService: TicketMessagesService) { }
 
     @Post()
-    @RequirePermission('tickets', 'update')
+    @RequirePermission('tickets', 'read')
     create(@Body() dto: CreateTicketMessageDto, @Req() req: any) {
         return this.messagesService.create(dto, req.user.userId, req.user.permissions);
     }
