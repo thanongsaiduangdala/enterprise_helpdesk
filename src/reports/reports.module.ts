@@ -27,5 +27,6 @@ import { MailModule } from '../mail/mail.module';
     ],
     controllers: [ReportsController],
     providers: [ReportsService, ReportsDigestService],
+    exports: [ReportsService],
 })
 export class ReportsModule { }

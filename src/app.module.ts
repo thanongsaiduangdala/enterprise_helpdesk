@@ -27,6 +27,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { MailModule } from './mail/mail.module';
 import { ReportsModule } from './reports/reports.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     MailModule,
     ReportsModule,
     ScheduleModule.forRoot(),
+    DashboardModule,
   ],
 
   providers: [
