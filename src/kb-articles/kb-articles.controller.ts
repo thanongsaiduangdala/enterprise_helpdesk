@@ -29,7 +29,7 @@ export class KbArticlesController {
     @Post()
     @RequirePermission('kb', 'create')
     create(@Body() dto: CreateKbArticleDto, @Req() req: any) {
-        return this.articlesService.create(dto, req.user.userId);
+        return this.articlesService.create(dto, req.user.userId, req.user.permissions);
     }
 
     @Get()
@@ -41,12 +41,16 @@ export class KbArticlesController {
         @Query('departmentId') departmentId?: string,
         @Query('category') category?: string,
         @Query('includeUnpublished') includeUnpublished?: string,
+        @Req() req?: any,
     ) {
-        return this.articlesService.findAll({
-            departmentId,
-            category,
-            includeUnpublished: includeUnpublished === 'true',
-        });
+        return this.articlesService.findAll(
+            {
+                departmentId,
+                category,
+                includeUnpublished: includeUnpublished === 'true',
+            },
+            req.user.permissions,
+        );
     }
 
 
@@ -73,14 +77,14 @@ export class KbArticlesController {
 
     @Get(':id')
     @RequirePermission('kb', 'read')
-    findOne(@Param('id') id: string) {
-        return this.articlesService.findOne(id);
+    findOne(@Param('id') id: string, @Req() req: any) {
+        return this.articlesService.findOne(id, req.user.permissions);
     }
 
     @Patch(':id')
     @RequirePermission('kb', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateKbArticleDto) {
-        return this.articlesService.update(id, dto);
+    update(@Param('id') id: string, @Body() dto: UpdateKbArticleDto, @Req() req: any) {
+        return this.articlesService.update(id, dto, req.user.userId, req.user.permissions);
     }
 
     @Patch(':id/publish')
@@ -97,8 +101,8 @@ export class KbArticlesController {
 
     @Delete(':id')
     @RequirePermission('kb', 'delete')
-    remove(@Param('id') id: string) {
-        return this.articlesService.remove(id);
+    remove(@Param('id') id: string, @Req() req: any) {
+        return this.articlesService.remove(id, req.user.userId, req.user.permissions);
     }
 
 
@@ -106,6 +110,6 @@ export class KbArticlesController {
     @Post(':id/feedback')
     @RequirePermission('kb', 'read')
     submitFeedback(@Param('id') id: string, @Body() dto: KbArticleFeedbackDto, @Req() req: any) {
-        return this.articlesService.submitFeedback(id, req.user.userId, dto);
+        return this.articlesService.submitFeedback(id, req.user.userId, dto, req.user.permissions);
     }
 }

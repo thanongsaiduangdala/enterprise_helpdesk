@@ -4,6 +4,7 @@ import { KbArticle, KbArticleSchema } from './schemas/kb-article.schema';
 import { KbArticleFeedback, KbArticleFeedbackSchema } from './schemas/kb-article-feedback.schema';
 import { KbArticlesService } from './kb-articles.service';
 import { KbArticlesController } from './kb-articles.controller';
+import { UsersModule } from '../users/users.module';
 
 @Module({
     imports: [
@@ -11,6 +12,7 @@ import { KbArticlesController } from './kb-articles.controller';
             { name: KbArticle.name, schema: KbArticleSchema },
             { name: KbArticleFeedback.name, schema: KbArticleFeedbackSchema },
         ]),
+        UsersModule,
     ],
     controllers: [KbArticlesController],
     providers: [KbArticlesService],
