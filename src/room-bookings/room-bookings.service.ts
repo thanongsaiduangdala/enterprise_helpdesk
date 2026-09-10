@@ -13,14 +13,23 @@ import {
     RoomBookingDocument,
     BookingStatus,
 } from './schemas/room-booking.schema';
+import { RoomBookingLock, RoomBookingLockDocument } from './schemas/room-booking-lock.schema';
 import { CreateRoomBookingDto } from './dto/create-room-booking.dto';
 import { RescheduleRoomBookingDto } from './dto/reschedule-room-booking.dto';
 import { RoomsService } from '../rooms/rooms.service';
+import { RoomDocument, RoomStatus } from '../rooms/schemas/room.schema';
+
+// A daily recurrence with a distant "until" date would otherwise generate thousands of
+// occurrences, each needing its own overlap check — slow, and an easy accidental (or
+// deliberate) resource-exhaustion vector. This caps it to something sane: about a year
+// of weekly bookings, or two months of daily ones.
+const MAX_RECURRING_OCCURRENCES = 60;
 
 @Injectable()
 export class RoomBookingsService {
     constructor(
         @InjectModel(RoomBooking.name) private bookingModel: Model<RoomBookingDocument>,
+        @InjectModel(RoomBookingLock.name) private lockModel: Model<RoomBookingLockDocument>,
         @Inject(forwardRef(() => RoomsService)) private roomsService: RoomsService,
     ) { }
 
@@ -35,7 +44,20 @@ export class RoomBookingsService {
         return `RB${String(seq).padStart(3, '0')}`;
     }
 
-
+    private async generateIdBatch(count: number): Promise<string[]> {
+        const bookings = await this.bookingModel.find({ _id: /^RB\d{3}$/ }, { _id: 1 }).exec();
+        const usedNumbers = new Set(bookings.map((b) => parseInt(b._id.slice(2), 10)));
+        const ids: string[] = [];
+        let seq = 1;
+        while (ids.length < count) {
+            if (!usedNumbers.has(seq)) {
+                ids.push(`RB${String(seq).padStart(3, '0')}`);
+                usedNumbers.add(seq);
+            }
+            seq++;
+        }
+        return ids;
+    }
 
     private async assertNoOverlap(
         roomId: string,
@@ -61,68 +83,101 @@ export class RoomBookingsService {
         }
     }
 
-    private async generateIdBatch(count: number): Promise<string[]> {
-        const bookings = await this.bookingModel.find({ _id: /^RB\d{3}$/ }, { _id: 1 }).exec();
-        const usedNumbers = new Set(bookings.map((b) => parseInt(b._id.slice(2), 10)));
-        const ids: string[] = [];
-        let seq = 1;
-        while (ids.length < count) {
-            if (!usedNumbers.has(seq)) {
-                ids.push(`RB${String(seq).padStart(3, '0')}`);
-                usedNumbers.add(seq);
-            }
-            seq++;
+    // A room under maintenance or deactivated shouldn't be bookable at all — this was
+    // previously checked nowhere, meaning the "disable a room" admin feature had no
+    // actual effect on booking.
+    private assertRoomBookable(room: RoomDocument) {
+        if (room.status === RoomStatus.MAINTENANCE) {
+            throw new BadRequestException('This room is currently under maintenance and cannot be booked');
         }
-        return ids;
+        if (!room.isActive) {
+            throw new BadRequestException('This room is not currently available for booking');
+        }
+    }
+
+    // Serializes any booking-affecting operation for a single room. Acquire by
+    // inserting a lock document (fails with a duplicate-key error if someone else holds
+    // it), retry briefly on contention, always release in `finally`. This is what
+    // actually closes the double-booking race — see room-booking-lock.schema.ts for why
+    // a transaction alone wouldn't.
+    private async withRoomLock<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
+        const maxAttempts = 20;
+        const retryDelayMs = 150;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                await this.lockModel.create({ _id: roomId, lockedAt: new Date() });
+            } catch (err: any) {
+                if (err.code === 11000) {
+                    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+                    continue;
+                }
+                throw err;
+            }
+
+            try {
+                return await fn();
+            } finally {
+                await this.lockModel.deleteOne({ _id: roomId }).exec();
+            }
+        }
+
+        throw new ConflictException('This room is busy processing another booking request — please try again');
     }
 
     async create(dto: CreateRoomBookingDto, bookedBy: string) {
-        await this.roomsService.findOne(dto.roomId);
-        const startAt = new Date(dto.startAt);
-        const endAt = new Date(dto.endAt);
+        const room = await this.roomsService.findOne(dto.roomId);
+        this.assertRoomBookable(room);
 
+        return this.withRoomLock(dto.roomId, async () => {
+            const startAt = new Date(dto.startAt);
+            const endAt = new Date(dto.endAt);
 
-        if (!dto.recurrence) {
-            await this.assertNoOverlap(dto.roomId, startAt, endAt);
-            const [_id] = await this.generateIdBatch(1);
-            const booking = new this.bookingModel({ _id, roomId: dto.roomId, bookedBy, startAt, endAt });
-            return booking.save();
-        }
+            if (!dto.recurrence) {
+                await this.assertNoOverlap(dto.roomId, startAt, endAt);
+                const [_id] = await this.generateIdBatch(1);
+                const booking = new this.bookingModel({ _id, roomId: dto.roomId, bookedBy, startAt, endAt });
+                return booking.save();
+            }
 
+            const until = new Date(dto.recurrence.until);
+            const stepDays = dto.recurrence.frequency === 'daily' ? 1 : 7;
+            const durationMs = endAt.getTime() - startAt.getTime();
 
+            const occurrences: { startAt: Date; endAt: Date }[] = [];
+            let cursor = new Date(startAt);
+            while (cursor <= until) {
+                occurrences.push({ startAt: new Date(cursor), endAt: new Date(cursor.getTime() + durationMs) });
+                cursor = new Date(cursor.getTime() + stepDays * 24 * 60 * 60 * 1000);
+            }
 
-        const until = new Date(dto.recurrence.until);
-        const stepDays = dto.recurrence.frequency === 'daily' ? 1 : 7;
-        const durationMs = endAt.getTime() - startAt.getTime();
+            if (occurrences.length > MAX_RECURRING_OCCURRENCES) {
+                throw new BadRequestException(
+                    `This recurrence would create ${occurrences.length} bookings, over the limit of ${MAX_RECURRING_OCCURRENCES}. Choose a shorter "until" date.`,
+                );
+            }
 
-        const occurrences: { startAt: Date; endAt: Date }[] = [];
-        let cursor = new Date(startAt);
-        while (cursor <= until) {
-            occurrences.push({ startAt: new Date(cursor), endAt: new Date(cursor.getTime() + durationMs) });
-            cursor = new Date(cursor.getTime() + stepDays * 24 * 60 * 60 * 1000);
-        }
+            // Safe to check every occurrence concurrently here — the room-wide lock
+            // above already serializes this entire operation against any OTHER request
+            // for this room, so there's no external race for these checks to lose to.
+            await Promise.all(occurrences.map((occ) => this.assertNoOverlap(dto.roomId, occ.startAt, occ.endAt)));
 
+            const ids = await this.generateIdBatch(occurrences.length);
+            const seriesId = ids[0];
+            const recurrence = { frequency: dto.recurrence.frequency, until };
 
+            const bookingsToInsert = occurrences.map((occ, i) => ({
+                _id: ids[i],
+                roomId: dto.roomId,
+                bookedBy,
+                startAt: occ.startAt,
+                endAt: occ.endAt,
+                recurrence,
+                seriesId,
+            }));
 
-        for (const occ of occurrences) {
-            await this.assertNoOverlap(dto.roomId, occ.startAt, occ.endAt);
-        }
-
-        const ids = await this.generateIdBatch(occurrences.length);
-        const seriesId = ids[0];
-        const recurrence = { frequency: dto.recurrence.frequency, until };
-
-        const bookingsToInsert = occurrences.map((occ, i) => ({
-            _id: ids[i],
-            roomId: dto.roomId,
-            bookedBy,
-            startAt: occ.startAt,
-            endAt: occ.endAt,
-            recurrence,
-            seriesId,
-        }));
-
-        return this.bookingModel.insertMany(bookingsToInsert);
+            return this.bookingModel.insertMany(bookingsToInsert);
+        });
     }
 
     findMyBookings(userId: string) {
@@ -131,7 +186,6 @@ export class RoomBookingsService {
             .sort({ startAt: 1 })
             .exec();
     }
-
 
     findForRoom(roomId: string, from: Date, to: Date) {
         return this.bookingModel
@@ -156,13 +210,18 @@ export class RoomBookingsService {
         if (booking.bookedBy.toString() !== requesterId) {
             throw new BadRequestException('You can only reschedule your own bookings');
         }
+        const room = await this.roomsService.findOne(booking.roomId);
+        this.assertRoomBookable(room);
+
         const startAt = new Date(dto.startAt);
         const endAt = new Date(dto.endAt);
 
-        await this.assertNoOverlap(booking.roomId.toString(), startAt, endAt, id);
-        booking.startAt = startAt;
-        booking.endAt = endAt;
-        return booking.save();
+        return this.withRoomLock(booking.roomId.toString(), async () => {
+            await this.assertNoOverlap(booking.roomId.toString(), startAt, endAt, id);
+            booking.startAt = startAt;
+            booking.endAt = endAt;
+            return booking.save();
+        });
     }
 
     async cancel(id: string, requesterId: string) {
@@ -175,7 +234,6 @@ export class RoomBookingsService {
         return booking.save();
     }
 
-
     async isRoomBookedAt(roomId: string, at: Date): Promise<boolean> {
         const clash = await this.bookingModel
             .findOne({
@@ -187,7 +245,6 @@ export class RoomBookingsService {
             .exec();
         return !!clash;
     }
-
 
     async utilizationReport(from: Date, to: Date) {
         return this.bookingModel.aggregate([
