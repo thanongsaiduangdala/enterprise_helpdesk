@@ -86,7 +86,7 @@ export class AuditLogsService {
             if (filters.from) query.timestamp.$gte = filters.from;
             if (filters.to) query.timestamp.$lte = filters.to;
         }
-        return this.auditLogModel.find(query).sort({ timestamp: -1 }).exec();
+        return this.auditLogModel.find(query).sort({ timestamp: -1 }).populate('actorId').exec();
     }
 
     async findOne(id: string) {

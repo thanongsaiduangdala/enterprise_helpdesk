@@ -14,6 +14,7 @@ import { ApiBearerAuth } from '@nestjs/swagger';
 import { RoomBookingsService } from './room-bookings.service';
 import { CreateRoomBookingDto } from './dto/create-room-booking.dto';
 import { RescheduleRoomBookingDto } from './dto/reschedule-room-booking.dto';
+import { RejectRoomBookingDto } from './dto/reject-room-booking.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
@@ -71,8 +72,8 @@ export class RoomBookingsController {
 
     @Patch(':id/reject')
     @RequirePermission('rooms', 'approve')
-    reject(@Param('id') id: string, @Req() req: any) {
-        return this.bookingsService.reject(id, req.user.userId);
+    reject(@Param('id') id: string, @Body() dto: RejectRoomBookingDto, @Req() req: any) {
+        return this.bookingsService.reject(id, req.user.userId, dto);
     }
 
     @Delete(':id')
