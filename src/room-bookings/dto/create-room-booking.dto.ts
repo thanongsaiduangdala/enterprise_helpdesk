@@ -13,6 +13,11 @@ class RecurrenceDto {
 }
 
 export class CreateRoomBookingDto {
+    @ApiProperty({ example: 'ປະຊຸມທີມງານປະຈຳອາທິດ' })
+    @IsNotEmpty()
+    @IsString()
+    title!: string;
+
     @ApiProperty({ example: 'R001' })
     @IsNotEmpty()
     @IsString()

@@ -16,6 +16,7 @@ import {
 import { RoomBookingLock, RoomBookingLockDocument } from './schemas/room-booking-lock.schema';
 import { CreateRoomBookingDto } from './dto/create-room-booking.dto';
 import { RescheduleRoomBookingDto } from './dto/reschedule-room-booking.dto';
+import { RejectRoomBookingDto } from './dto/reject-room-booking.dto';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomDocument, RoomStatus } from '../rooms/schemas/room.schema';
 
@@ -132,7 +133,7 @@ export class RoomBookingsService {
             if (!dto.recurrence) {
                 await this.assertNoOverlap(dto.roomId, startAt, endAt);
                 const [_id] = await this.generateIdBatch(1);
-                const booking = new this.bookingModel({ _id, roomId: dto.roomId, bookedBy, startAt, endAt });
+                const booking = new this.bookingModel({ _id, roomId: dto.roomId, bookedBy, startAt, endAt, title: dto.title });
                 return booking.save();
             }
 
@@ -167,6 +168,7 @@ export class RoomBookingsService {
                 endAt: occ.endAt,
                 recurrence,
                 seriesId,
+                title: dto.title,
             }));
 
             return this.bookingModel.insertMany(bookingsToInsert);
@@ -176,6 +178,7 @@ export class RoomBookingsService {
     findMyBookings(userId: string) {
         return this.bookingModel
             .find({ bookedBy: userId, status: { $ne: BookingStatus.CANCELLED } })
+            .populate('roomId')
             .sort({ startAt: 1 })
             .exec();
     }
@@ -228,7 +231,7 @@ export class RoomBookingsService {
         return booking.save();
     }
 
-    async reject(id: string, approverId: string) {
+    async reject(id: string, approverId: string, dto: RejectRoomBookingDto) {
         const booking = await this.findOne(id);
         if (booking.status !== BookingStatus.PENDING) {
             throw new BadRequestException('This booking is not waiting for approval');
@@ -237,6 +240,7 @@ export class RoomBookingsService {
         booking.status = BookingStatus.REJECTED;
         booking.reviewedBy = approverId as any;
         booking.reviewedAt = new Date();
+        booking.rejectionReason = dto.reason;
         return booking.save();
     }
 

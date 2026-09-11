@@ -24,6 +24,9 @@ export class RoomBooking {
     @Prop({ type: String })
     _id!: string;
 
+    @Prop({ required: true })
+    title!: string;
+
     @Prop({ type: String, ref: 'Room', required: true })
     roomId!: string;
 
@@ -51,6 +54,9 @@ export class RoomBooking {
 
     @Prop()
     reviewedAt?: Date;
+
+    @Prop()
+    rejectionReason?: string;
 }
 
 export const RoomBookingSchema = SchemaFactory.createForClass(RoomBooking);
