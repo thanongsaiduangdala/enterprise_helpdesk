@@ -10,36 +10,46 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 
 @Controller('sla-policies')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class SlaPoliciesController {
     constructor(private slaPoliciesService: SlaPoliciesService) { }
 
+    @Get('ticket-type/:ticketTypeId/available-priorities')
+    @UseGuards(JwtAuthGuard)
+    findAvailablePriorities(@Param('ticketTypeId') ticketTypeId: string) {
+        return this.slaPoliciesService.findAvailablePriorities(ticketTypeId);
+    }
+
     @Post()
+    @UseGuards(JwtAuthGuard, PermissionsGuard)
     @RequirePermission('sla', 'create')
     create(@Body() dto: CreateSlaPolicyDto, @Req() req: any) {
         return this.slaPoliciesService.create(dto, req.user.userId, req.ip);
     }
 
     @Get()
+    @UseGuards(JwtAuthGuard, PermissionsGuard)
     @RequirePermission('sla', 'read')
     findAll() {
         return this.slaPoliciesService.findAll();
     }
 
     @Get(':id')
+    @UseGuards(JwtAuthGuard, PermissionsGuard)
     @RequirePermission('sla', 'read')
     findOne(@Param('id') id: string) {
         return this.slaPoliciesService.findOne(id);
     }
 
     @Patch(':id')
+    @UseGuards(JwtAuthGuard, PermissionsGuard)
     @RequirePermission('sla', 'update')
     update(@Param('id') id: string, @Body() dto: UpdateSlaPolicyDto, @Req() req: any) {
         return this.slaPoliciesService.update(id, dto, req.user.userId, req.ip);
     }
 
     @Delete(':id')
+    @UseGuards(JwtAuthGuard, PermissionsGuard)
     @RequirePermission('sla', 'delete')
     remove(@Param('id') id: string, @Req() req: any) {
         return this.slaPoliciesService.remove(id, req.user.userId, req.ip);

@@ -23,6 +23,10 @@ const UPLOAD_DIR = join(process.cwd(), 'uploads');
 const ALLOWED_MIME_TYPES = [
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
 ];
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 

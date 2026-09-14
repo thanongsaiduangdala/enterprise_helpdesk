@@ -96,6 +96,13 @@ export class SlaPoliciesService {
         return policy;
     }
 
+    async findAvailablePriorities(ticketTypeId: string): Promise<string[]> {
+        const policies = await this.slaPolicyModel
+            .find({ ticketTypeId, isActive: true }, { priority: 1 })
+            .exec();
+        return policies.map((p) => p.priority);
+    }
+
     async remove(id: string, actorId: string, ip?: string) {
         const before = await this.slaPolicyModel.findById(id).exec();
         if (!before) throw new NotFoundException('SLA policy not found');

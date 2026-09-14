@@ -5,12 +5,14 @@ import { TicketMessagesService } from './ticket-messages.service';
 import { TicketMessagesController } from './ticket-messages.controller';
 import { CannedResponsesModule } from '../canned-responses/canned-responses.module';
 import { TicketsModule } from '../tickets/tickets.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
     imports: [
         MongooseModule.forFeature([{ name: TicketMessage.name, schema: TicketMessageSchema }]),
         CannedResponsesModule,
         TicketsModule,
+        NotificationsModule,
     ],
     controllers: [TicketMessagesController],
     providers: [TicketMessagesService],

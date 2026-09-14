@@ -5,6 +5,7 @@ import { TicketMessage, TicketMessageDocument } from './schemas/ticket-message.s
 import { CreateTicketMessageDto } from './dto/create-ticket-message.dto';
 import { CannedResponsesService } from '../canned-responses/canned-responses.service';
 import { TicketsService } from '../tickets/tickets.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { assertInvolvedInTicket } from '../common/utils/ticket-access.util';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class TicketMessagesService {
         @InjectModel(TicketMessage.name) private messageModel: Model<TicketMessageDocument>,
         private cannedResponsesService: CannedResponsesService,
         private ticketsService: TicketsService,
+        private notificationsService: NotificationsService,
     ) { }
 
     async create(dto: CreateTicketMessageDto, senderId: string, permissions: any[]) {
@@ -25,7 +27,30 @@ export class TicketMessagesService {
             }
             await this.cannedResponsesService.findOne(dto.cannedResponseId);
         }
-        return new this.messageModel({ ...dto, senderId }).save();
+
+        const saved = await new this.messageModel({ ...dto, senderId }).save();
+
+        // Notify "the other side" of the conversation — whichever of raiser/agent didn't just send this.
+        const raisedById = (ticket as any).raisedBy?.toString();
+        const assignedAgentId = (ticket as any).assignedAgent?.toString();
+        const recipients = [raisedById, assignedAgentId].filter(
+            (id): id is string => !!id && id !== senderId,
+        );
+
+        await Promise.all(
+            recipients.map((recipientId) =>
+                this.notificationsService.notify(
+                    recipientId,
+                    'TICKET_MESSAGE',
+                    (ticket as any)._id.toString(),
+                    'Ticket',
+                    `New message on ${(ticket as any).ticketNumber}`,
+                    dto.body.length > 80 ? `${dto.body.slice(0, 80)}...` : dto.body,
+                ),
+            ),
+        );
+
+        return saved;
     }
 
     async findForTicket(ticketId: string, userId: string, permissions: any[]) {
