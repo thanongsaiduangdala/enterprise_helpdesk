@@ -2,6 +2,7 @@ import {
     Controller,
     Post,
     Get,
+    Delete,
     Param,
     Res,
     UseGuards,
@@ -14,7 +15,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { randomBytes } from 'crypto';
 import { extname, join } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, unlinkSync } from 'fs';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -69,5 +70,16 @@ export class UploadsController {
         }
         res.setHeader('Content-Disposition', 'inline');
         res.sendFile(filePath);
+    }
+
+    @Delete(':filename')
+    @UseGuards(JwtAuthGuard)
+    remove(@Param('filename') filename: string) {
+        const filePath = join(UPLOAD_DIR, filename);
+        if (!existsSync(filePath)) {
+            throw new NotFoundException('File not found');
+        }
+        unlinkSync(filePath);
+        return { deleted: true };
     }
 }
