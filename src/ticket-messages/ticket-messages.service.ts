@@ -31,11 +31,11 @@ export class TicketMessagesService {
     async findForTicket(ticketId: string, userId: string, permissions: any[]) {
         const ticket = await this.ticketsService.findOne(ticketId);
         assertInvolvedInTicket(ticket, userId, permissions);
-        return this.messageModel.find({ ticketId }).sort({ createdAt: 1 }).exec();
+        return this.messageModel.find({ ticketId }).sort({ createdAt: 1 }).populate('senderId').exec();
     }
 
     async findOne(id: string, userId: string, permissions: any[]) {
-        const message = await this.messageModel.findById(id).exec();
+        const message = await this.messageModel.findById(id).populate('senderId').exec();
         if (!message) throw new NotFoundException('Message not found');
 
         const ticket = await this.ticketsService.findOne(message.ticketId);

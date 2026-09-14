@@ -121,7 +121,12 @@ export class TicketsService {
         if (filters.status) query.status = filters.status;
         if (filters.priority) query.priority = filters.priority;
         if (filters.assignedAgent) query.assignedAgent = filters.assignedAgent;
-        return this.ticketModel.find(query).sort({ createdAt: -1 }).exec();
+        return this.ticketModel
+            .find(query)
+            .sort({ createdAt: -1 })
+            .populate('raisedBy')
+            .populate('assignedAgent')
+            .exec();
     }
 
     findMine(userId: string) {
@@ -144,6 +149,7 @@ export class TicketsService {
     async findOneForUser(id: string, userId: string, permissions: any[]) {
         const ticket = await this.findOne(id);
         assertInvolvedInTicket(ticket, userId, permissions);
+        await ticket.populate(['raisedBy', 'assignedAgent', 'history.actorId']);
         return ticket;
     }
 
