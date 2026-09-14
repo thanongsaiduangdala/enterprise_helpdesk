@@ -62,8 +62,13 @@ export class TicketsController {
         @Query('status') status?: TicketStatus,
         @Query('priority') priority?: string,
         @Query('assignedAgent') assignedAgent?: string,
+        @Req() req?: any,
     ) {
-        return this.ticketsService.findAll({ branchId, departmentId, status, priority, assignedAgent });
+        return this.ticketsService.findAll(
+            { branchId, departmentId, status, priority, assignedAgent },
+            req.user.userId,
+            req.user.role,
+        );
     }
 
     @Get(':id')

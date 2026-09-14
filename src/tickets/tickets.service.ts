@@ -19,6 +19,7 @@ import { BranchesService } from '../branches/branches.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { assertInvolvedInTicket } from '../common/utils/ticket-access.util';
+import { UsersService } from '../users/users.service';
 
 const ALLOWED_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
     [TicketStatus.OPEN]: [TicketStatus.ASSIGNED, TicketStatus.IN_PROGRESS],
@@ -39,6 +40,7 @@ export class TicketsService {
         private branchesService: BranchesService,
         private notificationsService: NotificationsService,
         private auditLogsService: AuditLogsService,
+        private usersService: UsersService,
     ) { }
 
     private async generateTicketNumber(): Promise<string> {
@@ -108,25 +110,39 @@ export class TicketsService {
         return ticket.save();
     }
 
-    findAll(filters: {
-        branchId?: string;
-        departmentId?: string;
-        status?: TicketStatus;
-        priority?: string;
-        assignedAgent?: string;
-    }) {
+    async findAll(
+        filters: {
+            branchId?: string;
+            departmentId?: string;
+            status?: TicketStatus;
+            priority?: string;
+            assignedAgent?: string;
+        },
+        requestingUserId: string,
+        requestingUserRole: string,
+    ) {
         const query: any = {};
+
+        // Role-based visibility — always enforced server-side, never trusted from the client.
+        if (requestingUserRole === 'EMPLOYEE' || requestingUserRole === 'AGENT') {
+            query.$or = [{ raisedBy: requestingUserId }, { assignedAgent: requestingUserId }];
+        } else if (requestingUserRole === 'DEPT_MANAGER') {
+            const me = await this.usersService.findOneRaw(requestingUserId);
+            query.departmentId = me.departmentId;
+        } else if (requestingUserRole === 'BRANCH_ADMIN') {
+            const me = await this.usersService.findOneRaw(requestingUserId);
+            query.branchId = me.branchId;
+        }
+        // SUPER_ADMIN / AUDITOR: no forced scope — org-wide visibility.
+
+        // Explicit filters from the UI still apply on top of (never instead of) the role scope above.
         if (filters.branchId) query.branchId = filters.branchId;
         if (filters.departmentId) query.departmentId = filters.departmentId;
         if (filters.status) query.status = filters.status;
         if (filters.priority) query.priority = filters.priority;
         if (filters.assignedAgent) query.assignedAgent = filters.assignedAgent;
-        return this.ticketModel
-            .find(query)
-            .sort({ createdAt: -1 })
-            .populate('raisedBy')
-            .populate('assignedAgent')
-            .exec();
+
+        return this.ticketModel.find(query).sort({ createdAt: -1 }).exec();
     }
 
     findMine(userId: string) {
