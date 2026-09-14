@@ -29,6 +29,9 @@ export class KbArticle {
     @Prop({ type: [String], default: [] })
     tags!: string[];
 
+    @Prop({ type: [String], default: [] })
+    attachments!: string[];
+
     @Prop({ enum: KbArticleStatus, default: KbArticleStatus.DRAFT })
     status!: KbArticleStatus;
 
