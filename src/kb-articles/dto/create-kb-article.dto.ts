@@ -29,6 +29,9 @@ export class CreateKbArticleDto {
     @IsString({ each: true })
     tags?: string[];
 
-
-
+    @ApiProperty({ required: false, example: ['/api/uploads/ab12cd34.pdf'] })
+    @IsOptional()
+    @IsArray()
+    @IsString({ each: true })
+    attachments?: string[];
 }

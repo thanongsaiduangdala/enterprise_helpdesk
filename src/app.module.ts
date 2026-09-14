@@ -28,6 +28,7 @@ import { MailModule } from './mail/mail.module';
 import { ReportsModule } from './reports/reports.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     ReportsModule,
     ScheduleModule.forRoot(),
     DashboardModule,
+    UploadsModule,
   ],
 
   providers: [
