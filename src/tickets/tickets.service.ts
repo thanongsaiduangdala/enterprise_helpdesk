@@ -79,6 +79,14 @@ export class TicketsService {
         await this.departmentsService.findOne(departmentId);
 
         const priority = dto.priority ?? (ticketType as any).defaultPriority;
+
+        const availablePriorities = await this.slaPoliciesService.findAvailablePriorities(dto.ticketTypeId);
+        if (availablePriorities.length > 0 && !availablePriorities.includes(priority)) {
+            throw new BadRequestException(
+                `No SLA policy exists for priority "${priority}" on this ticket type. Available priorities: ${availablePriorities.join(', ')}`,
+            );
+        }
+
         const ticketNumber = await this.generateTicketNumber();
         const now = new Date();
 
