@@ -4,6 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Ticket, TicketDocument, TicketStatus } from './schemas/ticket.schema';
 import { NotificationsService } from '../notifications/notifications.service';
+import { DepartmentsService } from '../departments/departments.service';
 
 @Injectable()
 export class SlaBreachCheckerService {
@@ -12,6 +13,7 @@ export class SlaBreachCheckerService {
     constructor(
         @InjectModel(Ticket.name) private ticketModel: Model<TicketDocument>,
         private notificationsService: NotificationsService,
+        private departmentsService: DepartmentsService,
     ) { }
 
     // ຄິດໄລ່ "ວັນທີຄົບກຳນົດແທ້ຈິງ" ໂດຍບວກເອົາໄລຍະເວລາທີ່ຖືກ pause ໄປແລ້ວ (ຊ່ວງ WAITING_ON_USER
@@ -56,10 +58,6 @@ export class SlaBreachCheckerService {
             await ticket.save();
             breachedCount++;
 
-            // ແຈ້ງເຕືອນ agent ທີ່ຮັບຜິດຊອບ (ຖ້າມີ) ວ່າ ticket ນີ້ເກີນ SLA ແລ້ວ
-            // NOTE: escalationRules (notifyRole -> DEPT_MANAGER ຫຼັງເກີນເທົ່າໃດນາທີ) ຍັງບໍ່ໄດ້
-            // implement ຢູ່ນີ້ — ຕ້ອງການ service ຫາ "ຜູ້ໃຊ້ທັງໝົດທີ່ມີ role ນີ້" ເພີ່ມກ່ອນ
-            // (ຄາດວ່າແມ່ນ UsersService/RolesService) ຈຶ່ງເປັນ TODO ແຍກຕ່າງຫາກ
             if (ticket.assignedAgent) {
                 await this.notificationsService.notify(
                     ticket.assignedAgent.toString(),
@@ -69,6 +67,31 @@ export class SlaBreachCheckerService {
                     `Ticket ${ticket.ticketNumber} has breached its SLA resolution time`,
                     ticket.title,
                 );
+            } else if (ticket.departmentId) {
+                try {
+                    const department = await this.departmentsService.findOne(ticket.departmentId.toString());
+                    const managerIds: string[] = department?.managerIds || [];
+
+                    if (managerIds.length === 0) {
+                        this.logger.warn(
+                            `Ticket ${ticket.ticketNumber} breached SLA with no assigned agent and department ${ticket.departmentId} has no managerIds set — nobody was notified`,
+                        );
+                    }
+
+                    for (const managerId of managerIds) {
+                        await this.notificationsService.notify(
+                            managerId,
+                            'TICKET_SLA_BREACHED_UNASSIGNED',
+                            ticket._id.toString(),
+                            'Ticket',
+                            `Ticket ${ticket.ticketNumber} has breached its SLA and has no assigned agent`,
+                            ticket.title,
+                        );
+                    }
+                } catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    this.logger.warn(`Failed to notify department managers for ticket ${ticket.ticketNumber}: ${message}`);
+                }
             }
         }
 

@@ -142,15 +142,15 @@ export class TicketsService {
         if (filters.priority) query.priority = filters.priority;
         if (filters.assignedAgent) query.assignedAgent = filters.assignedAgent;
 
-        return this.ticketModel.find(query).sort({ createdAt: -1 }).exec();
+        return this.ticketModel.find(query).sort({ createdAt: -1 }).populate(['raisedBy', 'assignedAgent']).exec();
     }
 
     findMine(userId: string) {
-        return this.ticketModel.find({ raisedBy: userId }).sort({ createdAt: -1 }).exec();
+        return this.ticketModel.find({ raisedBy: userId }).sort({ createdAt: -1 }).populate(['raisedBy', 'assignedAgent']).exec();
     }
 
     findAssignedToMe(userId: string) {
-        return this.ticketModel.find({ assignedAgent: userId }).sort({ createdAt: -1 }).exec();
+        return this.ticketModel.find({ assignedAgent: userId }).sort({ createdAt: -1 }).populate(['raisedBy', 'assignedAgent']).exec();
     }
 
     async findOne(id: string) {
