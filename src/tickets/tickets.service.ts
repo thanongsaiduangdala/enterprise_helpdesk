@@ -79,14 +79,6 @@ export class TicketsService {
         await this.departmentsService.findOne(departmentId);
 
         const priority = dto.priority ?? (ticketType as any).defaultPriority;
-
-        const availablePriorities = await this.slaPoliciesService.findAvailablePriorities(dto.ticketTypeId);
-        if (availablePriorities.length > 0 && !availablePriorities.includes(priority)) {
-            throw new BadRequestException(
-                `No SLA policy exists for priority "${priority}" on this ticket type. Available priorities: ${availablePriorities.join(', ')}`,
-            );
-        }
-
         const ticketNumber = await this.generateTicketNumber();
         const now = new Date();
 
@@ -150,15 +142,15 @@ export class TicketsService {
         if (filters.priority) query.priority = filters.priority;
         if (filters.assignedAgent) query.assignedAgent = filters.assignedAgent;
 
-        return this.ticketModel.find(query).sort({ createdAt: -1 }).populate(['raisedBy', 'assignedAgent']).exec();
+        return this.ticketModel.find(query).sort({ createdAt: -1 }).exec();
     }
 
     findMine(userId: string) {
-        return this.ticketModel.find({ raisedBy: userId }).sort({ createdAt: -1 }).populate(['raisedBy', 'assignedAgent']).exec();
+        return this.ticketModel.find({ raisedBy: userId }).sort({ createdAt: -1 }).exec();
     }
 
     findAssignedToMe(userId: string) {
-        return this.ticketModel.find({ assignedAgent: userId }).sort({ createdAt: -1 }).populate(['raisedBy', 'assignedAgent']).exec();
+        return this.ticketModel.find({ assignedAgent: userId }).sort({ createdAt: -1 }).exec();
     }
 
     async findOne(id: string) {

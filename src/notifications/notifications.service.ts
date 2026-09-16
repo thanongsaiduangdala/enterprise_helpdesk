@@ -2,19 +2,18 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Notification, NotificationDocument } from './schemas/notification.schema';
-import { NotificationsGateway } from './notifications.gateway';
 
 @Injectable()
 export class NotificationsService {
     constructor(
         @InjectModel(Notification.name) private notificationModel: Model<NotificationDocument>,
-        private gateway: NotificationsGateway,
     ) { }
 
+
+
+
     async notify(userId: string, type: string, refId: string, refModel: string, title: string, body: string) {
-        const notification = await this.notificationModel.create({ userId, type, refId, refModel, title, body });
-        this.gateway.notifyUser(userId, notification);
-        return notification;
+        return this.notificationModel.create({ userId, type, refId, refModel, title, body });
     }
 
 

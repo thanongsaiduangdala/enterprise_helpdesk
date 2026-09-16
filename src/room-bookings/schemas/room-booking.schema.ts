@@ -57,6 +57,17 @@ export class RoomBooking {
 
     @Prop()
     rejectionReason?: string;
+
+    // ບັນທຶກເວລາເຂົ້າ/ອອກຫ້ອງແທ້ໆ (ບໍ່ແມ່ນແຄ່ເວລາທີ່ຈອງໄວ້) — ໃຊ້ຢືນຢັນວ່າກຳລັງໃຊ້ຫ້ອງແທ້ໆ ແລະ ກວດ no-show
+    @Prop()
+    checkedInAt?: Date;
+
+    @Prop()
+    checkedOutAt?: Date;
+
+    // ລາຍຊື່ຄົນເຂົ້າຮ່ວມປະຊຸມ (ຊື່ຄົນ, ບໍ່ຈຳກັດວ່າຕ້ອງເປັນຜູ້ໃຊ້ໃນລະບົບ — ອາດມີແຂກພາຍນອກ)
+    @Prop({ type: [String], default: [] })
+    attendees!: string[];
 }
 
 export const RoomBookingSchema = SchemaFactory.createForClass(RoomBooking);

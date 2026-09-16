@@ -17,10 +17,15 @@ import { RoomBookingLock, RoomBookingLockDocument } from './schemas/room-booking
 import { CreateRoomBookingDto } from './dto/create-room-booking.dto';
 import { RescheduleRoomBookingDto } from './dto/reschedule-room-booking.dto';
 import { RejectRoomBookingDto } from './dto/reject-room-booking.dto';
+import { RecordAttendeesDto } from './dto/record-attendees.dto';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomDocument, RoomStatus } from '../rooms/schemas/room.schema';
 
 const MAX_RECURRING_OCCURRENCES = 60;
+// ຖ້າຮອດເວລານັດແລ້ວບໍ່ມີໃຜ check-in ພາຍໃນເວລານີ້ (ນາທີ) — ຖືວ່າ no-show, ລະບົບຈະຍົກເລີກໃຫ້ອັດຕະໂນມັດ ແລະ ປ່ອຍຫ້ອງ
+const NO_SHOW_GRACE_MINUTES = 15;
+// ອະນຸຍາດ check-in ລ່ວງໜ້າກ່ອນເວລານັດໄດ້ຈັກນາທີ (ຄົນມາຮອດໄວກວ່ານັດ)
+const EARLY_CHECKIN_GRACE_MINUTES = 5;
 
 @Injectable()
 export class RoomBookingsService {
@@ -298,28 +303,106 @@ export class RoomBookingsService {
         return { seriesId, cancelledCount: cancellable.length };
     }
 
+    // ຢືນຢັນວ່າ "ເຂົ້າຫ້ອງແທ້ໆແລ້ວ" — ແຍກຈາກແຄ່ "ຈອງໄວ້" — ໃຊ້ຄິດໄລ່ liveStatus ໃຫ້ແມ່ນຍຳກວ່າເກົ່າ
+    async checkIn(id: string, requesterId: string) {
+        const booking = await this.findOne(id);
+        if (booking.bookedBy.toString() !== requesterId) {
+            throw new BadRequestException('You can only check in to your own bookings');
+        }
+        if (booking.status !== BookingStatus.CONFIRMED) {
+            throw new BadRequestException('Only confirmed bookings can be checked in');
+        }
+        if (booking.checkedInAt) {
+            throw new BadRequestException('This booking has already been checked in');
+        }
+        const now = new Date();
+        const earliestAllowed = new Date(booking.startAt.getTime() - EARLY_CHECKIN_GRACE_MINUTES * 60000);
+        if (now < earliestAllowed) {
+            throw new BadRequestException(`Too early to check in — this booking starts at ${booking.startAt.toISOString()}`);
+        }
+        if (now >= booking.endAt) {
+            throw new BadRequestException('This booking has already ended');
+        }
+        booking.checkedInAt = now;
+        return booking.save();
+    }
+
+    // ຢືນຢັນວ່າ "ອອກຈາກຫ້ອງແລ້ວ" — ປ່ອຍຫ້ອງທັນທີ ເຖິງແມ່ນເວລາຈອງ (endAt) ຍັງບໍ່ຮອດ
+    async checkOut(id: string, requesterId: string) {
+        const booking = await this.findOne(id);
+        if (booking.bookedBy.toString() !== requesterId) {
+            throw new BadRequestException('You can only check out of your own bookings');
+        }
+        if (!booking.checkedInAt) {
+            throw new BadRequestException('This booking has not been checked in yet');
+        }
+        if (booking.checkedOutAt) {
+            throw new BadRequestException('This booking has already been checked out');
+        }
+        booking.checkedOutAt = new Date();
+        return booking.save();
+    }
+
+    // ບັນທຶກລາຍຊື່ຄົນເຂົ້າຮ່ວມປະຊຸມ — ພຽງແຕ່ເຈົ້າຂອງ booking ເທົ່ານັ້ນທີ່ບັນທຶກໄດ້
+    async recordAttendees(id: string, requesterId: string, dto: RecordAttendeesDto) {
+        const booking = await this.findOne(id);
+        if (booking.bookedBy.toString() !== requesterId) {
+            throw new BadRequestException('You can only record attendees for your own bookings');
+        }
+        booking.attendees = dto.attendees;
+        return booking.save();
+    }
+
+    // ຍົກເລີກ booking ທີ່ "ຈອງໄວ້ແຕ່ບໍ່ມາ" (ຮອດເວລານັດ+ເວລາຜ່ອນຜັນແລ້ວ ແຕ່ບໍ່ check-in) ໃຫ້ອັດຕະໂນມັດ —
+    // ບໍ່ໄດ້ໃຊ້ cron ແຍກຕ່າງຫາກ, ຮຽກຈາກທຸກບ່ອນທີ່ຄິດໄລ່ວ່າຫ້ອງໃດ "ກຳລັງຖືກໃຊ້ຢູ່ຕອນນີ້" (lazy sweep)
+    // ດັ່ງນັ້ນຫ້ອງຈະຖືກປ່ອຍທັນທີທີ່ມີຄົນມາເບິ່ງລາຍຊື່ຫ້ອງ ໂດຍບໍ່ຕ້ອງລໍຖ້າ job ພື້ນຫຼັງ
+    private async releaseNoShowBookings(roomIds?: string[]) {
+        const cutoff = new Date(Date.now() - NO_SHOW_GRACE_MINUTES * 60000);
+        const filter: any = {
+            status: BookingStatus.CONFIRMED,
+            checkedInAt: null,
+            startAt: { $lte: cutoff },
+            endAt: { $gt: new Date() },
+        };
+        if (roomIds && roomIds.length > 0) {
+            filter.roomId = { $in: roomIds };
+        }
+        await this.bookingModel
+            .updateMany(filter, {
+                $set: {
+                    status: BookingStatus.CANCELLED,
+                    rejectionReason: `ຍົກເລີກອັດຕະໂນມັດ: ບໍ່ໄດ້ check-in ພາຍໃນ ${NO_SHOW_GRACE_MINUTES} ນາທີຫຼັງເວລານັດ (no-show)`,
+                },
+            })
+            .exec();
+    }
+
     async isRoomBookedAt(roomId: string, at: Date): Promise<boolean> {
+        await this.releaseNoShowBookings([roomId]);
         const clash = await this.bookingModel
             .findOne({
                 roomId,
                 status: BookingStatus.CONFIRMED,
                 startAt: { $lte: at },
                 endAt: { $gt: at },
+                checkedOutAt: null, // check-out ແລ້ວ = ປ່ອຍຫ້ອງທັນທີ ເຖິງແມ່ນ endAt ຍັງບໍ່ຮອດ
             })
             .exec();
         return !!clash;
     }
 
-    // ເອົາ id ຫ້ອງທັງໝົດທີ່ "ກຳລັງຖືກໃຊ້ຢູ່ຕອນນີ້" (ມີ booking CONFIRMED ຄອບຄຸມເວລາປັດຈຸບັນ) — ໃນຄິວດຽວ
+    // ເອົາ id ຫ້ອງທັງໝົດທີ່ "ກຳລັງຖືກໃຊ້ຢູ່ຕອນນີ້" (ມີ booking CONFIRMED ຄອບຄຸມເວລາປັດຈຸບັນ, ຍັງບໍ່ check-out) — ໃນຄິວດຽວ
     // ໃຊ້ໂດຍ RoomsService.findAllWithLiveStatus() ເພື່ອຫຼີກລ້ຽງການ query ເປັນຮ້ອຍໆຄັ້ງ (N+1) ຕອນສະແດງລາຍຊື່ຫ້ອງທັງໝົດ
     async findRoomIdsBookedAt(roomIds: string[], at: Date): Promise<Set<string>> {
         if (roomIds.length === 0) return new Set();
+        await this.releaseNoShowBookings(roomIds);
         const clashes = await this.bookingModel
             .find({
                 roomId: { $in: roomIds },
                 status: BookingStatus.CONFIRMED,
                 startAt: { $lte: at },
                 endAt: { $gt: at },
+                checkedOutAt: null,
             })
             .select('roomId')
             .exec();

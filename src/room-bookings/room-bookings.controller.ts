@@ -15,6 +15,7 @@ import { RoomBookingsService } from './room-bookings.service';
 import { CreateRoomBookingDto } from './dto/create-room-booking.dto';
 import { RescheduleRoomBookingDto } from './dto/reschedule-room-booking.dto';
 import { RejectRoomBookingDto } from './dto/reject-room-booking.dto';
+import { RecordAttendeesDto } from './dto/record-attendees.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
@@ -62,6 +63,25 @@ export class RoomBookingsController {
     @RequirePermission('rooms', 'read')
     reschedule(@Param('id') id: string, @Body() dto: RescheduleRoomBookingDto, @Req() req: any) {
         return this.bookingsService.reschedule(id, dto, req.user.userId);
+    }
+
+    // ຢືນຢັນ "ເຂົ້າຫ້ອງແທ້ໆແລ້ວ" — ຄືກັບ reschedule/cancel, ຄວບຄຸມດ້ວຍ ownership (bookedBy) ພາຍໃນ service ບໍ່ແມ່ນ role
+    @Patch(':id/checkin')
+    @RequirePermission('rooms', 'read')
+    checkIn(@Param('id') id: string, @Req() req: any) {
+        return this.bookingsService.checkIn(id, req.user.userId);
+    }
+
+    @Patch(':id/checkout')
+    @RequirePermission('rooms', 'read')
+    checkOut(@Param('id') id: string, @Req() req: any) {
+        return this.bookingsService.checkOut(id, req.user.userId);
+    }
+
+    @Patch(':id/attendees')
+    @RequirePermission('rooms', 'read')
+    recordAttendees(@Param('id') id: string, @Body() dto: RecordAttendeesDto, @Req() req: any) {
+        return this.bookingsService.recordAttendees(id, req.user.userId, dto);
     }
 
     @Patch(':id/approve')
