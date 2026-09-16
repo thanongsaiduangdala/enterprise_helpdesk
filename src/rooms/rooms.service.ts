@@ -49,6 +49,24 @@ export class RoomsService {
         return this.roomModel.find(filter).exec();
     }
 
+    // ຄືກັນກັບ findAll() ແຕ່ຕິດຄ່າ liveStatus (AVAILABLE / BOOKED / MAINTENANCE) ໃຫ້ແຕ່ລະຫ້ອງ —
+    // ໃຊ້ໂດຍ GET /rooms ເພື່ອໃຫ້ໜ້າລາຍຊື່ຫ້ອງ (card grid + widget ໜ້າ dashboard) ເຫັນສະຖານະ "ກຳລັງໃຊ້ງານ" ໄດ້ຄືກັບ findOneWithLiveStatus()
+    async findAllWithLiveStatus(branchId?: string) {
+        const rooms = await this.findAll(branchId);
+        const nonMaintenanceIds = rooms
+            .filter((r) => r.status !== RoomStatus.MAINTENANCE)
+            .map((r) => r._id);
+        const bookedNowIds = await this.roomBookingsService.findRoomIdsBookedAt(nonMaintenanceIds, new Date());
+
+        return rooms.map((room) => {
+            const obj = room.toObject();
+            if (room.status === RoomStatus.MAINTENANCE) {
+                return { ...obj, liveStatus: RoomStatus.MAINTENANCE };
+            }
+            return { ...obj, liveStatus: bookedNowIds.has(String(room._id)) ? 'BOOKED' : RoomStatus.AVAILABLE };
+        });
+    }
+
     async findOne(id: string) {
         const room = await this.roomModel.findById(id).exec();
         if (!room) throw new NotFoundException('Room not found');

@@ -35,7 +35,7 @@ export class RoomsController {
     @RequirePermission('rooms', 'read')
     @ApiQuery({ name: 'branchId', required: false, description: 'Filter by branch — omit to get all rooms across every branch' })
     findAll(@Query('branchId') branchId?: string) {
-        return this.roomsService.findAll(branchId);
+        return this.roomsService.findAllWithLiveStatus(branchId);
     }
 
 

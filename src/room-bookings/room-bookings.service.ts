@@ -310,6 +310,22 @@ export class RoomBookingsService {
         return !!clash;
     }
 
+    // ເອົາ id ຫ້ອງທັງໝົດທີ່ "ກຳລັງຖືກໃຊ້ຢູ່ຕອນນີ້" (ມີ booking CONFIRMED ຄອບຄຸມເວລາປັດຈຸບັນ) — ໃນຄິວດຽວ
+    // ໃຊ້ໂດຍ RoomsService.findAllWithLiveStatus() ເພື່ອຫຼີກລ້ຽງການ query ເປັນຮ້ອຍໆຄັ້ງ (N+1) ຕອນສະແດງລາຍຊື່ຫ້ອງທັງໝົດ
+    async findRoomIdsBookedAt(roomIds: string[], at: Date): Promise<Set<string>> {
+        if (roomIds.length === 0) return new Set();
+        const clashes = await this.bookingModel
+            .find({
+                roomId: { $in: roomIds },
+                status: BookingStatus.CONFIRMED,
+                startAt: { $lte: at },
+                endAt: { $gt: at },
+            })
+            .select('roomId')
+            .exec();
+        return new Set(clashes.map((c) => String(c.roomId)));
+    }
+
     async utilizationReport(from: Date, to: Date) {
         return this.bookingModel.aggregate([
             {
