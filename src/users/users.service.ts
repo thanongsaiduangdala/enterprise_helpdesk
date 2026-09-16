@@ -10,6 +10,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { RolesService } from '../roles/roles.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { MailService } from '../mail/mail.service';
+import { SessionsService } from '../sessions/sessions.service';
 
 const SENSITIVE_FIELDS = ['passwordHash', 'password'];
 
@@ -28,6 +29,7 @@ export class UsersService {
         private rolesService: RolesService,
         private auditLogsService: AuditLogsService,
         private mailService: MailService,
+        private sessionsService: SessionsService,
     ) { }
 
     async create(dto: CreateUserDto, actorId: string, ip?: string) {
@@ -128,6 +130,8 @@ export class UsersService {
         return this.userModel.findOne({ email }).populate('role').exec();
     }
 
+
+
     async setActive(id: string, isActive: boolean, actorId: string, ip?: string) {
         const before = await this.userModel.findById(id).exec();
         if (!before) throw new NotFoundException('User not found');
@@ -138,6 +142,10 @@ export class UsersService {
 
         const user = await this.userModel.findByIdAndUpdate(id, update, { new: true }).exec();
         if (!user) throw new NotFoundException('User not found');
+
+        if (!isActive) {
+            await this.sessionsService.revokeAllForUser(id);
+        }
 
         await this.auditLogsService.log(
             actorId,
@@ -290,6 +298,8 @@ export class UsersService {
 
         const result = await this.userModel.findByIdAndDelete(id).exec();
         if (!result) throw new NotFoundException('User not found');
+
+        await this.sessionsService.revokeAllForUser(id);
 
         await this.auditLogsService.log(
             actorId,

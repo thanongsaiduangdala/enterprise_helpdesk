@@ -49,6 +49,13 @@ export class SessionsService {
             .exec();
     }
 
+    async revokeAllForUser(userId: string) {
+        await this.sessionModel.updateMany(
+            { userId, revoked: false },
+            { $set: { revoked: true } },
+        ).exec();
+    }
+
     async revokeOwn(sessionId: string, userId: string) {
         const session = await this.sessionModel.findById(sessionId).exec();
         if (!session) throw new NotFoundException('Session not found');

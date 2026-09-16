@@ -6,6 +6,7 @@ import { UsersController } from './users.controller';
 import { RolesModule } from '../roles/roles.module';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { MailModule } from '../mail/mail.module';
+import { SessionsModule } from '../sessions/sessions.module';
 
 @Module({
     imports: [
@@ -13,6 +14,7 @@ import { MailModule } from '../mail/mail.module';
         RolesModule,
         AuditLogsModule,
         MailModule,
+        SessionsModule,
     ],
     controllers: [UsersController],
     providers: [UsersService],
