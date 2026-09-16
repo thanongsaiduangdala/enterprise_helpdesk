@@ -119,6 +119,10 @@ eslint-plugin-prettier@5.5.6     (dev)
 globals@17.11.0                  (dev)
 prettier@3.9.6                   (dev)
 
+
+
+npm install @nestjs/websockets@11 @nestjs/platform-socket.io@11 socket.io
+
 --------------------------------------------
 DOCKER SETUP (reference)
 --------------------------------------------

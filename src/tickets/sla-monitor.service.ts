@@ -103,6 +103,27 @@ export class SlaMonitorService {
                         `SLA breached: ${ticket.ticketNumber}`,
                         'This ticket\'s resolution deadline has passed.',
                     );
+                } else if (ticket.departmentId) {
+                    // No agent assigned — notify the department's managers instead,
+                    // so an overdue, unassigned ticket doesn't go unnoticed by everyone.
+                    const managerIds = await this.resolveRecipients(ticket, 'DEPT_MANAGER');
+                    if (managerIds.length === 0) {
+                        this.logger.warn(
+                            `Ticket ${ticket.ticketNumber} breached SLA with no assigned agent and department ${ticket.departmentId} has no managers set — nobody was notified`,
+                        );
+                    }
+                    await Promise.all(
+                        managerIds.map((userId) =>
+                            this.notificationsService.notify(
+                                userId,
+                                'SLA_BREACH_UNASSIGNED',
+                                ticket._id.toString(),
+                                'Ticket',
+                                `Unassigned ticket breached SLA: ${ticket.ticketNumber}`,
+                                'This ticket has no assigned agent and its resolution deadline has passed.',
+                            ),
+                        ),
+                    );
                 }
             }
 
