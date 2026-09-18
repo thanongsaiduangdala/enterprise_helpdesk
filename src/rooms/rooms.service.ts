@@ -11,6 +11,7 @@ import { Room, RoomDocument, RoomStatus } from './schemas/room.schema';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { RoomBookingsService } from '../room-bookings/room-bookings.service';
+import { RoomBookingsGateway } from '../room-bookings/room-bookings.gateway';
 
 @Injectable()
 export class RoomsService {
@@ -18,6 +19,7 @@ export class RoomsService {
         @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
         @Inject(forwardRef(() => RoomBookingsService))
         private roomBookingsService: RoomBookingsService,
+        private roomBookingsGateway: RoomBookingsGateway,
     ) { }
 
 
@@ -41,7 +43,9 @@ export class RoomsService {
             throw new ConflictException(`Room "${dto.name}" already exists in this branch`);
         }
         const _id = await this.generateId();
-        return new this.roomModel({ _id, ...dto }).save();
+        const room = await new this.roomModel({ _id, ...dto }).save();
+        this.roomBookingsGateway.emitRoomsChanged(String(room._id));
+        return room;
     }
 
     findAll(branchId?: string) {
@@ -87,6 +91,7 @@ export class RoomsService {
     async update(id: string, dto: UpdateRoomDto) {
         const room = await this.roomModel.findByIdAndUpdate(id, dto, { new: true }).exec();
         if (!room) throw new NotFoundException('Room not found');
+        this.roomBookingsGateway.emitRoomsChanged(id);
         return room;
     }
 
@@ -94,12 +99,14 @@ export class RoomsService {
     async setStatus(id: string, status: RoomStatus) {
         const room = await this.roomModel.findByIdAndUpdate(id, { status }, { new: true }).exec();
         if (!room) throw new NotFoundException('Room not found');
+        this.roomBookingsGateway.emitRoomsChanged(id);
         return room;
     }
 
     async remove(id: string) {
         const result = await this.roomModel.findByIdAndDelete(id).exec();
         if (!result) throw new NotFoundException('Room not found');
+        this.roomBookingsGateway.emitRoomsChanged(id);
         return { deleted: true };
     }
 

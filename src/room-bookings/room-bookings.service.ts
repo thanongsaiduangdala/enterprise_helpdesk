@@ -20,6 +20,7 @@ import { RejectRoomBookingDto } from './dto/reject-room-booking.dto';
 import { RecordAttendeesDto } from './dto/record-attendees.dto';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomDocument, RoomStatus } from '../rooms/schemas/room.schema';
+import { RoomBookingsGateway } from './room-bookings.gateway';
 
 const MAX_RECURRING_OCCURRENCES = 60;
 // ຖ້າຮອດເວລານັດແລ້ວບໍ່ມີໃຜ check-in ພາຍໃນເວລານີ້ (ນາທີ) — ຖືວ່າ no-show, ລະບົບຈະຍົກເລີກໃຫ້ອັດຕະໂນມັດ ແລະ ປ່ອຍຫ້ອງ
@@ -33,6 +34,7 @@ export class RoomBookingsService {
         @InjectModel(RoomBooking.name) private bookingModel: Model<RoomBookingDocument>,
         @InjectModel(RoomBookingLock.name) private lockModel: Model<RoomBookingLockDocument>,
         @Inject(forwardRef(() => RoomsService)) private roomsService: RoomsService,
+        private roomBookingsGateway: RoomBookingsGateway,
     ) { }
 
     private async generateId(): Promise<string> {
@@ -135,48 +137,52 @@ export class RoomBookingsService {
             const startAt = new Date(dto.startAt);
             const endAt = new Date(dto.endAt);
 
+            let saved;
             if (!dto.recurrence) {
                 await this.assertNoOverlap(dto.roomId, startAt, endAt);
                 const [_id] = await this.generateIdBatch(1);
                 const booking = new this.bookingModel({ _id, roomId: dto.roomId, bookedBy, startAt, endAt, title: dto.title });
-                return booking.save();
+                saved = await booking.save();
+            } else {
+                const until = new Date(dto.recurrence.until);
+                const stepDays = dto.recurrence.frequency === 'daily' ? 1 : 7;
+                const durationMs = endAt.getTime() - startAt.getTime();
+
+                const occurrences: { startAt: Date; endAt: Date }[] = [];
+                let cursor = new Date(startAt);
+                while (cursor <= until) {
+                    occurrences.push({ startAt: new Date(cursor), endAt: new Date(cursor.getTime() + durationMs) });
+                    cursor = new Date(cursor.getTime() + stepDays * 24 * 60 * 60 * 1000);
+                }
+
+                if (occurrences.length > MAX_RECURRING_OCCURRENCES) {
+                    throw new BadRequestException(
+                        `This recurrence would create ${occurrences.length} bookings, over the limit of ${MAX_RECURRING_OCCURRENCES}. Choose a shorter "until" date.`,
+                    );
+                }
+
+                await Promise.all(occurrences.map((occ) => this.assertNoOverlap(dto.roomId, occ.startAt, occ.endAt)));
+
+                const ids = await this.generateIdBatch(occurrences.length);
+                const seriesId = ids[0];
+                const recurrence = { frequency: dto.recurrence.frequency, until };
+
+                const bookingsToInsert = occurrences.map((occ, i) => ({
+                    _id: ids[i],
+                    roomId: dto.roomId,
+                    bookedBy,
+                    startAt: occ.startAt,
+                    endAt: occ.endAt,
+                    recurrence,
+                    seriesId,
+                    title: dto.title,
+                }));
+
+                saved = await this.bookingModel.insertMany(bookingsToInsert);
             }
 
-            const until = new Date(dto.recurrence.until);
-            const stepDays = dto.recurrence.frequency === 'daily' ? 1 : 7;
-            const durationMs = endAt.getTime() - startAt.getTime();
-
-            const occurrences: { startAt: Date; endAt: Date }[] = [];
-            let cursor = new Date(startAt);
-            while (cursor <= until) {
-                occurrences.push({ startAt: new Date(cursor), endAt: new Date(cursor.getTime() + durationMs) });
-                cursor = new Date(cursor.getTime() + stepDays * 24 * 60 * 60 * 1000);
-            }
-
-            if (occurrences.length > MAX_RECURRING_OCCURRENCES) {
-                throw new BadRequestException(
-                    `This recurrence would create ${occurrences.length} bookings, over the limit of ${MAX_RECURRING_OCCURRENCES}. Choose a shorter "until" date.`,
-                );
-            }
-
-            await Promise.all(occurrences.map((occ) => this.assertNoOverlap(dto.roomId, occ.startAt, occ.endAt)));
-
-            const ids = await this.generateIdBatch(occurrences.length);
-            const seriesId = ids[0];
-            const recurrence = { frequency: dto.recurrence.frequency, until };
-
-            const bookingsToInsert = occurrences.map((occ, i) => ({
-                _id: ids[i],
-                roomId: dto.roomId,
-                bookedBy,
-                startAt: occ.startAt,
-                endAt: occ.endAt,
-                recurrence,
-                seriesId,
-                title: dto.title,
-            }));
-
-            return this.bookingModel.insertMany(bookingsToInsert);
+            this.roomBookingsGateway.emitBookingsChanged(dto.roomId);
+            return saved;
         });
     }
 
@@ -233,7 +239,9 @@ export class RoomBookingsService {
         booking.status = BookingStatus.CONFIRMED;
         booking.reviewedBy = approverId as any;
         booking.reviewedAt = new Date();
-        return booking.save();
+        const saved = await booking.save();
+        this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+        return saved;
     }
 
     async reject(id: string, approverId: string, dto: RejectRoomBookingDto) {
@@ -246,7 +254,9 @@ export class RoomBookingsService {
         booking.reviewedBy = approverId as any;
         booking.reviewedAt = new Date();
         booking.rejectionReason = dto.reason;
-        return booking.save();
+        const saved = await booking.save();
+        this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+        return saved;
     }
 
     async reschedule(id: string, dto: RescheduleRoomBookingDto, requesterId: string) {
@@ -264,7 +274,9 @@ export class RoomBookingsService {
             await this.assertNoOverlap(booking.roomId.toString(), startAt, endAt, id);
             booking.startAt = startAt;
             booking.endAt = endAt;
-            return booking.save();
+            const saved = await booking.save();
+            this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+            return saved;
         });
     }
 
@@ -275,7 +287,9 @@ export class RoomBookingsService {
         }
 
         booking.status = BookingStatus.CANCELLED;
-        return booking.save();
+        const saved = await booking.save();
+        this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+        return saved;
     }
 
     async cancelSeries(seriesId: string, requesterId: string) {
@@ -293,12 +307,15 @@ export class RoomBookingsService {
         const cancellable = bookings.filter(
             (b) => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING,
         );
-        await this.bookingModel
-            .updateMany(
-                { seriesId, status: { $in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] } },
-                { $set: { status: BookingStatus.CANCELLED } },
-            )
-            .exec();
+        if (cancellable.length > 0) {
+            await this.bookingModel
+                .updateMany(
+                    { seriesId, status: { $in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] } },
+                    { $set: { status: BookingStatus.CANCELLED } },
+                )
+                .exec();
+            this.roomBookingsGateway.emitBookingsChanged();
+        }
 
         return { seriesId, cancelledCount: cancellable.length };
     }
@@ -324,7 +341,9 @@ export class RoomBookingsService {
             throw new BadRequestException('This booking has already ended');
         }
         booking.checkedInAt = now;
-        return booking.save();
+        const saved = await booking.save();
+        this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+        return saved;
     }
 
     // ຢືນຢັນວ່າ "ອອກຈາກຫ້ອງແລ້ວ" — ປ່ອຍຫ້ອງທັນທີ ເຖິງແມ່ນເວລາຈອງ (endAt) ຍັງບໍ່ຮອດ
@@ -340,7 +359,9 @@ export class RoomBookingsService {
             throw new BadRequestException('This booking has already been checked out');
         }
         booking.checkedOutAt = new Date();
-        return booking.save();
+        const saved = await booking.save();
+        this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+        return saved;
     }
 
     // ບັນທຶກລາຍຊື່ຄົນເຂົ້າຮ່ວມປະຊຸມ — ພຽງແຕ່ເຈົ້າຂອງ booking ເທົ່ານັ້ນທີ່ບັນທຶກໄດ້

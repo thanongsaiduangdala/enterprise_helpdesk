@@ -29,6 +29,7 @@ import { ReportsModule } from './reports/reports.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { SettingsModule } from './settings/organization-settings.module';
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { UploadsModule } from './uploads/uploads.module';
     ScheduleModule.forRoot(),
     DashboardModule,
     UploadsModule,
+    SettingsModule,
   ],
 
   providers: [
