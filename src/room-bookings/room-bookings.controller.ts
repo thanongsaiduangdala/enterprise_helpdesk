@@ -48,14 +48,14 @@ export class RoomBookingsController {
     @Get()
     @RequirePermission('rooms', 'read')
     findForRoom(
-        @Query('roomId') roomId: string,
         @Query('from') from: string,
         @Query('to') to: string,
+        @Query('roomId') roomId?: string,
     ) {
         return this.bookingsService.findForRoom(
-            roomId,
             parseRequiredDate(from, 'from'),
             parseRequiredDate(to, 'to'),
+            roomId,
         );
     }
 

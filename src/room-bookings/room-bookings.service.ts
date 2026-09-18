@@ -188,20 +188,21 @@ export class RoomBookingsService {
 
     findMyBookings(userId: string) {
         return this.bookingModel
-            .find({ bookedBy: userId, status: { $ne: BookingStatus.CANCELLED } })
+            .find({ bookedBy: userId })
             .populate('roomId')
-            .sort({ startAt: 1 })
+            .sort({ startAt: -1 })
             .exec();
     }
 
-    findForRoom(roomId: string, from: Date, to: Date) {
+    findForRoom(from: Date, to: Date, roomId?: string) {
+        const filter: any = {
+            status: BookingStatus.CONFIRMED,
+            startAt: { $lt: to },
+            endAt: { $gt: from },
+        };
+        if (roomId) filter.roomId = roomId;
         return this.bookingModel
-            .find({
-                roomId,
-                status: BookingStatus.CONFIRMED,
-                startAt: { $lt: to },
-                endAt: { $gt: from },
-            })
+            .find(filter)
             .sort({ startAt: 1 })
             .exec();
     }
@@ -384,6 +385,11 @@ export class RoomBookingsService {
             checkedInAt: null,
             startAt: { $lte: cutoff },
             endAt: { $gt: new Date() },
+        };
+        // ພຽງແຕ່ການຈອງທີ່ຖືກອະນຸມັດກ່ອນເວລາຈອງເລີ່ມ ເທົ່ານັ້ນທີ່ຖືວ່າ "no-show" ເມື່ອບໍ່ check-in —
+        // ຖ້າອະນຸມັດຫຼັງເວລາເລີ່ມ (ເຊັ່ນ ຈອງ/ອະນຸມັດຊ້າ) ຈະບໍ່ຍົກເລີກອັດຕະໂນມັດ ເພື່ອໃຫ້ຄົນທີ່ມາໃຊ້ຫ້ອງຍັງ check-in ໄດ້
+        filter.$expr = {
+            $lte: [{ $ifNull: ['$reviewedAt', '$startAt'] }, '$startAt'],
         };
         if (roomIds && roomIds.length > 0) {
             filter.roomId = { $in: roomIds };
