@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { parse } from 'csv-parse/sync';
 import { Branch, BranchDocument } from './schemas/branch.schema';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
@@ -46,6 +47,48 @@ export class BranchesService {
         );
 
         return saved;
+    }
+
+    async bulkImport(fileBuffer: Buffer, actorId: string, ip?: string) {
+        let rows: Record<string, string>[];
+        try {
+            rows = parse(fileBuffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+        } catch (err: any) {
+            throw new ConflictException(`Could not parse CSV file: ${err.message}`);
+        }
+
+        const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNumber = i + 2;
+            try {
+                if (!row.name || !row.address || !row.city || !row.country || !row.timezone) {
+                    throw new Error('Missing one or more required fields (name, address, city, country, timezone)');
+                }
+                const dto: CreateBranchDto = {
+                    name: row.name,
+                    location: {
+                        address: row.address,
+                        city: row.city,
+                        country: row.country,
+                        timezone: row.timezone,
+                    },
+                    isActive: row.isActive ? row.isActive === 'true' || row.isActive === '1' : undefined,
+                };
+                await this.create(dto, actorId, ip);
+                results.push({ row: rowNumber, reference: row.name, success: true });
+            } catch (error: any) {
+                results.push({ row: rowNumber, reference: row.name ?? '', success: false, error: error.message ?? 'Unknown error' });
+            }
+        }
+
+        return {
+            total: rows.length,
+            created: results.filter((r) => r.success).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+        };
     }
 
     findAll() {

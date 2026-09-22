@@ -5,12 +5,13 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { parse } from 'csv-parse/sync';
 import { Department, DepartmentDocument } from './schemas/department.schema';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { BranchesService } from '../branches/branches.service';
 import { TicketTypesService } from '../ticket-types/ticket-types.service';
-import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class DepartmentsService {
@@ -79,6 +80,44 @@ export class DepartmentsService {
             }
             throw error;
         }
+    }
+
+    async bulkImport(fileBuffer: Buffer, actorId: string, ip?: string) {
+        let rows: Record<string, string>[];
+        try {
+            rows = parse(fileBuffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+        } catch (err: any) {
+            throw new ConflictException(`Could not parse CSV file: ${err.message}`);
+        }
+
+        const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNumber = i + 2;
+            try {
+                if (!row.branchId || !row.name) {
+                    throw new Error('Missing one or more required fields (branchId, name)');
+                }
+                const dto: CreateDepartmentDto = {
+                    branchId: row.branchId,
+                    name: row.name,
+                    managerIds: row.managerIds ? row.managerIds.split(/[;,]+/).map((id: string) => id.trim()).filter(Boolean) : undefined,
+                    isActive: row.isActive ? row.isActive === 'true' || row.isActive === '1' : undefined,
+                };
+                await this.create(dto, actorId, ip);
+                results.push({ row: rowNumber, reference: row.name, success: true });
+            } catch (error: any) {
+                results.push({ row: rowNumber, reference: row.name ?? '', success: false, error: error.message ?? 'Unknown error' });
+            }
+        }
+
+        return {
+            total: rows.length,
+            created: results.filter((r) => r.success).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+        };
     }
 
 

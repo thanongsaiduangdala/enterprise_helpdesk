@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { parse } from 'csv-parse/sync';
 import { Role, RoleDocument } from './schemas/role.schema';
 import { Counter, CounterDocument } from './schemas/counter.schema';
 import { CreateRoleDto } from './dto/create-role.dto';
@@ -49,6 +50,65 @@ export class RolesService {
         );
 
         return saved;
+    }
+
+    async bulkImport(fileBuffer: Buffer, actorId: string, ip?: string) {
+        let rows: Record<string, string>[];
+        try {
+            rows = parse(fileBuffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+        } catch (err: any) {
+            throw new ConflictException(`Could not parse CSV file: ${err.message}`);
+        }
+
+        const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNumber = i + 2;
+            try {
+                if (!row.name) {
+                    throw new Error('Missing required field: name');
+                }
+                const permissions = row.permissions
+                    ? row.permissions
+                        .split(/[;|]+/)
+                        .map((group: string) => group.trim())
+                        .filter(Boolean)
+                        .map((group: string) => {
+                            const [module, actionsRaw] = group.split(':');
+                            if (!module || !actionsRaw) {
+                                throw new Error(`Invalid permission group "${group}" — expected "module:action1,action2"`);
+                            }
+                            const actions = actionsRaw
+                                .split(/[, ]+/)
+                                .map((a: string) => a.trim())
+                                .filter(Boolean);
+                            if (actions.length === 0) {
+                                throw new Error(`No actions found for permission group "${group}"`);
+                            }
+                            return { module: module.trim(), actions };
+                        })
+                    : undefined;
+
+                const dto: CreateRoleDto = {
+                    name: row.name,
+                    permissions,
+                    mfaRequired: row.mfaRequired ? row.mfaRequired === 'true' || row.mfaRequired === '1' : undefined,
+                };
+
+                await this.create(dto, actorId, ip);
+                results.push({ row: rowNumber, reference: row.name, success: true });
+            } catch (error: any) {
+                results.push({ row: rowNumber, reference: row.name ?? '', success: false, error: error.message ?? 'Unknown error' });
+            }
+        }
+
+        return {
+            total: rows.length,
+            created: results.filter((r) => r.success).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+        };
     }
 
     findAll() {

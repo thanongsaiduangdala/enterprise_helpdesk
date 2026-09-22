@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { parse } from 'csv-parse/sync';
 import { SlaPolicy, SlaPolicyDocument } from './schemas/sla-policy.schema';
 import { CreateSlaPolicyDto } from './dto/create-sla-policy.dto';
 import { UpdateSlaPolicyDto } from './dto/update-sla-policy.dto';
@@ -45,6 +46,56 @@ export class SlaPoliciesService {
         );
 
         return saved;
+    }
+
+    async bulkImport(fileBuffer: Buffer, actorId: string, ip?: string) {
+        let rows: Record<string, string>[];
+        try {
+            rows = parse(fileBuffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+        } catch (err: any) {
+            throw new ConflictException(`Could not parse CSV file: ${err.message}`);
+        }
+
+        const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNumber = i + 2;
+            try {
+                if (!row.name || !row.ticketTypeId || !row.priority) {
+                    throw new Error('Missing one or more required fields (name, ticketTypeId, priority)');
+                }
+                const responseTimeMinutes = Number(row.responseTimeMinutes);
+                const resolutionTimeMinutes = Number(row.resolutionTimeMinutes);
+                if (!Number.isInteger(responseTimeMinutes) || responseTimeMinutes < 1) {
+                    throw new Error('responseTimeMinutes must be a positive integer');
+                }
+                if (!Number.isInteger(resolutionTimeMinutes) || resolutionTimeMinutes < 1) {
+                    throw new Error('resolutionTimeMinutes must be a positive integer');
+                }
+
+                const dto: CreateSlaPolicyDto = {
+                    name: row.name,
+                    ticketTypeId: row.ticketTypeId,
+                    priority: row.priority,
+                    responseTimeMinutes,
+                    resolutionTimeMinutes,
+                    isActive: row.isActive ? row.isActive === 'true' || row.isActive === '1' : undefined,
+                };
+
+                await this.create(dto, actorId, ip);
+                results.push({ row: rowNumber, reference: row.name, success: true });
+            } catch (error: any) {
+                results.push({ row: rowNumber, reference: row.name ?? '', success: false, error: error.message ?? 'Unknown error' });
+            }
+        }
+
+        return {
+            total: rows.length,
+            created: results.filter((r) => r.success).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+        };
     }
 
     findAll() {

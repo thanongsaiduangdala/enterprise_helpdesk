@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { parse } from 'csv-parse/sync';
 import { Asset, AssetDocument, AssetStatus } from './schemas/asset.schema';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
@@ -35,6 +36,45 @@ export class AssetsService {
         }
         const _id = await this.generateId();
         return new this.assetModel({ _id, ...dto }).save();
+    }
+
+    async bulkImport(fileBuffer: Buffer) {
+        let rows: Record<string, string>[];
+        try {
+            rows = parse(fileBuffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+        } catch (err: any) {
+            throw new ConflictException(`Could not parse CSV file: ${err.message}`);
+        }
+
+        const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNumber = i + 2;
+            try {
+                if (!row.assetTag || !row.type || !row.branchId) {
+                    throw new Error('Missing one or more required fields (assetTag, type, branchId)');
+                }
+                const dto: CreateAssetDto = {
+                    assetTag: row.assetTag,
+                    type: row.type,
+                    branchId: row.branchId,
+                    purchaseDate: row.purchaseDate || undefined,
+                    warrantyExpiry: row.warrantyExpiry || undefined,
+                };
+                await this.create(dto);
+                results.push({ row: rowNumber, reference: row.assetTag, success: true });
+            } catch (error: any) {
+                results.push({ row: rowNumber, reference: row.assetTag ?? '', success: false, error: error.message ?? 'Unknown error' });
+            }
+        }
+
+        return {
+            total: rows.length,
+            created: results.filter((r) => r.success).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+        };
     }
 
     findAll(filters: { branchId?: string; status?: AssetStatus; assigneeId?: string }) {

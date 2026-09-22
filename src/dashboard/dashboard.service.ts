@@ -79,7 +79,7 @@ export class DashboardService {
         return undefined;
     }
 
-    async getDashboard(userId: string) {
+    async getDashboard(userId: string, branchId?: string) {
         const user = await this.usersService.findOne(userId);
         const role = user.role as any;
         const permissions: PermissionEntry[] = role?.permissions ?? [];
@@ -105,7 +105,10 @@ export class DashboardService {
         let teamOverview: Record<string, any> | undefined;
         let orgStats: Record<string, any> | undefined;
         if (canReadReports) {
-            const scope = this.resolveReportScope(role?.name, user);
+            // ບຸລິມະສິດ: branchId ທີ່ຜູ້ໃຊ້ເລືອກ (sidebar) ມີຄ່າກວ່າຂອບເຂດທີ່ອີງຕາມບົດບາດ
+            const scope = branchId
+                ? { branchId }
+                : this.resolveReportScope(role?.name, user);
             const [scopeLabel, breakdown, sla] = await Promise.all([
                 this.reportsService.scopeLabel(scope),
                 this.reportsService.ticketsBreakdown(scope),

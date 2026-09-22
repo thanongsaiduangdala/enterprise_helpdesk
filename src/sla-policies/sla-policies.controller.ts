@@ -1,7 +1,8 @@
 import {
-    Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards,
+    Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards, UploadedFile, UseInterceptors, BadRequestException,
 } from '@nestjs/common';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { SlaPoliciesService } from './sla-policies.service';
 import { CreateSlaPolicyDto } from './dto/create-sla-policy.dto';
 import { UpdateSlaPolicyDto } from './dto/update-sla-policy.dto';
@@ -25,6 +26,24 @@ export class SlaPoliciesController {
     @RequirePermission('sla', 'create')
     create(@Body() dto: CreateSlaPolicyDto, @Req() req: any) {
         return this.slaPoliciesService.create(dto, req.user.userId, req.ip);
+    }
+
+    @Post('bulk-import')
+    @UseGuards(JwtAuthGuard, PermissionsGuard)
+    @RequirePermission('sla', 'create')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: { file: { type: 'string', format: 'binary' } },
+        },
+    })
+    bulkImport(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
+        if (!file) {
+            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
+        }
+        return this.slaPoliciesService.bulkImport(file.buffer, req.user.userId, req.ip);
     }
 
     @Get()

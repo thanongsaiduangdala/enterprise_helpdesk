@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { parse } from 'csv-parse/sync';
 import { KbArticle, KbArticleDocument, KbArticleStatus } from './schemas/kb-article.schema';
 import { KbArticleFeedback, KbArticleFeedbackDocument } from './schemas/kb-article-feedback.schema';
 import { CreateKbArticleDto } from './dto/create-kb-article.dto';
@@ -56,6 +57,45 @@ export class KbArticlesService {
         }
         const _id = await this.generateId();
         return new this.articleModel({ _id, ...dto, authorId }).save();
+    }
+
+    async bulkImport(fileBuffer: Buffer, authorId: string, permissions: any[]) {
+        let rows: Record<string, string>[];
+        try {
+            rows = parse(fileBuffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+        } catch (err: any) {
+            throw new ConflictException(`Could not parse CSV file: ${err.message}`);
+        }
+
+        const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNumber = i + 2;
+            try {
+                if (!row.title || !row.body || !row.category || !row.departmentId) {
+                    throw new Error('Missing one or more required fields (title, body, category, departmentId)');
+                }
+                const dto: CreateKbArticleDto = {
+                    title: row.title,
+                    body: row.body,
+                    category: row.category,
+                    departmentId: row.departmentId,
+                    tags: row.tags ? row.tags.split(/[;,]+/).map((t: string) => t.trim()).filter(Boolean) : undefined,
+                };
+                await this.create(dto, authorId, permissions);
+                results.push({ row: rowNumber, reference: row.title, success: true });
+            } catch (error: any) {
+                results.push({ row: rowNumber, reference: row.title ?? '', success: false, error: error.message ?? 'Unknown error' });
+            }
+        }
+
+        return {
+            total: rows.length,
+            created: results.filter((r) => r.success).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+        };
     }
 
 

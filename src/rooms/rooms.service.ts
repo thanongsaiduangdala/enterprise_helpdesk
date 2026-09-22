@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { parse } from 'csv-parse/sync';
 import { Room, RoomDocument, RoomStatus } from './schemas/room.schema';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
@@ -46,6 +47,51 @@ export class RoomsService {
         const room = await new this.roomModel({ _id, ...dto }).save();
         this.roomBookingsGateway.emitRoomsChanged(String(room._id));
         return room;
+    }
+
+    async bulkImport(fileBuffer: Buffer) {
+        let rows: Record<string, string>[];
+        try {
+            rows = parse(fileBuffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+        } catch (err: any) {
+            throw new ConflictException(`Could not parse CSV file: ${err.message}`);
+        }
+
+        const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNumber = i + 2;
+            try {
+                if (!row.branchId || !row.name || !row.capacity) {
+                    throw new Error('Missing one or more required fields (branchId, name, capacity)');
+                }
+                const capacity = Number(row.capacity);
+                if (!Number.isInteger(capacity) || capacity < 1) {
+                    throw new Error('capacity must be a positive integer');
+                }
+                const dto: CreateRoomDto = {
+                    branchId: row.branchId,
+                    name: row.name,
+                    location: row.location || undefined,
+                    capacity,
+                    amenities: row.amenities ? row.amenities.split(/[;,]+/).map((a: string) => a.trim()).filter(Boolean) : undefined,
+                    status: (row.status ? row.status.toUpperCase() : undefined) as any,
+                    isActive: row.isActive ? row.isActive === 'true' || row.isActive === '1' : undefined,
+                };
+                await this.create(dto);
+                results.push({ row: rowNumber, reference: row.name, success: true });
+            } catch (error: any) {
+                results.push({ row: rowNumber, reference: row.name ?? '', success: false, error: error.message ?? 'Unknown error' });
+            }
+        }
+
+        return {
+            total: rows.length,
+            created: results.filter((r) => r.success).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+        };
     }
 
     findAll(branchId?: string) {

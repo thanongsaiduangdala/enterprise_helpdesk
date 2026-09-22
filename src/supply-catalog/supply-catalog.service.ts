@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { parse } from 'csv-parse/sync';
 import { SupplyCatalogItem, SupplyCatalogItemDocument } from './schemas/supply-catalog-item.schema';
 import { CreateSupplyCatalogItemDto } from './dto/create-supply-catalog-item.dto';
 import { UpdateSupplyCatalogItemDto } from './dto/update-supply-catalog-item.dto';
@@ -59,6 +60,46 @@ export class SupplyCatalogService {
         const item = await this.catalogModel.findByIdAndUpdate(id, dto, { new: true }).exec();
         if (!item) throw new NotFoundException('Catalog item not found');
         return item;
+    }
+
+    async bulkImport(fileBuffer: Buffer) {
+        let rows: Record<string, string>[];
+        try {
+            rows = parse(fileBuffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+        } catch (err: any) {
+            throw new ConflictException(`Could not parse CSV file: ${err.message}`);
+        }
+
+        const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNumber = i + 2;
+            try {
+                if (!row.name || !row.category || !row.unit) {
+                    throw new Error('Missing one or more required fields (name, category, unit)');
+                }
+                const dto: CreateSupplyCatalogItemDto = {
+                    name: row.name,
+                    category: row.category,
+                    unit: row.unit,
+                    stockQty: row.stockQty !== undefined && row.stockQty !== '' ? parseInt(row.stockQty, 10) : undefined,
+                    lowStockThreshold: row.lowStockThreshold !== undefined && row.lowStockThreshold !== '' ? parseInt(row.lowStockThreshold, 10) : undefined,
+                    isActive: row.isActive !== undefined && row.isActive !== '' ? String(row.isActive).toLowerCase() === 'true' : undefined,
+                };
+                await this.create(dto);
+                results.push({ row: rowNumber, reference: row.name, success: true });
+            } catch (error: any) {
+                results.push({ row: rowNumber, reference: row.name ?? '', success: false, error: error.message ?? 'Unknown error' });
+            }
+        }
+
+        return {
+            total: rows.length,
+            created: results.filter((r) => r.success).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+        };
     }
 
 

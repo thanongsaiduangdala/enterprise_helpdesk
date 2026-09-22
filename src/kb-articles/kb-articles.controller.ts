@@ -8,9 +8,13 @@ import {
     Post,
     Query,
     Req,
+    UploadedFile,
+    UseInterceptors,
     UseGuards,
+    BadRequestException,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { KbArticlesService } from './kb-articles.service';
 import { CreateKbArticleDto } from './dto/create-kb-article.dto';
 import { UpdateKbArticleDto } from './dto/update-kb-article.dto';
@@ -30,6 +34,23 @@ export class KbArticlesController {
     @RequirePermission('kb', 'create')
     create(@Body() dto: CreateKbArticleDto, @Req() req: any) {
         return this.articlesService.create(dto, req.user.userId, req.user.permissions);
+    }
+
+    @Post('bulk-import')
+    @RequirePermission('kb', 'create')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: { file: { type: 'string', format: 'binary' } },
+        },
+    })
+    bulkImport(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
+        if (!file) {
+            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
+        }
+        return this.articlesService.bulkImport(file.buffer, req.user.userId, req.user.permissions);
     }
 
     @Get()

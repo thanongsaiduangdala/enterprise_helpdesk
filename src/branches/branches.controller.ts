@@ -1,7 +1,8 @@
 import {
-    Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards,
+    Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards, UploadedFile, UseInterceptors, BadRequestException,
 } from '@nestjs/common';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { BranchesService } from './branches.service';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
@@ -19,6 +20,23 @@ export class BranchesController {
     @RequirePermission('branches', 'create')
     create(@Body() dto: CreateBranchDto, @Req() req: any) {
         return this.branchesService.create(dto, req.user.userId, req.ip);
+    }
+
+    @Post('bulk-import')
+    @RequirePermission('branches', 'create')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: { file: { type: 'string', format: 'binary' } },
+        },
+    })
+    bulkImport(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
+        if (!file) {
+            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
+        }
+        return this.branchesService.bulkImport(file.buffer, req.user.userId, req.ip);
     }
 
     @Get()

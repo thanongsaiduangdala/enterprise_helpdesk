@@ -8,9 +8,13 @@ import {
     Post,
     Query,
     Req,
+    UploadedFile,
+    UseInterceptors,
     UseGuards,
+    BadRequestException,
 } from '@nestjs/common';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { RoomBookingsService } from './room-bookings.service';
 import { CreateRoomBookingDto } from './dto/create-room-booking.dto';
 import { RescheduleRoomBookingDto } from './dto/reschedule-room-booking.dto';
@@ -31,6 +35,23 @@ export class RoomBookingsController {
     @RequirePermission('rooms', 'create')
     create(@Body() dto: CreateRoomBookingDto, @Req() req: any) {
         return this.bookingsService.create(dto, req.user.userId);
+    }
+
+    @Post('bulk-import')
+    @RequirePermission('rooms', 'create')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: { file: { type: 'string', format: 'binary' } },
+        },
+    })
+    bulkImport(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
+        if (!file) {
+            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
+        }
+        return this.bookingsService.bulkImport(file.buffer, req.user.userId);
     }
 
     @Get('my')

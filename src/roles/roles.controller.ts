@@ -8,9 +8,13 @@ import {
     Post,
     Query,
     Req,
+    UploadedFile,
+    UseInterceptors,
     UseGuards,
+    BadRequestException,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { RolesService } from './roles.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
@@ -28,6 +32,23 @@ export class RolesController {
     @RequirePermission('roles', 'create')
     create(@Body() dto: CreateRoleDto, @Req() req: any) {
         return this.rolesService.create(dto, req.user.userId, req.ip);
+    }
+
+    @Post('bulk-import')
+    @RequirePermission('roles', 'create')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: { file: { type: 'string', format: 'binary' } },
+        },
+    })
+    bulkImport(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
+        if (!file) {
+            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
+        }
+        return this.rolesService.bulkImport(file.buffer, req.user.userId, req.ip);
     }
 
     @Get()

@@ -7,9 +7,13 @@ import {
     Patch,
     Post,
     Query,
+    UploadedFile,
     UseGuards,
+    UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiQuery } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { BadRequestException } from '@nestjs/common';
 import { SupplyCatalogService } from './supply-catalog.service';
 import { CreateSupplyCatalogItemDto } from './dto/create-supply-catalog-item.dto';
 import { UpdateSupplyCatalogItemDto } from './dto/update-supply-catalog-item.dto';
@@ -35,6 +39,23 @@ export class SupplyCatalogController {
     @ApiQuery({ name: 'lowStockOnly', required: false, type: Boolean, description: 'true = only items at/below their low-stock threshold' })
     findAll(@Query('lowStockOnly') lowStockOnly?: string) {
         return this.catalogService.findAll(lowStockOnly === 'true');
+    }
+
+    @Post('bulk-import')
+    @RequirePermission('supplies', 'create')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: { file: { type: 'string', format: 'binary' } },
+        },
+    })
+    bulkImport(@UploadedFile() file: Express.Multer.File) {
+        if (!file) {
+            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
+        }
+        return this.catalogService.bulkImport(file.buffer);
     }
 
     @Get(':id')

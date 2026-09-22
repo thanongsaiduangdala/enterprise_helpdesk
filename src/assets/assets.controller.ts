@@ -8,9 +8,13 @@ import {
     Post,
     Query,
     Req,
+    UploadedFile,
+    UseInterceptors,
     UseGuards,
+    BadRequestException,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { AssetsService } from './assets.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
@@ -32,6 +36,23 @@ export class AssetsController {
     @RequirePermission('assets', 'create')
     create(@Body() dto: CreateAssetDto) {
         return this.assetsService.create(dto);
+    }
+
+    @Post('bulk-import')
+    @RequirePermission('assets', 'create')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: { file: { type: 'string', format: 'binary' } },
+        },
+    })
+    bulkImport(@UploadedFile() file: Express.Multer.File) {
+        if (!file) {
+            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
+        }
+        return this.assetsService.bulkImport(file.buffer);
     }
 
     @Get()

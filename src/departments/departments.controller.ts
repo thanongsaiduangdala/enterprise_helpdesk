@@ -1,7 +1,8 @@
 import {
-    Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards,
+    Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards, UploadedFile, UseInterceptors, BadRequestException,
 } from '@nestjs/common';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { DepartmentsService } from './departments.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
@@ -19,6 +20,23 @@ export class DepartmentsController {
     @RequirePermission('departments', 'create')
     create(@Body() dto: CreateDepartmentDto, @Req() req: any) {
         return this.departmentsService.create(dto, req.user.userId, req.ip);
+    }
+
+    @Post('bulk-import')
+    @RequirePermission('departments', 'create')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: { file: { type: 'string', format: 'binary' } },
+        },
+    })
+    bulkImport(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
+        if (!file) {
+            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
+        }
+        return this.departmentsService.bulkImport(file.buffer, req.user.userId, req.ip);
     }
 
     @Get()

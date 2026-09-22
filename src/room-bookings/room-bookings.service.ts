@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { parse } from 'csv-parse/sync';
 import {
     RoomBooking,
     RoomBookingDocument,
@@ -184,6 +185,50 @@ export class RoomBookingsService {
             this.roomBookingsGateway.emitBookingsChanged(dto.roomId);
             return saved;
         });
+    }
+
+    async bulkImport(fileBuffer: Buffer, bookedBy: string) {
+        let rows: Record<string, string>[];
+        try {
+            rows = parse(fileBuffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+        } catch (err: any) {
+            throw new ConflictException(`Could not parse CSV file: ${err.message}`);
+        }
+
+        const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNumber = i + 2;
+            try {
+                if (!row.title || !row.roomId || !row.startAt || !row.endAt) {
+                    throw new Error('Missing one or more required fields (title, roomId, startAt, endAt)');
+                }
+                if (Number.isNaN(new Date(row.startAt).getTime())) {
+                    throw new Error('startAt must be a valid date (e.g. 2026-09-22T09:00:00.000Z)');
+                }
+                if (Number.isNaN(new Date(row.endAt).getTime())) {
+                    throw new Error('endAt must be a valid date (e.g. 2026-09-22T10:00:00.000Z)');
+                }
+                const dto: CreateRoomBookingDto = {
+                    title: row.title,
+                    roomId: row.roomId,
+                    startAt: row.startAt,
+                    endAt: row.endAt,
+                };
+                await this.create(dto, bookedBy);
+                results.push({ row: rowNumber, reference: row.title, success: true });
+            } catch (error: any) {
+                results.push({ row: rowNumber, reference: row.title ?? '', success: false, error: error.message ?? 'Unknown error' });
+            }
+        }
+
+        return {
+            total: rows.length,
+            created: results.filter((r) => r.success).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+        };
     }
 
     findMyBookings(userId: string) {

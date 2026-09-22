@@ -1,5 +1,5 @@
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { DashboardService } from './dashboard.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -10,7 +10,8 @@ export class DashboardController {
     constructor(private dashboardService: DashboardService) { }
 
     @Get()
-    getDashboard(@Req() req: any) {
-        return this.dashboardService.getDashboard(req.user.userId);
+    @ApiQuery({ name: 'branchId', required: false, description: 'Filter overview/report stats to a single branch' })
+    getDashboard(@Req() req: any, @Query('branchId') branchId?: string) {
+        return this.dashboardService.getDashboard(req.user.userId, branchId);
     }
 }

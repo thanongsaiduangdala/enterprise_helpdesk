@@ -35,33 +35,39 @@ export class ReportsController {
     @RequirePermission('reports', 'read')
     @ApiQuery({ name: 'from', required: false, description: 'ISO date' })
     @ApiQuery({ name: 'to', required: false, description: 'ISO date' })
-    slaCompliance(@Query('from') from?: string, @Query('to') to?: string) {
+    @ApiQuery({ name: 'branchId', required: false, description: 'Filter to a single branch' })
+    slaCompliance(@Query('from') from?: string, @Query('to') to?: string, @Query('branchId') branchId?: string) {
         const range = this.reportsService.parseDateRange(from, to);
-        return this.reportsService.slaComplianceReport(range.from, range.to);
+        const scope = branchId ? { branchId } : undefined;
+        return this.reportsService.slaComplianceReport(range.from, range.to, scope);
     }
 
     @Get('tickets-breakdown')
     @RequirePermission('reports', 'read')
-    ticketsBreakdown() {
-        return this.reportsService.ticketsBreakdown();
+    @ApiQuery({ name: 'branchId', required: false, description: 'Filter to a single branch' })
+    ticketsBreakdown(@Query('branchId') branchId?: string) {
+        return this.reportsService.ticketsBreakdown(branchId ? { branchId } : undefined);
     }
 
     @Get('agent-workload')
     @RequirePermission('reports', 'read')
-    agentWorkload() {
-        return this.reportsService.agentWorkload();
+    @ApiQuery({ name: 'branchId', required: false, description: 'Filter to a single branch' })
+    agentWorkload(@Query('branchId') branchId?: string) {
+        return this.reportsService.agentWorkload(branchId ? { branchId } : undefined);
     }
 
     @Get('csat-trend')
     @RequirePermission('reports', 'read')
-    csatTrend() {
-        return this.reportsService.csatTrend();
+    @ApiQuery({ name: 'branchId', required: false, description: 'Filter to a single branch' })
+    csatTrend(@Query('branchId') branchId?: string) {
+        return this.reportsService.csatTrend(branchId ? { branchId } : undefined);
     }
 
     @Get('summary')
     @RequirePermission('reports', 'read')
-    summary() {
-        return this.reportsService.fullSummary();
+    @ApiQuery({ name: 'branchId', required: false, description: 'Filter to a single branch' })
+    summary(@Query('branchId') branchId?: string) {
+        return this.reportsService.fullSummary(branchId ? { branchId } : undefined);
     }
 
     @Get('export/csv')
@@ -73,13 +79,15 @@ export class ReportsController {
         @Query('type') type: string,
         @Query('from') from: string | undefined,
         @Query('to') to: string | undefined,
+        @Query('branchId') branchId: string | undefined,
         @Res() res: Response,
     ) {
         if (!REPORT_TITLES[type]) {
             throw new BadRequestException(`type must be one of: ${Object.keys(REPORT_TITLES).join(', ')}`);
         }
         const range = this.reportsService.parseDateRange(from, to);
-        const rows = await this.reportsService.getFlatRows(type as any, range.from, range.to);
+        const scope = branchId ? { branchId } : undefined;
+        const rows = await this.reportsService.getFlatRows(type as any, range.from, range.to, scope);
         const csv = toCsv(rows);
 
         res.setHeader('Content-Type', 'text/csv');
@@ -92,17 +100,20 @@ export class ReportsController {
     @ApiQuery({ name: 'type', enum: ['sla', 'tickets', 'workload', 'csat'] })
     @ApiQuery({ name: 'from', required: false, description: 'ISO date — only applies to type=sla' })
     @ApiQuery({ name: 'to', required: false, description: 'ISO date — only applies to type=sla' })
+    @ApiQuery({ name: 'branchId', required: false, description: 'Filter to a single branch' })
     async exportPdf(
         @Query('type') type: string,
         @Query('from') from: string | undefined,
         @Query('to') to: string | undefined,
+        @Query('branchId') branchId: string | undefined,
         @Res() res: Response,
     ) {
         if (!REPORT_TITLES[type]) {
             throw new BadRequestException(`type must be one of: ${Object.keys(REPORT_TITLES).join(', ')}`);
         }
         const range = this.reportsService.parseDateRange(from, to);
-        const rows = await this.reportsService.getFlatRows(type as any, range.from, range.to);
+        const scope = branchId ? { branchId } : undefined;
+        const rows = await this.reportsService.getFlatRows(type as any, range.from, range.to, scope);
         const buffer = await rowsToPdfBuffer(REPORT_TITLES[type], rows);
 
         res.setHeader('Content-Type', 'application/pdf');
