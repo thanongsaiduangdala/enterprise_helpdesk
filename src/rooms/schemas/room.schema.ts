@@ -20,6 +20,9 @@ export class Room {
     name!: string;
 
     @Prop()
+    floor?: string;
+
+    @Prop()
     location?: string;
 
     @Prop({ required: true })

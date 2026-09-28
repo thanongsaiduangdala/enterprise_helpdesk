@@ -1,12 +1,14 @@
 import {
     BadRequestException,
+    ConflictException,
     ForbiddenException,
     Injectable,
     NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Ticket, TicketDocument, TicketStatus } from './schemas/ticket.schema';
+import { parse } from 'csv-parse/sync';
+import { Ticket, TicketDocument, TicketStatus, TICKET_PRIORITIES } from './schemas/ticket.schema';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { AssignTicketDto } from './dto/assign-ticket.dto';
@@ -108,6 +110,51 @@ export class TicketsService {
         this.pushHistory(ticket, 'CREATED', raisedBy);
 
         return ticket.save();
+    }
+
+    async bulkImport(fileBuffer: Buffer, raisedBy: string) {
+        let rows: Record<string, string>[];
+        try {
+            rows = parse(fileBuffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+        } catch (err: any) {
+            throw new ConflictException(`Could not parse CSV file: ${err.message}`);
+        }
+
+        const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNumber = i + 2;
+            try {
+                if (!row.title || !row.description || !row.ticketTypeId || !row.branchId) {
+                    throw new Error('Missing one or more required fields (title, description, ticketTypeId, branchId)');
+                }
+                if (row.priority && !TICKET_PRIORITIES.includes(row.priority as any)) {
+                    throw new Error(
+                        `Invalid priority "${row.priority}" — expected one of ${TICKET_PRIORITIES.join(', ')}`,
+                    );
+                }
+                const dto: CreateTicketDto = {
+                    title: row.title,
+                    description: row.description,
+                    ticketTypeId: row.ticketTypeId,
+                    branchId: row.branchId,
+                    departmentId: row.departmentId || undefined,
+                    priority: row.priority || undefined,
+                };
+                await this.create(dto, raisedBy);
+                results.push({ row: rowNumber, reference: row.title, success: true });
+            } catch (error: any) {
+                results.push({ row: rowNumber, reference: row.title ?? '', success: false, error: error.message ?? 'Unknown error' });
+            }
+        }
+
+        return {
+            total: rows.length,
+            created: results.filter((r) => r.success).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+        };
     }
 
     async findAll(

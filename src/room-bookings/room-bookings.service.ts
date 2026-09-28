@@ -29,6 +29,22 @@ const NO_SHOW_GRACE_MINUTES = 15;
 // ອະນຸຍາດ check-in ລ່ວງໜ້າກ່ອນເວລານັດໄດ້ຈັກນາທີ (ຄົນມາຮອດໄວກວ່ານັດ)
 const EARLY_CHECKIN_GRACE_MINUTES = 5;
 
+// ຂໍ້ມູນສະເພາະຕິດທີ່ເຮັດໃຫ້ຜູ້ອະນຸມັດກວດຊົ່ວກັນໄດ້ ເວລາຢູ່ໃນຫ້ອງເດີວກັນ
+export interface BookingConflictRef {
+    _id: string;
+    title?: string;
+    startAt: Date;
+    endAt: Date;
+    bookedBy: { firstName?: string; lastName?: string; email?: string } | null;
+}
+
+// toObject() ຂອງ Mongoose ມີ document type ຫຼາຍເຊັນ compiler ຈະ serialize ແອນ TypeError (TS7056)
+// ຈຶ່ງປະເພາດເປັນ Record ທີ່ມີ field ທີ່ເພິ່ມມາກຳນົດ type ໄວ້ຊັດເຈນ
+export type PendingApprovalView = Record<string, any> & {
+    conflictWith: BookingConflictRef[];
+    blockedBy: BookingConflictRef[];
+};
+
 @Injectable()
 export class RoomBookingsService {
     constructor(
@@ -253,18 +269,87 @@ export class RoomBookingsService {
     }
 
     async findOne(id: string) {
-        const booking = await this.bookingModel.findById(id).exec();
+        // ຂໍ້ມູນເດີມ (legacy) ບາງລາຍການເກັບ _id ເປັນ MongoDB ObjectId (ກ່ອນມີລະບົບ RBxxx ແລະ schema ປ່ຽນເປັນ String)
+        // ຖ້າຊອກດ້ວຍ findById(id) ແບບທຳມະດາ Mongoose ຈະ cast id ຕາມ type ຂອງ schema ເປັນ String
+        // ຈຶ່ງບໍ່ກົງກັບ ObjectId ທີ່ເກັບໄວ້ໃນຖານຂໍ້ມູນ => 404 ທັງທີ່ລາຍການມີຢູ່ (approve/reject/etc ເປັນອັນເປັນອານ)
+        // ຈຶ່ງຊອກໂດຍແປງ _id ທີ່ເກັບໄວ້ໃຫ້ເປັນ string ແລ້ວທຽບກັບ id ທີ່ສົ່ງເຂົ້າມາ — ເຮັດວຽກກັບ ທັງ RBxxx ແລະ ObjectId
+        const booking = await this.bookingModel
+            .findOne({ $expr: { $eq: [{ $toString: '$_id' }, id] } })
+            .exec();
         if (!booking) throw new NotFoundException('Booking not found');
         return booking;
     }
 
-    findPendingApprovals() {
-        return this.bookingModel
+    // ກວດຊົ່ວກັນໃຫ້ຜູ້ອະນຸມັດເຫັນກ່ອນກົດ "ອະນຸມັດ" — assertNoOverlap ກວດເທົ່ນ booking ທີ່ CONFIRMED
+    // ດັ່ງນັ້ນຄຳຮ້ອງ PENDING ຫຼາຍລາຍການຈຶ່ງຈອກຊົ່ວກັນໄດ້ໂດຍບໍ່ມີຜູ້ເຫັງໃຫ້ກ່ອນ ແລະ ກົດອະນຸມັດລາຍການທີ່ຊົ່ວກັນ
+    // ຈະໄດ້ 409 ຈາກ assertNoOverlap ເມື່ອກົດ ("already booked for the requested time slot")
+    // ຄືນຄືນໃຫ້ແຕ່ລະລາຍການ:
+    //   conflictWith = ຄຳຮ້ອງ PENDING ອື່ນ ທີ່ຊົ່ວກັນ (ຕ້ອງເລືອກວ່າຈະອະນຸມັດລາຍການໃດ)
+    //   blockedBy    = booking ທີ່ CONFIRMED ແລ້ວ ທີ່ຊົ່ວກັນ (ອະນຸມັດຈະໂດນ 409 ທັນທີ — ຕ້ອງແກ້ໄຂຫຼືໃຫ້ຜູ້ຂໍປ່ຽນເວລາ)
+    async findPendingApprovals(): Promise<PendingApprovalView[]> {
+        const pending = await this.bookingModel
             .find({ status: BookingStatus.PENDING })
             .populate('roomId')
             .populate('bookedBy')
             .sort({ createdAt: 1 })
             .exec();
+
+        // ບໍ່ມີຄຳຮ້ອງເວລາຢູ່ລໍຖ້າອະນຸມັດ — ຄືນ array ວ່າງ (ບໍ່ມີ conflict ໃດຕ້ອງຄິດ)
+        if (pending.length === 0) return [];
+
+        // ດຶງ booking ທີ່ CONFIRMED ແລ້ວທີ່ທັບເວລາຂອງຄຳຮ້ອງ PENDING ເທົ່ນ ເພື່ອກວດຊົ່ວກັນຢ່າງຄົນລະອຽນ
+        const minStart = new Date(Math.min(...pending.map((p) => p.startAt.getTime())));
+        const maxEnd = new Date(Math.max(...pending.map((p) => p.endAt.getTime())));
+        const confirmed = await this.bookingModel
+            .find({
+                status: BookingStatus.CONFIRMED,
+                startAt: { $lt: maxEnd },
+                endAt: { $gt: minStart },
+            })
+            .populate('bookedBy')
+            .exec();
+
+        // roomId ຖືກ populate ໃນ pending (ເປັນ object) ແຕ່ບໍ່ໄດ້ populate ໃນ confirmed (ຢັງເປັນ string) —
+        // ໃຫ້ເອົາ _id ອອກມາທຽບກັນໃຫ້ຄືກັນ ບໍ່ຕ້ອງແກ້ ຫຼື populate ທັງສອງຝັ່ງທີ່ບໍ່ຈຳເປັນ
+        const roomKey = (roomId: any) => String(roomId?._id ?? roomId ?? '');
+
+        // ເຊີ່ວເປັນ [startAt, endAt) ແບບ half-open ຊຶ່ງເທົ່ນ assertNoOverlap ($lt/$gt) —
+        // ຈອງຕໍ່ກັນ (09:00-10:00 ຕໍ່ 10:00-11:00) ບໍ່ນັບຊົ່ວກັນ
+        const overlaps = (a: any, b: any) => a.startAt < b.endAt && b.startAt < a.endAt;
+
+        const summarize = (b: any) => ({
+            _id: b._id,
+            title: b.title,
+            startAt: b.startAt,
+            endAt: b.endAt,
+            bookedBy: b.bookedBy
+                ? {
+                    firstName: b.bookedBy.firstName,
+                    lastName: b.bookedBy.lastName,
+                    email: b.bookedBy.email,
+                }
+                : null,
+        });
+
+        return pending.map((booking) => {
+            const room = roomKey(booking.roomId);
+            const selfId = booking._id.toString();
+
+            const conflictWith = pending.filter(
+                (other) => other._id.toString() !== selfId
+                    && roomKey(other.roomId) === room
+                    && overlaps(booking, other),
+            );
+            const blockedBy = confirmed.filter(
+                (other) => roomKey(other.roomId) === room && overlaps(booking, other),
+            );
+
+            return {
+                ...booking.toObject(),
+                conflictWith: conflictWith.map(summarize),
+                blockedBy: blockedBy.map(summarize),
+            };
+        });
     }
 
     async approve(id: string, approverId: string) {
@@ -282,26 +367,45 @@ export class RoomBookingsService {
             booking._id,
         );
 
-        booking.status = BookingStatus.CONFIRMED;
-        booking.reviewedBy = approverId as any;
-        booking.reviewedAt = new Date();
-        const saved = await booking.save();
-        this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+        const saved = await this.reviewPending(id, {
+            status: BookingStatus.CONFIRMED,
+            reviewedBy: approverId,
+            reviewedAt: new Date(),
+        });
+        this.roomBookingsGateway.emitBookingsChanged(saved.roomId.toString());
         return saved;
     }
 
-    async reject(id: string, approverId: string, dto: RejectRoomBookingDto) {
-        const booking = await this.findOne(id);
-        if (booking.status !== BookingStatus.PENDING) {
+    // ອັບເດດ booking ທີ່ PENDING ແບບ atomic ຜ່ານ $toString(_id) — ບໍ່ໃຊ້ booking.save()
+    // ເພາະ legacy booking ທີ່ _id ເປັນ ObjectId: save() ຈະ filter ດ້ວຍ _id ແບບ String ແລ້ວບໍ່ເຈໍເອກະສານ
+    // => DocumentNotFoundError => 500 (ເກີດກັບຄຳຮ້ອງເກົ່າ/ໝົດອາຍຸ). ການ updateOne ດ້ວຍ $expr ໃຊ້ໄດ້ທັງ RBxxx ແລະ ObjectId
+    private async reviewPending(id: string, set: Record<string, any>) {
+        const updated = await this.bookingModel
+            .findOneAndUpdate(
+                {
+                    $expr: { $eq: [{ $toString: '$_id' }, id] },
+                    status: BookingStatus.PENDING,
+                },
+                { $set: set },
+                { new: true },
+            )
+            .exec();
+        if (!updated) {
+            // ແຍກ 404 ອອກຈາກ "ບໍ່ແມ່ນ PENDING"
+            await this.findOne(id);
             throw new BadRequestException('This booking is not waiting for approval');
         }
+        return updated;
+    }
 
-        booking.status = BookingStatus.REJECTED;
-        booking.reviewedBy = approverId as any;
-        booking.reviewedAt = new Date();
-        booking.rejectionReason = dto.reason;
-        const saved = await booking.save();
-        this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+    async reject(id: string, approverId: string, dto: RejectRoomBookingDto) {
+        const saved = await this.reviewPending(id, {
+            status: BookingStatus.REJECTED,
+            reviewedBy: approverId,
+            reviewedAt: new Date(),
+            rejectionReason: dto.reason,
+        });
+        this.roomBookingsGateway.emitBookingsChanged(saved.roomId.toString());
         return saved;
     }
 

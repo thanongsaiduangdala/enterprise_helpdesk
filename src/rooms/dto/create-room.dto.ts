@@ -22,7 +22,12 @@ export class CreateRoomDto {
     @IsString()
     name!: string;
 
-    @ApiPropertyOptional({ example: '3rd Floor, East Wing' })
+    @ApiPropertyOptional({ example: '3rd Floor', description: 'Floor the room sits on — drives the floor filter' })
+    @IsOptional()
+    @IsString()
+    floor?: string;
+
+    @ApiPropertyOptional({ example: 'East Wing', description: 'Position within the floor (wing, side, suite)' })
     @IsOptional()
     @IsString()
     location?: string;

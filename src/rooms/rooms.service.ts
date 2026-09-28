@@ -73,6 +73,7 @@ export class RoomsService {
                 const dto: CreateRoomDto = {
                     branchId: row.branchId,
                     name: row.name,
+                    floor: row.floor || undefined,
                     location: row.location || undefined,
                     capacity,
                     amenities: row.amenities ? row.amenities.split(/[;,]+/).map((a: string) => a.trim()).filter(Boolean) : undefined,

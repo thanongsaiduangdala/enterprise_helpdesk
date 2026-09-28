@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     Body,
     Controller,
     Delete,
@@ -8,9 +9,12 @@ import {
     Post,
     Query,
     Req,
+    UploadedFile,
+    UseInterceptors,
     UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiQuery } from '@nestjs/swagger';
 import { TicketsService } from './tickets.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
@@ -33,6 +37,23 @@ export class TicketsController {
     @RequirePermission('tickets', 'create')
     create(@Body() dto: CreateTicketDto, @Req() req: any) {
         return this.ticketsService.create(dto, req.user.userId);
+    }
+
+    @Post('bulk-import')
+    @RequirePermission('tickets', 'create')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: { file: { type: 'string', format: 'binary' } },
+        },
+    })
+    bulkImport(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
+        if (!file) {
+            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
+        }
+        return this.ticketsService.bulkImport(file.buffer, req.user.userId);
     }
 
     @Get('my')
