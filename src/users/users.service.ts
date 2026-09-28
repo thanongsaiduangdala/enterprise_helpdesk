@@ -284,6 +284,11 @@ export class UsersService {
         return updated;
     }
 
+    async setPasswordHash(id: string, passwordHash: string) {
+        const updated = await this.userModel.findByIdAndUpdate(id, { $set: { passwordHash } }).exec();
+        if (!updated) throw new NotFoundException('User not found');
+    }
+
     async findOneRaw(id: string) {
 
 

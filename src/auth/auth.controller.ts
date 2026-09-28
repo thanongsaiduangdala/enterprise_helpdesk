@@ -5,6 +5,8 @@ import { UAParser } from 'ua-parser-js';
 import { AuthService } from "./auth.service";
 import { UsersService } from "../users/users.service";
 import { LoginDto } from "./dto/login.dto";
+import { ForgotPasswordDto } from "./dto/forgot-password.dto";
+import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { MfaCodeDto } from "./dto/mfa-code.dto";
 import { MfaVerifyLoginDto } from "./dto/mfa-verify-login.dto";
 import { SetupMfaDto } from "./dto/setup-mfa.dto";
@@ -33,6 +35,18 @@ export class AuthController {
     @Throttle({ default: { limit: 10, ttl: 60000 } })
     login(@Body() dto: LoginDto, @Req() req: any) {
         return this.authService.login(dto.email, dto.password, extractDeviceInfo(req));
+    }
+
+    @Post('forgot-password')
+    @Throttle({ default: { limit: 3, ttl: 60000 } })
+    forgotPassword(@Body() dto: ForgotPasswordDto) {
+        return this.authService.forgotPassword(dto.email);
+    }
+
+    @Post('reset-password')
+    @Throttle({ default: { limit: 5, ttl: 60000 } })
+    resetPassword(@Body() dto: ResetPasswordDto) {
+        return this.authService.resetPassword(dto.email, dto.code, dto.newPassword, dto.mfaCode);
     }
 
     // Lightweight "who am I" endpoint — any authenticated user can read their

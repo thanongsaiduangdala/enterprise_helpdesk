@@ -14,6 +14,7 @@ const MFA_LOGIN_LOCKOUT_TTL_SECONDS = 15 * 60;
 const MFA_ENABLE_LOCKOUT_TTL_SECONDS = 15 * 60;
 const MFA_EMAIL_CODE_TTL_SECONDS = 10 * 60;
 const MFA_SETUP_REQUIRED_TTL = '15m';
+const PASSWORD_RESET_LOCKOUT_TTL_SECONDS = 15 * 60;
 
 @Injectable()
 export class AuthService {
@@ -244,5 +245,53 @@ export class AuthService {
 
         await this.issueAndSendEmailCode(`email-code:login:${user._id}`, user.email, user.firstName);
         return { codeSent: true };
+    }
+
+    // ---- Forgot / reset password -------------------------------------------------
+    // ສົ່ງລະຫັດ 6 ຫຼັກໄປອີເມວ. ຕອບຄືກັນສະເໝີ (ບໍ່ວ່າອີເມວມີໃນລະບົບຫຼືບໍ່) ເພື່ອບໍ່ໃຫ້ເດົາໄດ້ວ່າໃຜມີບັນຊີ
+    async forgotPassword(rawEmail: string) {
+        const email = rawEmail.trim().toLowerCase();
+        const user = await this.usersService.findByEmail(email);
+        if (user && user.isActive) {
+            await this.issueAndSendEmailCode(`email-code:reset:${user._id}`, user.email, user.firstName);
+        }
+        return { sent: true };
+    }
+
+    async resetPassword(rawEmail: string, code: string, newPassword: string, mfaCode?: string) {
+        const email = rawEmail.trim().toLowerCase();
+        const lockoutKey = `reset:${this.mfaAttemptsService.hashKey(email)}`;
+        await this.mfaAttemptsService.assertNotLockedOut(lockoutKey);
+
+        const invalid = async () => {
+            await this.mfaAttemptsService.recordFailure(lockoutKey, PASSWORD_RESET_LOCKOUT_TTL_SECONDS);
+            throw new BadRequestException('Invalid or expired code');
+        };
+
+        const user = await this.usersService.findByEmail(email);
+        if (!user || !user.isActive) return invalid();
+
+        const codeKey = `email-code:reset:${user._id}`;
+        const emailOk = await this.mfaAttemptsService.verifyCode(codeKey, this.hashCode(code));
+        if (!emailOk) return invalid();
+
+        // ຖ້າບັນຊີໃຊ້ Authenticator app ເປັນ MFA ຕ້ອງໃສ່ລະຫັດຈາກແອັບນຳ — ບໍ່ດັ່ງນັ້ນຜູ້ທີ່ເຂົ້າອີເມວໄດ້ຈະຂ້າມ MFA ໄດ້
+        // (MFA ແບບອີເມວ ໃຊ້ລະຫັດອີເມວຂ້າງເທິງເປັນຕົວຢືນຢັນແລ້ວ)
+        if (user.mfa?.enabled && user.mfa.method === 'totp') {
+            const secret = (await this.usersService.findOneRaw(String(user._id))).mfa?.secret;
+            if (!mfaCode || !secret) return invalid();
+            const result = await verify({ secret, token: mfaCode });
+            if (!result.valid) return invalid();
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, 10);
+        await this.usersService.setPasswordHash(String(user._id), passwordHash);
+
+        await this.mfaAttemptsService.reset(codeKey);
+        await this.mfaAttemptsService.reset(lockoutKey);
+        // ອອກຈາກລະບົບທຸກອຸປະກອນ — ຖ້າມີຄົນອື່ນຮູ້ລະຫັດເກົ່າຢູ່ ຈະຖືກເຕະອອກ
+        await this.sessionsService.revokeAllForUser(String(user._id));
+
+        return { reset: true };
     }
 }
