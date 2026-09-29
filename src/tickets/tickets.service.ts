@@ -3,6 +3,7 @@ import {
     ConflictException,
     ForbiddenException,
     Injectable,
+    Logger,
     NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -22,6 +23,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { assertInvolvedInTicket } from '../common/utils/ticket-access.util';
 import { UsersService } from '../users/users.service';
+import { TicketsGateway } from './tickets.gateway';
 
 const ALLOWED_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
     [TicketStatus.OPEN]: [TicketStatus.ASSIGNED, TicketStatus.IN_PROGRESS],
@@ -34,6 +36,9 @@ const ALLOWED_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
 
 @Injectable()
 export class TicketsService {
+    private readonly logger = new Logger(TicketsService.name);
+    private bulkImporting = false;
+
     constructor(
         @InjectModel(Ticket.name) private ticketModel: Model<TicketDocument>,
         private ticketTypesService: TicketTypesService,
@@ -43,6 +48,7 @@ export class TicketsService {
         private notificationsService: NotificationsService,
         private auditLogsService: AuditLogsService,
         private usersService: UsersService,
+        private ticketsGateway: TicketsGateway,
     ) { }
 
     private async generateTicketNumber(): Promise<string> {
@@ -124,7 +130,55 @@ export class TicketsService {
         });
         this.pushHistory(ticket, 'CREATED', raisedBy);
 
-        return ticket.save();
+        const saved = await ticket.save();
+        // During bulk import we suppress per-row side effects and emit one
+        // summary at the end, otherwise a 500-row CSV fires 500 socket events
+        // and 500 manager notifications.
+        if (!this.bulkImporting) {
+            await this.notifyDepartmentManagers(
+                saved,
+                'TICKET_CREATED',
+                `New ticket ${saved.ticketNumber}: ${saved.title}`,
+            );
+            this.ticketsGateway.emitTicketChanged(saved._id.toString(), 'created');
+        }
+        return saved;
+    }
+
+    /**
+     * ແຈ້ງເຕືອນຜູ້ຈັດການຂອງທີ່ຢູ່ໃນເດີປາດດຽວກັນ (departmentId) — ຖ້າບໍ່ມີ manager ໃນຂອງ ຫຼື manager
+     * ບໍ່ active ຈະບໍ່ສົ່ງໃຫ້ໃຄ້ (ເພື່ອບໍ່ໃຫ້ create ລົ້ມ)
+     */
+    private async notifyDepartmentManagers(
+        ticket: TicketDocument,
+        type: string,
+        title: string,
+    ) {
+        try {
+            const department: any = await this.departmentsService.findOne(ticket.departmentId);
+            const managerIds: string[] = department?.managerIds ?? [];
+            if (managerIds.length === 0) return;
+
+            const recipients = [...new Set(managerIds.map((id) => id.toString()))]
+                .filter((id) => id !== ticket.raisedBy.toString());
+
+            await Promise.all(
+                recipients.map((userId) =>
+                    this.notificationsService.notify(
+                        userId,
+                        type,
+                        ticket._id.toString(),
+                        'Ticket',
+                        title,
+                        ticket.description?.slice(0, 200) ?? '',
+                    ),
+                ),
+            );
+        } catch (error) {
+            this.logger.error(
+                `Failed to notify department managers for ticket ${ticket._id}: ${(error as Error).message}`,
+            );
+        }
     }
 
     async bulkImport(fileBuffer: Buffer, raisedBy: string) {
@@ -137,36 +191,46 @@ export class TicketsService {
 
         const results: Array<{ row: number; reference: string; success: boolean; error?: string }> = [];
 
-        for (let i = 0; i < rows.length; i++) {
-            const row = rows[i];
-            const rowNumber = i + 2;
-            try {
-                if (!row.title || !row.description || !row.ticketTypeId || !row.branchId) {
-                    throw new Error('Missing one or more required fields (title, description, ticketTypeId, branchId)');
+        this.bulkImporting = true;
+        try {
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i];
+                const rowNumber = i + 2;
+                try {
+                    if (!row.title || !row.description || !row.ticketTypeId || !row.branchId) {
+                        throw new Error('Missing one or more required fields (title, description, ticketTypeId, branchId)');
+                    }
+                    if (row.priority && !TICKET_PRIORITIES.includes(row.priority as any)) {
+                        throw new Error(
+                            `Invalid priority "${row.priority}" — expected one of ${TICKET_PRIORITIES.join(', ')}`,
+                        );
+                    }
+                    const dto: CreateTicketDto = {
+                        title: row.title,
+                        description: row.description,
+                        ticketTypeId: row.ticketTypeId,
+                        branchId: row.branchId,
+                        departmentId: row.departmentId || undefined,
+                        priority: row.priority || undefined,
+                    };
+                    await this.create(dto, raisedBy);
+                    results.push({ row: rowNumber, reference: row.title, success: true });
+                } catch (error: any) {
+                    results.push({ row: rowNumber, reference: row.title ?? '', success: false, error: error.message ?? 'Unknown error' });
                 }
-                if (row.priority && !TICKET_PRIORITIES.includes(row.priority as any)) {
-                    throw new Error(
-                        `Invalid priority "${row.priority}" — expected one of ${TICKET_PRIORITIES.join(', ')}`,
-                    );
-                }
-                const dto: CreateTicketDto = {
-                    title: row.title,
-                    description: row.description,
-                    ticketTypeId: row.ticketTypeId,
-                    branchId: row.branchId,
-                    departmentId: row.departmentId || undefined,
-                    priority: row.priority || undefined,
-                };
-                await this.create(dto, raisedBy);
-                results.push({ row: rowNumber, reference: row.title, success: true });
-            } catch (error: any) {
-                results.push({ row: rowNumber, reference: row.title ?? '', success: false, error: error.message ?? 'Unknown error' });
             }
+        } finally {
+            this.bulkImporting = false;
+        }
+
+        const created = results.filter((r) => r.success).length;
+        if (created > 0) {
+            this.ticketsGateway.emitTicketChanged('', 'created', { bulk: true, count: created });
         }
 
         return {
             total: rows.length,
-            created: results.filter((r) => r.success).length,
+            created,
             failed: results.filter((r) => !r.success).length,
             results,
         };
@@ -234,6 +298,7 @@ export class TicketsService {
     async update(id: string, dto: UpdateTicketDto) {
         const ticket = await this.ticketModel.findByIdAndUpdate(id, dto, { new: true }).exec();
         if (!ticket) throw new NotFoundException('Ticket not found');
+        this.ticketsGateway.emitTicketChanged(ticket._id.toString(), 'updated');
         return ticket;
     }
 
@@ -273,6 +338,7 @@ export class TicketsService {
             ip,
         );
 
+        this.ticketsGateway.emitTicketChanged(saved._id.toString(), 'assigned');
         return saved;
     }
 
@@ -312,6 +378,10 @@ export class TicketsService {
             ip,
         );
 
+        this.ticketsGateway.emitTicketChanged(saved._id.toString(), 'status-changed', {
+            from: fromStatus,
+            to: dto.status,
+        });
         return saved;
     }
 
@@ -325,7 +395,9 @@ export class TicketsService {
         }
         ticket.csat = { rating: dto.rating, comment: dto.comment, submittedAt: new Date() };
         this.pushHistory(ticket, 'FEEDBACK_SUBMITTED', userId);
-        return ticket.save();
+        const saved = await ticket.save();
+        this.ticketsGateway.emitTicketChanged(saved._id.toString(), 'feedback');
+        return saved;
     }
 
     async remove(id: string, actorId: string, ip?: string) {
@@ -345,6 +417,7 @@ export class TicketsService {
             ip,
         );
 
+        this.ticketsGateway.emitTicketChanged(id, 'deleted');
         return { deleted: true };
     }
 }

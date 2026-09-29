@@ -7,6 +7,7 @@ import { CannedResponsesService } from '../canned-responses/canned-responses.ser
 import { TicketsService } from '../tickets/tickets.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { assertInvolvedInTicket } from '../common/utils/ticket-access.util';
+import { TicketsGateway } from '../tickets/tickets.gateway';
 
 @Injectable()
 export class TicketMessagesService {
@@ -15,6 +16,7 @@ export class TicketMessagesService {
         private cannedResponsesService: CannedResponsesService,
         private ticketsService: TicketsService,
         private notificationsService: NotificationsService,
+        private ticketsGateway: TicketsGateway,
     ) { }
 
     async create(dto: CreateTicketMessageDto, senderId: string, permissions: any[]) {
@@ -50,6 +52,7 @@ export class TicketMessagesService {
             ),
         );
 
+        this.ticketsGateway.emitTicketChanged((ticket as any)._id.toString(), 'message');
         return saved;
     }
 

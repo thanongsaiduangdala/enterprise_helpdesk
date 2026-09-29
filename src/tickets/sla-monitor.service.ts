@@ -66,10 +66,12 @@ export class SlaMonitorService {
 
         return new Date(ticket.sla.resolutionDueAt.getTime() + totalPausedMs);
     }
-
-    @Cron(CronExpression.EVERY_5_MINUTES)
+    // ກວດທຸກໆ 1 ນາທີ ບໍ່ແມ່ນ 5 ນາທີ — SLA ທີ່ສັ່ງໄວ້ສັ່ງຄ່າເປັນນາທີ (ເຊນ ວ່າ 1 ນາທີ ໃນການທົດລອງ)
+    // ຖ້າໃຊ້ EVERY_5_MINUTES ຈະກວດເຊື່ອງຊ້າ 5 ນາທີ ເທິງ ກວ່າ SLA ຕັ້ງໄວ້ 1 ນາທີ
+    @Cron(CronExpression.EVERY_MINUTE)
     async checkBreaches() {
         const now = new Date();
+
         const candidates = await this.ticketModel.find({
             status: { $in: OPEN_STATUSES },
             'sla.resolutionDueAt': { $exists: true },
@@ -94,16 +96,33 @@ export class SlaMonitorService {
                     note: `Resolution SLA breached by ${minutesOverdue} minute(s)`,
                 });
 
-                if (ticket.assignedAgent) {
-                    await this.notificationsService.notify(
-                        ticket.assignedAgent.toString(),
-                        'SLA_BREACH',
-                        ticket._id.toString(),
-                        'Ticket',
-                        `SLA breached: ${ticket.ticketNumber}`,
-                        'This ticket\'s resolution deadline has passed.',
+                // ຜູ້ຮັບການແຈ້ງເຕືອນ: agent ທີ່ຮັບຜິດຊອບ (ຖ້າມີ) + ຜູ້ຈັດການຂອງສະເພາະ
+                // ຖ້າ ticket ຍັງບໍ່ມີ agent (ສ້າງໃໝ່ຈາກຟອມ) ຕ້ອງສົ່ງໃຫ້ manager ຂອງ ມິດານ
+                // ຖ້າບໍ່ມີ ຈະບໍ່ມີໃຜ່ໄດ້ຮັບແຈ້ງເຕືອນເລີຍ (ບໍ່ມີ agent ແລະ ບໍ່ມີ manager ໃນຂອງ)
+                const recipients = new Set<string>();
+                if (ticket.assignedAgent) recipients.add(ticket.assignedAgent.toString());
+                const managerIds = await this.resolveRecipients(ticket, 'DEPT_MANAGER');
+                managerIds.forEach((id) => recipients.add(id));
+                recipients.delete(ticket.raisedBy.toString());
+
+                if (recipients.size === 0) {
+                    this.logger.warn(
+                        `Ticket ${ticket.ticketNumber} breached SLA but has no agent and no department manager to notify`,
                     );
                 }
+
+                await Promise.all(
+                    [...recipients].map((userId) =>
+                        this.notificationsService.notify(
+                            userId,
+                            'SLA_BREACH',
+                            ticket._id.toString(),
+                            'Ticket',
+                            `SLA breached: ${ticket.ticketNumber}`,
+                            `This ticket's resolution deadline has passed by ${minutesOverdue} minute(s).`,
+                        ),
+                    ),
+                );
             }
 
             if (ticket.slaPolicyId) {
