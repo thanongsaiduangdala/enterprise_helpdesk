@@ -24,6 +24,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { assertInvolvedInTicket } from '../common/utils/ticket-access.util';
 import { UsersService } from '../users/users.service';
 import { TicketsGateway } from './tickets.gateway';
+import { ACTIVE_WORKLOAD_STATUSES, ASSIGNABLE_ROLES } from './ticket-assignment.constants';
 
 const ALLOWED_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
     [TicketStatus.OPEN]: [TicketStatus.ASSIGNED, TicketStatus.IN_PROGRESS],
@@ -302,11 +303,83 @@ export class TicketsService {
         return ticket;
     }
 
+    /**
+     * Throws unless `agentId` is an active user whose role is assignable and who
+     * belongs to the same branch + department the ticket was routed to.
+     */
+    private async assertAssignable(ticket: TicketDocument, agentId: string) {
+        let agent: any;
+        try {
+            agent = await this.usersService.findOne(agentId);
+        } catch {
+            throw new BadRequestException('The selected assignee does not exist');
+        }
+
+        if (!agent.isActive) {
+            throw new BadRequestException('Cannot assign a ticket to a deactivated user');
+        }
+
+        const roleName: string | undefined = agent.role?.name;
+        if (!roleName || !ASSIGNABLE_ROLES.includes(roleName)) {
+            throw new BadRequestException(
+                `Tickets can only be assigned to: ${ASSIGNABLE_ROLES.join(', ')} (selected user has role "${roleName ?? 'unknown'}")`,
+            );
+        }
+
+        const agentDeptId = String(agent.departmentId?._id ?? agent.departmentId ?? '');
+        if (agentDeptId !== String(ticket.departmentId)) {
+            throw new BadRequestException(
+                'The selected agent does not belong to the department this ticket is routed to',
+            );
+        }
+        if (String(agent.branchId) !== String(ticket.branchId)) {
+            throw new BadRequestException('The selected agent does not belong to the branch of this ticket');
+        }
+    }
+
+    /**
+     * Agents that can currently be assigned this ticket (active, assignable role,
+     * same department + branch), each with how many unfinished tickets they hold.
+     * Sorted least-busy first.
+     */
+    async getAssignableAgents(ticketId: string) {
+        const ticket = await this.findOne(ticketId);
+        const candidates = await this.usersService.findAssignmentCandidates(
+            ticket.branchId,
+            ticket.departmentId,
+            ASSIGNABLE_ROLES,
+        );
+
+        const ids = candidates.map((u: any) => u._id as Types.ObjectId);
+        const counts = ids.length
+            ? await this.ticketModel.aggregate([
+                { $match: { assignedAgent: { $in: ids }, status: { $in: ACTIVE_WORKLOAD_STATUSES } } },
+                { $group: { _id: '$assignedAgent', count: { $sum: 1 } } },
+            ])
+            : [];
+        const countById = new Map<string, number>(counts.map((c: any) => [String(c._id), c.count]));
+        const currentAgentId = ticket.assignedAgent ? String(ticket.assignedAgent) : null;
+
+        return candidates
+            .map((u: any) => ({
+                _id: String(u._id),
+                firstName: u.firstName,
+                lastName: u.lastName,
+                email: u.email,
+                employeeCode: u.employeeCode,
+                roleName: u.role?.name,
+                activeTickets: countById.get(String(u._id)) ?? 0,
+                isCurrentAssignee: String(u._id) === currentAgentId,
+            }))
+            .sort((a, b) => a.activeTickets - b.activeTickets || `${a.firstName}`.localeCompare(`${b.firstName}`));
+    }
+
     async assign(id: string, dto: AssignTicketDto, actorId: string, ip?: string) {
         const ticket = await this.findOne(id);
         if (ticket.status === TicketStatus.CLOSED) {
             throw new BadRequestException('Cannot assign a closed ticket');
         }
+        await this.assertAssignable(ticket, dto.agentId);
         const before = ticket.toObject();
         const wasAssigned = !!ticket.assignedAgent;
 

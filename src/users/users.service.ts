@@ -168,6 +168,15 @@ export class UsersService {
         return this.userModel.find(query).populate('role').exec();
     }
 
+    /** Active users in a branch + department whose role name is in `roleNames` (role populated). */
+    async findAssignmentCandidates(branchId: string, departmentId: string, roleNames: string[]) {
+        const users = await this.userModel
+            .find({ branchId, departmentId, isActive: true })
+            .populate('role')
+            .exec();
+        return users.filter((u: any) => roleNames.includes(u.role?.name));
+    }
+
     findActiveByBranch(branchId: string) {
         return this.userModel.find({ branchId, isActive: true }).exec();
     }

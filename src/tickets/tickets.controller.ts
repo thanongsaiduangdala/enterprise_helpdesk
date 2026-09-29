@@ -105,6 +105,12 @@ export class TicketsController {
         return this.ticketsService.update(id, dto);
     }
 
+    @Get(':id/assignable-agents')
+    @RequirePermission('tickets', 'assign')
+    getAssignableAgents(@Param('id') id: string) {
+        return this.ticketsService.getAssignableAgents(id);
+    }
+
     @Patch(':id/assign')
     @RequirePermission('tickets', 'assign')
     assign(@Param('id') id: string, @Body() dto: AssignTicketDto, @Req() req: any) {
