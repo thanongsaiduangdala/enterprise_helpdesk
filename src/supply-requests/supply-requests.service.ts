@@ -46,14 +46,23 @@ export class SupplyRequestsService {
     }
 
 
-    findAll(status?: SupplyRequestStatus) {
-        const filter = status ? { status } : {};
+    /**
+     * `supplies.read` alone only covers a requester's own rows. Callers that
+     * can approve/fulfill/manage the catalog see every request.
+     */
+    findAll(status?: SupplyRequestStatus, requestedBy?: string) {
+        const filter: Record<string, unknown> = {};
+        if (status) filter.status = status;
+        if (requestedBy) filter.requestedBy = requestedBy;
         return this.requestModel.find(filter).sort({ createdAt: -1 }).exec();
     }
 
-    async findOne(id: string) {
+    async findOne(id: string, requestedBy?: string) {
         const request = await this.requestModel.findById(id).exec();
         if (!request) throw new NotFoundException('Supply request not found');
+        if (requestedBy && request.requestedBy.toString() !== requestedBy) {
+            throw new NotFoundException('Supply request not found');
+        }
         return request;
     }
 

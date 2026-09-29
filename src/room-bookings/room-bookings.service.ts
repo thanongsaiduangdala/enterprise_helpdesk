@@ -255,17 +255,35 @@ export class RoomBookingsService {
             .exec();
     }
 
-    findForRoom(from: Date, to: Date, roomId?: string) {
+    /**
+     * `viewerId` is set for callers who are only allowed to see their own
+     * bookings. Other rows are still returned — the room calendar has to show
+     * that a slot is taken to avoid double-booking — but the identity fields
+     * are stripped so an employee can't enumerate who booked what.
+     */
+    async findForRoom(from: Date, to: Date, roomId?: string, viewerId?: string) {
         const filter: any = {
             status: BookingStatus.CONFIRMED,
             startAt: { $lt: to },
             endAt: { $gt: from },
         };
         if (roomId) filter.roomId = roomId;
-        return this.bookingModel
+
+        const bookings = await this.bookingModel
             .find(filter)
             .sort({ startAt: 1 })
             .exec();
+
+        if (!viewerId) return bookings;
+
+        return bookings.map((booking) => {
+            if (booking.bookedBy.toString() === viewerId) return booking;
+            const redacted: Record<string, any> = booking.toObject();
+            redacted.bookedBy = null;
+            redacted.reviewedBy = null;
+            redacted.attendees = [];
+            return redacted;
+        });
     }
 
     async findOne(id: string) {

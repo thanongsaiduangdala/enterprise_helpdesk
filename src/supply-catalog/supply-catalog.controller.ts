@@ -29,7 +29,7 @@ export class SupplyCatalogController {
     constructor(private catalogService: SupplyCatalogService) { }
 
     @Post()
-    @RequirePermission('supplies', 'create')
+    @RequirePermission('supplies', 'manage')
     create(@Body() dto: CreateSupplyCatalogItemDto) {
         return this.catalogService.create(dto);
     }
@@ -42,7 +42,7 @@ export class SupplyCatalogController {
     }
 
     @Post('bulk-import')
-    @RequirePermission('supplies', 'create')
+    @RequirePermission('supplies', 'import')
     @UseInterceptors(FileInterceptor('file'))
     @ApiConsumes('multipart/form-data')
     @ApiBody({

@@ -24,6 +24,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { parseRequiredDate } from '../common/utils/parse-date.util';
+import { hasAnyPermission } from '../common/utils/permission.util';
 
 @Controller('room-bookings')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -38,7 +39,7 @@ export class RoomBookingsController {
     }
 
     @Post('bulk-import')
-    @RequirePermission('rooms', 'create')
+    @RequirePermission('rooms', 'import')
     @UseInterceptors(FileInterceptor('file'))
     @ApiConsumes('multipart/form-data')
     @ApiBody({
@@ -71,12 +72,15 @@ export class RoomBookingsController {
     findForRoom(
         @Query('from') from: string,
         @Query('to') to: string,
-        @Query('roomId') roomId?: string,
+        @Query('roomId') roomId: string | undefined,
+        @Req() req: any,
     ) {
+        const elevated = hasAnyPermission(req.user, 'rooms', ['approve', 'manage']);
         return this.bookingsService.findForRoom(
             parseRequiredDate(from, 'from'),
             parseRequiredDate(to, 'to'),
             roomId,
+            elevated ? undefined : req.user.userId,
         );
     }
 

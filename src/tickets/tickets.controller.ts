@@ -40,7 +40,7 @@ export class TicketsController {
     }
 
     @Post('bulk-import')
-    @RequirePermission('tickets', 'create')
+    @RequirePermission('tickets', 'import')
     @UseInterceptors(FileInterceptor('file'))
     @ApiConsumes('multipart/form-data')
     @ApiBody({

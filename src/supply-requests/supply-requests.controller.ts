@@ -18,12 +18,22 @@ import { SupplyRequestStatus } from './schemas/supply-request.schema';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { hasAnyPermission } from '../common/utils/permission.util';
 
 @Controller('supply-requests')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class SupplyRequestsController {
     constructor(private requestsService: SupplyRequestsService) { }
+
+    /**
+     * Undefined => caller can see every request (approve/fulfill/manage).
+     * userId   => caller only sees requests they raised.
+     */
+    private scopingUserId(req: any): string | undefined {
+        const elevated = hasAnyPermission(req.user, 'supplies', ['approve', 'fulfill', 'manage']);
+        return elevated ? undefined : req.user.userId;
+    }
 
 
     @Post()
@@ -43,14 +53,14 @@ export class SupplyRequestsController {
     @Get()
     @RequirePermission('supplies', 'read')
     @ApiQuery({ name: 'status', required: false, enum: SupplyRequestStatus })
-    findAll(@Query('status') status?: SupplyRequestStatus) {
-        return this.requestsService.findAll(status);
+    findAll(@Query('status') status: SupplyRequestStatus | undefined, @Req() req: any) {
+        return this.requestsService.findAll(status, this.scopingUserId(req));
     }
 
     @Get(':id')
     @RequirePermission('supplies', 'read')
-    findOne(@Param('id') id: string) {
-        return this.requestsService.findOne(id);
+    findOne(@Param('id') id: string, @Req() req: any) {
+        return this.requestsService.findOne(id, this.scopingUserId(req));
     }
 
 

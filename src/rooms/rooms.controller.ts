@@ -30,13 +30,13 @@ export class RoomsController {
     constructor(private roomsService: RoomsService) { }
 
     @Post()
-    @RequirePermission('rooms', 'create')
+    @RequirePermission('rooms', 'manage')
     create(@Body() dto: CreateRoomDto) {
         return this.roomsService.create(dto);
     }
 
     @Post('bulk-import')
-    @RequirePermission('rooms', 'create')
+    @RequirePermission('rooms', 'import')
     @UseInterceptors(FileInterceptor('file'))
     @ApiConsumes('multipart/form-data')
     @ApiBody({
@@ -61,7 +61,7 @@ export class RoomsController {
 
 
     @Get('utilization')
-    @RequirePermission('rooms', 'read')
+    @RequirePermission('rooms', 'manage')
     utilization(@Query('from') from: string, @Query('to') to: string) {
         return this.roomsService.utilization(new Date(from), new Date(to));
     }
