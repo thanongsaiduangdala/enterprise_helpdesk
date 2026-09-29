@@ -81,17 +81,32 @@ export class TicketsService {
         await this.departmentsService.findOne(departmentId);
 
         const priority = dto.priority ?? (ticketType as any).defaultPriority;
-        const ticketNumber = await this.generateTicketNumber();
+        if (!priority || !TICKET_PRIORITIES.includes(priority as any)) {
+            throw new BadRequestException(
+                `Could not resolve a valid level of importance for this ticket type (got "${priority ?? 'none'}") — expected one of ${TICKET_PRIORITIES.join(', ')}`,
+            );
+        }
+
         const now = new Date();
 
         const slaPolicy = await this.slaPoliciesService.findByTicketTypeAndPriority(dto.ticketTypeId, priority);
-        const sla = slaPolicy
-            ? {
-                ...this.computeDueDates(now, slaPolicy.responseTimeMinutes, slaPolicy.resolutionTimeMinutes),
-                breached: false,
-                pausedIntervals: [],
-            }
-            : { breached: false, pausedIntervals: [] };
+        if (!slaPolicy) {
+            const available = await this.slaPoliciesService.findAvailablePriorities(dto.ticketTypeId);
+            throw new BadRequestException(
+                `No active SLA policy is configured for ticket type "${(ticketType as any).name}" at level of importance "${priority}". ` +
+                (available.length
+                    ? `Levels that do have an SLA: ${available.join(', ')}. Submit with one of those, or ask an administrator to add an SLA policy for "${priority}".`
+                    : 'This ticket type has no SLA policies at all. Ask an administrator to add one before raising tickets against it.'),
+            );
+        }
+
+        const sla = {
+            ...this.computeDueDates(now, slaPolicy.responseTimeMinutes, slaPolicy.resolutionTimeMinutes),
+            breached: false,
+            pausedIntervals: [],
+        };
+
+        const ticketNumber = await this.generateTicketNumber();
 
         const ticket = new this.ticketModel({
             ticketNumber,
@@ -103,7 +118,7 @@ export class TicketsService {
             raisedBy,
             status: TicketStatus.OPEN,
             priority,
-            slaPolicyId: slaPolicy?._id,
+            slaPolicyId: slaPolicy._id,
             sla,
             lastActivityAt: now,
         });
