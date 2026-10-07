@@ -70,6 +70,12 @@ class TicketHistoryEntry {
 
     @Prop()
     note?: string;
+
+    // ຮູບ/ໄຟລ໌ຢັ້ງຢືນສະເພາະເຫດການນີ້ (ເຊັ່ນ ຮູບຈຸດທີ່ແກ້ໄຂຕອນປ່ຽນເປັນ RESOLVED) — array ຂອງ URL ຈາກ /api/uploads
+    // ບໍ່ບັງຄັບ ເພາະມີບ່ອນອື່ນ (ເຊັ່ນ sla-monitor.service.ts) push history ເຂົ້າໂດຍກົງ ບໍ່ຜ່ານ pushHistory()
+    // Mongoose ຕັ້ງ default ເປັນ [] ໃຫ້ຢູ່ (default ຂ້າງລຸ່ມ)
+    @Prop({ type: [String], default: [] })
+    attachments?: string[];
 }
 
 @Schema({ _id: false })

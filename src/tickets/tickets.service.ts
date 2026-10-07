@@ -70,8 +70,14 @@ export class TicketsService {
         };
     }
 
-    private pushHistory(ticket: TicketDocument, action: string, actorId: string, note?: string) {
-        ticket.history.push({ action, actorId: actorId as any, timestamp: new Date(), note });
+    private pushHistory(ticket: TicketDocument, action: string, actorId: string, note?: string, attachments?: string[]) {
+        ticket.history.push({
+            action,
+            actorId: actorId as any,
+            timestamp: new Date(),
+            note,
+            attachments: attachments ?? [],
+        });
         ticket.lastActivityAt = new Date();
     }
 
@@ -438,7 +444,7 @@ export class TicketsService {
         }
 
         ticket.status = dto.status;
-        this.pushHistory(ticket, 'STATUS_CHANGED', actorId, dto.note ?? `${fromStatus} -> ${dto.status}`);
+        this.pushHistory(ticket, 'STATUS_CHANGED', actorId, dto.note ?? `${fromStatus} -> ${dto.status}`, dto.attachments);
         const saved = await ticket.save();
 
         await this.auditLogsService.log(

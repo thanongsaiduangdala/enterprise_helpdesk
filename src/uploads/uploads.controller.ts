@@ -46,7 +46,7 @@ export class UploadsController {
             limits: { fileSize: MAX_FILE_SIZE_BYTES },
             fileFilter: (_req, file, cb) => {
                 if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-                    cb(new BadRequestException('Only PDF files are allowed'), false);
+                    cb(new BadRequestException('File type not allowed'), false);
                     return;
                 }
                 cb(null, true);

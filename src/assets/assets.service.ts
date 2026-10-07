@@ -8,12 +8,15 @@ import { UpdateAssetDto } from './dto/update-asset.dto';
 import { AssignAssetDto } from './dto/assign-asset.dto';
 import { ReturnAssetDto } from './dto/return-asset.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { MaintenanceHistoryService } from '../maintenance-history/maintenance-history.service';
+import { MaintenanceStatus } from '../maintenance-history/schemas/maintenance-history.schema';
 
 @Injectable()
 export class AssetsService {
     constructor(
         @InjectModel(Asset.name) private assetModel: Model<AssetDocument>,
         private auditLogsService: AuditLogsService,
+        private maintenanceHistoryService: MaintenanceHistoryService,
     ) { }
 
     private async generateId(): Promise<string> {
@@ -176,8 +179,37 @@ export class AssetsService {
             if (openEntry) openEntry.returnedAt = new Date();
             asset.currentAssigneeId = undefined;
         }
+
+        const previousStatus = asset.status;
         asset.status = status as AssetStatus;
         const saved = await asset.save();
+
+        // ບັນທຶກປະຫວັດການສ້ອມແປງອັດຕະໂມມັດ: ສົ່ງເຂົ້າ -> ສ້າງບັນທຶກ IN_PROGRESS,
+        // ອອກຈາກການສ້ອມແປງ -> ປິດບັນທຶກທີ່ຍັງຄ້າງຢູ່ເປັນ COMPLETED
+        if (status === 'UNDER_REPAIR') {
+            await this.maintenanceHistoryService.create(
+                {
+                    assetId: asset._id,
+                    maintenanceDate: new Date().toISOString(),
+                    status: MaintenanceStatus.IN_PROGRESS,
+                    previousStatus,
+                    newStatus: status,
+                    issue: 'ໄດ້ສົ່ງເຂົ້າການສ້ອມແປງ',
+                    description: `ສະຖານະຊັບສິນປ່ຽນຈາກ ${previousStatus} ເປັນ ${status}`,
+                },
+                actorId,
+            );
+        } else if (String(previousStatus) === 'UNDER_REPAIR') {
+            const records = await this.maintenanceHistoryService.findByAssetId(asset._id);
+            const open = records.find((r) => r.status === MaintenanceStatus.IN_PROGRESS);
+            if (open) {
+                await this.maintenanceHistoryService.update(String(open._id), {
+                    status: MaintenanceStatus.COMPLETED,
+                    completionDate: new Date().toISOString(),
+                    repairNotes: 'ສ້ອມແປງສຳເລັດແລ້ວ',
+                });
+            }
+        }
 
         await this.auditLogsService.log(
             actorId,

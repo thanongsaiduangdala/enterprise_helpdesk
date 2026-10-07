@@ -30,6 +30,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { SettingsModule } from './settings/organization-settings.module';
+import { MaintenanceHistoryModule } from './maintenance-history/maintenance-history.module';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { SettingsModule } from './settings/organization-settings.module';
     DashboardModule,
     UploadsModule,
     SettingsModule,
+    MaintenanceHistoryModule,
   ],
 
   providers: [
@@ -78,6 +80,8 @@ import { SettingsModule } from './settings/organization-settings.module';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(LoggerMiddleware).forRoutes('*');
+    // path-to-regexp ລຸ້ນໃໝ່ (ໃຊ້ໂດຍ Express 5 ພາຍໃນ Nest) ເລີກຮອງຮັບ wildcard ແບບ '*' ແລ້ວ —
+    // ຕ້ອງໃຊ້ຮູບແບບ named wildcard '*path' ແທນ ບໍ່ດັ່ງນັ້ນຈະຂຶ້ນ warning
+    consumer.apply(LoggerMiddleware).forRoutes('*path');
   }
 }
