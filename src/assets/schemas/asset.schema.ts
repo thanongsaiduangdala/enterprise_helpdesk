@@ -33,6 +33,9 @@ export class Asset {
     @Prop({ required: true, unique: true })
     assetTag!: string;
 
+    @Prop({ type: String, ref: 'SupplyCatalogItem' })
+    catalogItemId?: string;
+
     @Prop({ required: true })
     type!: string;
 

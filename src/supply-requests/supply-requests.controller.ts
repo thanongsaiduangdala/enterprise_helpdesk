@@ -14,6 +14,7 @@ import { SupplyRequestsService } from './supply-requests.service';
 import { CreateSupplyRequestDto } from './dto/create-supply-request.dto';
 import { RejectSupplyRequestDto } from './dto/reject-supply-request.dto';
 import { BulkFulfillDto } from './dto/bulk-fulfill.dto';
+import { ReceiveSupplyRequestDto } from './dto/receive-supply-request.dto';
 import { SupplyRequestStatus } from './schemas/supply-request.schema';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -81,6 +82,12 @@ export class SupplyRequestsController {
     @RequirePermission('supplies', 'fulfill')
     fulfill(@Param('id') id: string, @Req() req: any) {
         return this.requestsService.fulfill(id, req.user.userId, req.ip);
+    }
+
+    @Patch(':id/receive')
+    @RequirePermission('supplies', 'fulfill')
+    receive(@Param('id') id: string, @Body() dto: ReceiveSupplyRequestDto, @Req() req: any) {
+        return this.requestsService.receive(id, dto, req.user, req.ip);
     }
 
     @Post('bulk-fulfill')

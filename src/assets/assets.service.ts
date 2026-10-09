@@ -10,6 +10,7 @@ import { ReturnAssetDto } from './dto/return-asset.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { MaintenanceHistoryService } from '../maintenance-history/maintenance-history.service';
 import { MaintenanceStatus } from '../maintenance-history/schemas/maintenance-history.schema';
+import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
 
 @Injectable()
 export class AssetsService {
@@ -17,6 +18,7 @@ export class AssetsService {
         @InjectModel(Asset.name) private assetModel: Model<AssetDocument>,
         private auditLogsService: AuditLogsService,
         private maintenanceHistoryService: MaintenanceHistoryService,
+        private catalogService: SupplyCatalogService,
     ) { }
 
     private async generateId(): Promise<string> {
@@ -33,12 +35,47 @@ export class AssetsService {
 
 
     async create(dto: CreateAssetDto) {
-        const existing = await this.assetModel.findOne({ assetTag: dto.assetTag });
+        const { assetTag, catalogItemId, ...rest } = dto;
+
+        // ຜູກກັບລາຍການ catalog (ຕ້ອງມີຈິງ)
+        if (catalogItemId) {
+            await this.catalogService.findOne(catalogItemId);
+        }
+
+        // ຖ້າບໍ່ມີ Asset Tag → ສ້າງໃຫ້ອັດຕະໂນມັດຈາກ code ຂອງ catalog item (ຕົວຢ່າງ: SC002-001)
+        let tag = assetTag;
+        if (!tag) {
+            if (!catalogItemId) {
+                throw new BadRequestException(
+                    'Provide an assetTag or select a catalog item so the system can auto-generate one (e.g. SC002-001)',
+                );
+            }
+            tag = await this.generateCatalogAssetTag(catalogItemId);
+        }
+
+        const existing = await this.assetModel.findOne({ assetTag: tag });
         if (existing) {
-            throw new ConflictException(`Asset tag "${dto.assetTag}" is already in use`);
+            throw new ConflictException(`Asset tag "${tag}" is already in use`);
         }
         const _id = await this.generateId();
-        return new this.assetModel({ _id, ...dto }).save();
+        return new this.assetModel({ _id, assetTag: tag, catalogItemId, ...rest }).save();
+    }
+
+    private async generateCatalogAssetTag(catalogItemId: string): Promise<string> {
+        const escapedPrefix = catalogItemId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const prefix = `${catalogItemId}-`;
+        const assets = await this.assetModel
+            .find({ assetTag: new RegExp(`^${escapedPrefix}-\\d+$`, 'i') }, { assetTag: 1 })
+            .sort({ assetTag: 1 })
+            .exec();
+        const usedNumbers = new Set(
+            assets
+                .map((a) => parseInt(a.assetTag.slice(prefix.length), 10))
+                .filter((n) => Number.isFinite(n)),
+        );
+        let seq = 1;
+        while (usedNumbers.has(seq)) seq++;
+        return `${catalogItemId}-${String(seq).padStart(3, '0')}`;
     }
 
     async bulkImport(fileBuffer: Buffer) {
@@ -94,6 +131,11 @@ export class AssetsService {
         return asset;
     }
 
+    async findByAssetTag(assetTag: string) {
+        const escaped = assetTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return this.assetModel.findOne({ assetTag: new RegExp(`^${escaped}$`, 'i') }).exec();
+    }
+
 
     async update(id: string, dto: UpdateAssetDto) {
         const asset = await this.assetModel.findByIdAndUpdate(id, dto, { new: true }).exec();
@@ -105,6 +147,31 @@ export class AssetsService {
 
     async assign(id: string, dto: AssignAssetDto, actorId: string, ip?: string) {
         const asset = await this.findOne(id);
+        return this.performAssign(asset, dto.assigneeId, dto.note, actorId, ip);
+    }
+
+    /**
+     * ອ້າງສິດຮັບເຄື່ອງດ້ວຍຕົນເອງ — ຜູ້ໃຊ້ທີ່ກຳລັງ login ຮັບຊັບສິນທີ່ຍັງວ່າງ
+     * (ຈາກການສະແກນ QR/ບາໂຄ໊ດ ໃນໜ້າທະບຽນຊັບສິນ) ໂດຍບໍ່ຕ້ອງມີ assets.assign
+     */
+    async claim(id: string, actorId: string, note?: string, ip?: string) {
+        const asset = await this.findOne(id);
+        if (asset.status === AssetStatus.RETIRED) {
+            throw new BadRequestException('Cannot claim a retired asset');
+        }
+        if (asset.status !== AssetStatus.AVAILABLE) {
+            throw new BadRequestException(`This asset is not available for claiming (status: ${asset.status})`);
+        }
+        return this.performAssign(asset, actorId, note, actorId, ip);
+    }
+
+    private async performAssign(
+        asset: AssetDocument,
+        assigneeId: string,
+        note: string | undefined,
+        actorId: string,
+        ip?: string,
+    ) {
         if (asset.status === AssetStatus.RETIRED) {
             throw new BadRequestException('Cannot assign a retired asset');
         }
@@ -118,11 +185,11 @@ export class AssetsService {
         }
 
         asset.assignmentHistory.push({
-            assigneeId: dto.assigneeId as any,
+            assigneeId: assigneeId as any,
             assignedAt: now,
-            note: dto.note,
+            note,
         });
-        asset.currentAssigneeId = dto.assigneeId as any;
+        asset.currentAssigneeId = assigneeId as any;
         asset.status = AssetStatus.ASSIGNED;
         const saved = await asset.save();
 
@@ -130,7 +197,7 @@ export class AssetsService {
             actorId,
             wasAssigned ? 'ASSET_REASSIGNED' : 'ASSET_ASSIGNED',
             'Asset',
-            id,
+            asset._id,
             before,
             saved.toObject(),
             ip,

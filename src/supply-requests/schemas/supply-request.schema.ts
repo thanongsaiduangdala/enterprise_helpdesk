@@ -54,6 +54,9 @@ export class SupplyRequest {
 
     @Prop()
     fulfilledAt?: Date;
+
+    @Prop({ type: Types.ObjectId, ref: 'User' })
+    receivedBy?: Types.ObjectId;
 }
 
 export const SupplyRequestSchema = SchemaFactory.createForClass(SupplyRequest);

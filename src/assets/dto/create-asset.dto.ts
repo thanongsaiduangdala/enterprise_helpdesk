@@ -2,15 +2,23 @@ import { IsDateString, IsNotEmpty, IsOptional, IsString, Matches } from 'class-v
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateAssetDto {
-    @ApiProperty({ example: 'A-1042' })
-    @IsNotEmpty()
+    @ApiPropertyOptional({
+        example: 'A-1042',
+        description: 'Leave empty to auto-generate from a catalog item, e.g. SC002-001',
+    })
+    @IsOptional()
     @IsString()
-    assetTag!: string;
+    assetTag?: string;
 
     @ApiProperty({ example: 'Laptop' })
     @IsNotEmpty()
     @IsString()
     type!: string;
+
+    @ApiPropertyOptional({ example: 'SC002', description: 'Supply catalog item this asset belongs to' })
+    @IsOptional()
+    @IsString()
+    catalogItemId?: string;
 
     @ApiProperty({ example: 'BX001' })
     @IsString()

@@ -130,6 +130,10 @@ export class UsersService {
         return this.userModel.findOne({ email }).populate('role').exec();
     }
 
+    findByEmployeeCode(employeeCode: string) {
+        return this.userModel.findOne({ employeeCode }).exec();
+    }
+
 
 
     async setActive(id: string, isActive: boolean, actorId: string, ip?: string) {

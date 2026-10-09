@@ -92,6 +92,12 @@ export class AssetsController {
         return this.assetsService.assign(id, dto, req.user.userId, req.ip);
     }
 
+    @Patch(':id/claim')
+    @RequirePermission('assets', 'read')
+    claim(@Param('id') id: string, @Body() dto: ReturnAssetDto, @Req() req: any) {
+        return this.assetsService.claim(id, req.user.userId, dto.note, req.ip);
+    }
+
     @Patch(':id/return')
     @RequirePermission('assets', 'assign')
     returnAsset(@Param('id') id: string, @Body() dto: ReturnAssetDto, @Req() req: any) {
