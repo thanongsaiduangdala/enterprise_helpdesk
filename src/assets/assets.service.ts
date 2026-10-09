@@ -42,23 +42,38 @@ export class AssetsService {
             await this.catalogService.findOne(catalogItemId);
         }
 
-        // ຖ້າບໍ່ມີ Asset Tag → ສ້າງໃຫ້ອັດຕະໂນມັດຈາກ code ຂອງ catalog item (ຕົວຢ່າງ: SC002-001)
-        let tag = assetTag;
-        if (!tag) {
-            if (!catalogItemId) {
-                throw new BadRequestException(
-                    'Provide an assetTag or select a catalog item so the system can auto-generate one (e.g. SC002-001)',
-                );
+        // ຖ້າຜູ້ໃຊ້ກຣອກ Asset Tag ເອງ → ໃຊ້ຕາມນັ້ນ (ຊ້ຳ = ແຈ້ງ error ປົກກະຕິ)
+        if (assetTag) {
+            const existing = await this.assetModel.findOne({ assetTag });
+            if (existing) {
+                throw new ConflictException(`Asset tag "${assetTag}" is already in use`);
             }
-            tag = await this.generateCatalogAssetTag(catalogItemId);
+            const _id = await this.generateId();
+            return new this.assetModel({ _id, assetTag, catalogItemId, ...rest }).save();
         }
 
-        const existing = await this.assetModel.findOne({ assetTag: tag });
-        if (existing) {
-            throw new ConflictException(`Asset tag "${tag}" is already in use`);
+        // ບໍ່ມີ tag → ຕ້ອງເລືອກ catalog ເພື່ອສ້າງອັດຕະໂນມັດ (SC002-001)
+        if (!catalogItemId) {
+            throw new BadRequestException(
+                'Provide an assetTag or select a catalog item so the system can auto-generate one (e.g. SC002-001)',
+            );
         }
-        const _id = await this.generateId();
-        return new this.assetModel({ _id, assetTag: tag, catalogItemId, ...rest }).save();
+
+        // ສ້າງອັດຕະໂນມັດ + retry ເມື່ອຊົນກັນ (create ພ້ອມກັນຈະໄດ້ seq ດຽວກັນ)
+        const maxAttempts = 5;
+        for (let attempt = 1; ; attempt++) {
+            const tag = await this.generateCatalogAssetTag(catalogItemId);
+            const _id = await this.generateId();
+            try {
+                return await new this.assetModel({ _id, assetTag: tag, catalogItemId, ...rest }).save();
+            } catch (err: any) {
+                const isDuplicate = err?.code === 11000;
+                if (!isDuplicate) throw err;
+                if (attempt >= maxAttempts) {
+                    throw new ConflictException(`Asset tag "${tag}" is already in use`);
+                }
+            }
+        }
     }
 
     private async generateCatalogAssetTag(catalogItemId: string): Promise<string> {
@@ -92,20 +107,36 @@ export class AssetsService {
             const row = rows[i];
             const rowNumber = i + 2;
             try {
-                if (!row.assetTag || !row.type || !row.branchId) {
-                    throw new Error('Missing one or more required fields (assetTag, type, branchId)');
+                const hasTag = !!row.assetTag;
+                const hasCatalog = !!row.catalogItemId;
+                if (!hasTag && !hasCatalog) {
+                    throw new Error('Missing one or more required fields (assetTag or catalogItemId)');
+                }
+                if (!row.branchId) {
+                    throw new Error('Missing required field (branchId)');
+                }
+                // ຖ້າບໍ່ມີ type ແຕ່ອ້າງ catalog → ໃຊ້ຊື່ລາຍການ catalog ເປັນ type
+                let type = row.type;
+                if (!type && hasCatalog) {
+                    const item = await this.catalogService.findOne(row.catalogItemId);
+                    type = item.name;
+                }
+                if (!type) {
+                    throw new Error('Missing required field (type)');
                 }
                 const dto: CreateAssetDto = {
-                    assetTag: row.assetTag,
-                    type: row.type,
+                    assetTag: row.assetTag || undefined,
+                    catalogItemId: row.catalogItemId || undefined,
+                    type,
                     branchId: row.branchId,
                     purchaseDate: row.purchaseDate || undefined,
                     warrantyExpiry: row.warrantyExpiry || undefined,
                 };
-                await this.create(dto);
-                results.push({ row: rowNumber, reference: row.assetTag, success: true });
+                const created = await this.create(dto);
+                results.push({ row: rowNumber, reference: created.assetTag, success: true });
             } catch (error: any) {
-                results.push({ row: rowNumber, reference: row.assetTag ?? '', success: false, error: error.message ?? 'Unknown error' });
+                const reference = row.assetTag ?? row.catalogItemId ?? '';
+                results.push({ row: rowNumber, reference, success: false, error: error.message ?? 'Unknown error' });
             }
         }
 
