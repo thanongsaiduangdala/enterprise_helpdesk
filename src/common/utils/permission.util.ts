@@ -3,8 +3,12 @@ interface PermissionEntry {
     actions: string[];
 }
 
+/** Role name that is always allowed to do everything (matches the frontend isFullAdmin bypass). */
+export const SUPER_ADMIN_ROLE = 'SUPER_ADMIN';
+
 export interface PermissionUser {
     userId?: string;
+    role?: string;
     permissions?: PermissionEntry[];
 }
 
@@ -17,6 +21,7 @@ export function hasPermission(
     module: string,
     action: string,
 ): boolean {
+    if (user?.role === SUPER_ADMIN_ROLE) return true;
     return (user?.permissions ?? []).some(
         (p) => p.module === module && p.actions.includes(action),
     );
