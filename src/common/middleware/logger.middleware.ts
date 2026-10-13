@@ -4,7 +4,9 @@ import { Request, Response, NextFunction } from 'express';
 @Injectable()
 export class LoggerMiddleware implements NestMiddleware {
     use(req: Request, res: Response, next: NextFunction) {
-        const { method, originalUrl } = req;
+        const { method } = req;
+        // token ຂອງ QR (/join/:token) ເປັນຄວາມລັບ — ບໍ່ໃຫ້ເຂົ້າ log
+        const originalUrl = req.originalUrl.replace(/(\/join\/)[^/?]+/, '$1***');
         const start = Date.now();
 
         res.on('finish', () => {

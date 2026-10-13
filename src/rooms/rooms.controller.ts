@@ -22,6 +22,7 @@ import { SetRoomStatusDto } from './dto/set-room-status.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { parseRequiredDate } from '../common/utils/parse-date.util';
 
 @Controller('rooms')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -59,6 +60,24 @@ export class RoomsController {
         return this.roomsService.findAllWithLiveStatus(branchId);
     }
 
+
+    // ຄົ້ນຫາຫ້ອງທີ່ວ່າງໃນຊ່ວງເວລາທີ່ເລືອກ — ຕ້ອງຢູ່ກ່ອນ @Get(':id')
+    @Get('available')
+    @RequirePermission('rooms', 'read')
+    @ApiQuery({ name: 'from', description: 'ISO start datetime' })
+    @ApiQuery({ name: 'to', description: 'ISO end datetime' })
+    @ApiQuery({ name: 'branchId', required: false })
+    findAvailable(
+        @Query('from') from: string,
+        @Query('to') to: string,
+        @Query('branchId') branchId?: string,
+    ) {
+        return this.roomsService.findAvailableBetween(
+            parseRequiredDate(from, 'from'),
+            parseRequiredDate(to, 'to'),
+            branchId,
+        );
+    }
 
     @Get('utilization')
     @RequirePermission('rooms', 'manage')

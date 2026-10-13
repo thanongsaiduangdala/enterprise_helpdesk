@@ -832,7 +832,9 @@ export class RoomBookingsService {
             throw new BadRequestException('You can only record attendees for your own bookings');
         }
         booking.attendees = dto.attendees;
-        return booking.save();
+        const saved = await booking.save();
+        this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+        return saved;
     }
 
     // ຍົກເລີກ booking ທີ່ "ຈອງໄວ້ແຕ່ບໍ່ມາ" (ຮອດເວລານັດ+ເວລາຜ່ອນຜັນແລ້ວ ແຕ່ບໍ່ check-in) ໃຫ້ອັດຕະໂນມັດ —
@@ -854,7 +856,7 @@ export class RoomBookingsService {
         if (roomIds && roomIds.length > 0) {
             filter.roomId = { $in: roomIds };
         }
-        await this.bookingModel
+        const result = await this.bookingModel
             .updateMany(filter, {
                 $set: {
                     status: BookingStatus.CANCELLED,
@@ -867,6 +869,10 @@ export class RoomBookingsService {
                 },
             })
             .exec();
+        // ມີ no-show ຖືກຍົກເລີກອັດຕະໂນມັດ → ບອກໜ້າຈໍທຸກໜ້າໃຫ້ອັບເດດ (ເມື່ອບໍ່ມີຫຍັງປ່ຽນ ຈະບໍ່ emit ຈຶ່ງບໍ່ວົນລູບ)
+        if (result.modifiedCount > 0) {
+            this.roomBookingsGateway.emitBookingsChanged();
+        }
     }
 
     async isRoomBookedAt(roomId: string, at: Date): Promise<boolean> {
@@ -895,6 +901,23 @@ export class RoomBookingsService {
                 startAt: { $lte: at },
                 endAt: { $gt: at },
                 checkedOutAt: null,
+            })
+            .select('roomId')
+            .exec();
+        return new Set(clashes.map((c) => String(c.roomId)));
+    }
+
+    // ເອົາ id ຫ້ອງທີ່ມີການຈອງ CONFIRMED ຊ້ອນກັບຊ່ວງ [from, to) — ໃຊ້ໂດຍ RoomsService.findAvailableBetween()
+    // ໃຊ້ເງື່ອນໄຂດຽວກັນກັບ assertNoOverlap() ເພື່ອໃຫ້ຜົນ "ຫ້ອງວ່າງ" ກົງກັບຜົນຕອນຈອງຈິງ
+    async findRoomIdsBusyBetween(roomIds: string[], from: Date, to: Date): Promise<Set<string>> {
+        if (roomIds.length === 0) return new Set();
+        await this.releaseNoShowBookings(roomIds);
+        const clashes = await this.bookingModel
+            .find({
+                roomId: { $in: roomIds },
+                status: BookingStatus.CONFIRMED,
+                startAt: { $lt: to },
+                endAt: { $gt: from },
             })
             .select('roomId')
             .exec();

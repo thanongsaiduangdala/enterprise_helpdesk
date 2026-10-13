@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     ConflictException,
     forwardRef,
     Inject,
@@ -116,6 +117,23 @@ export class RoomsService {
             }
             return { ...obj, liveStatus: bookedNowIds.has(String(room._id)) ? 'BOOKED' : RoomStatus.AVAILABLE };
         });
+    }
+
+    // ຫ້ອງທີ່ "ວ່າງ" ຕະຫຼອດຊ່ວງ [from, to): ເປີດໃຊ້ງານ, ບໍ່ປິດບຳລຸງ, ແລະ ບໍ່ມີການຈອງ CONFIRMED ຊ້ອນເວລາ
+    async findAvailableBetween(from: Date, to: Date, branchId?: string) {
+        if (to <= from) {
+            throw new BadRequestException('"to" must be after "from"');
+        }
+        const rooms = await this.findAll(branchId);
+        const candidates = rooms.filter((r) => r.isActive && r.status !== RoomStatus.MAINTENANCE);
+        const busyIds = await this.roomBookingsService.findRoomIdsBusyBetween(
+            candidates.map((r) => String(r._id)),
+            from,
+            to,
+        );
+        return candidates
+            .filter((r) => !busyIds.has(String(r._id)))
+            .map((r) => r.toObject());
     }
 
     async findOne(id: string) {

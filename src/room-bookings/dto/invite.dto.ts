@@ -1,0 +1,54 @@
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { InviteMode } from '../schemas/room-booking.schema';
+
+export class SetInviteModeDto {
+    @ApiProperty({ enum: [...Object.values(InviteMode), 'NONE'], example: 'PRIVATE' })
+    @IsEnum({ ...InviteMode, NONE: 'NONE' })
+    mode!: InviteMode | 'NONE';
+}
+
+export class AddInviteeDto {
+    @ApiPropertyOptional({ example: 'Somchai V.' })
+    @ValidateIf((o) => !o.userId && !o.accountId)
+    @IsNotEmpty()
+    @IsString()
+    @MaxLength(80)
+    name?: string;
+
+    @ApiPropertyOptional({ description: 'User _id picked from the account search' })
+    @IsOptional()
+    @IsString()
+    @MaxLength(40)
+    userId?: string;
+
+    @ApiPropertyOptional({ example: 'EMP001', description: 'Account ID (employee code)' })
+    @IsOptional()
+    @IsString()
+    @MaxLength(40)
+    accountId?: string;
+
+    @ApiPropertyOptional({ example: 'somchai@example.com' })
+    @IsOptional()
+    @IsEmail()
+    @MaxLength(120)
+    email?: string;
+
+    @ApiPropertyOptional({ example: '020 5555 1234' })
+    @IsOptional()
+    @IsString()
+    @MaxLength(30)
+    phone?: string;
+}
+
+export class JoinDto {
+    @IsOptional()
+    @IsString()
+    @MaxLength(80)
+    name?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(120)
+    contact?: string;
+}

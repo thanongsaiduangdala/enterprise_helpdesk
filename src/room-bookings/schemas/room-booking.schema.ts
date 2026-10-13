@@ -52,6 +52,79 @@ export class RoomBookingHistoryEntry {
     at!: Date;
 }
 
+export enum InviteMode {
+    PRIVATE = 'PRIVATE', // ມີແຕ່ຄົນໃນລາຍຊື່ເທົ່ານັ້ນທີ່ເຂົ້າໄດ້ — ຜູ້ຈອງເພີ່ມຄົນເທື່ອລະຄົນ
+    PUBLIC = 'PUBLIC', // ໃຜສະແກນ QR ກໍເຂົ້າໄດ້
+}
+
+export type CheckInResult = 'ADMITTED' | 'DENIED';
+
+// ແຂກທີ່ຖືກເຊີນແບບ PRIVATE — ແຕ່ລະຄົນມີ token ສ່ວນຕົວ (ໃຊ້ສ້າງ QR ສະເພາະຄົນ)
+@Schema()
+export class BookingInvitee {
+    _id?: Types.ObjectId;
+
+    @Prop({ required: true })
+    name!: string;
+
+    @Prop()
+    email?: string;
+
+    @Prop()
+    phone?: string;
+
+    @Prop()
+    userId?: string;
+
+    @Prop()
+    employeeCode?: string;
+
+    @Prop({ required: true })
+    token!: string;
+
+    @Prop({ default: Date.now })
+    addedAt!: Date;
+
+    // ຜູ້ຈອງລຶບອອກຈາກລາຍຊື່ — ເກັບໄວ້ (ບໍ່ລຶບແທ້) ເພື່ອໃຫ້ QR ເກົ່າຖືກປະຕິເສດ ແລະ ຍັງມີຫຼັກຖານໃນລາຍງານ
+    @Prop()
+    revokedAt?: Date;
+
+    @Prop()
+    joinedAt?: Date;
+}
+export const BookingInviteeSchema = SchemaFactory.createForClass(BookingInvitee);
+
+// ບັນທຶກທຸກການສະແກນ QR ທີ່ເຂົ້າມາ (ຜ່ານ ແລະ ຖືກປະຕິເສດ) — ໃຊ້ອອກລາຍງານ CSV/PDF
+@Schema({ _id: false })
+export class BookingCheckIn {
+    @Prop({ required: true })
+    name!: string;
+
+    @Prop()
+    contact?: string;
+
+    @Prop()
+    inviteeId?: string;
+
+    @Prop()
+    userId?: string;
+
+    @Prop()
+    employeeCode?: string;
+
+    @Prop({ required: true, enum: ['ADMITTED', 'DENIED'] })
+    result!: CheckInResult;
+
+    @Prop()
+    reason?: string;
+
+    @Prop({ required: true, enum: ['DOOR_QR', 'PERSONAL_QR'] })
+    via!: string;
+
+    @Prop({ required: true, default: Date.now })
+    at!: Date;
+}
+
 @Schema({ timestamps: true })
 export class RoomBooking {
     @Prop({ type: String })
@@ -118,6 +191,22 @@ export class RoomBooking {
     @Prop({ type: [String], default: [] })
     attendees!: string[];
 
+    // ===== ເຊີນຄົນເຂົ້າຫ້ອງດ້ວຍ QR =====
+    // undefined = ຍັງບໍ່ເປີດການເຊີນ
+    @Prop({ enum: InviteMode })
+    inviteMode?: InviteMode;
+
+    // token ຂອງ QR ກາງ (ປະຕູຫ້ອງ) — ໃຊ້ໃນໂໝດ PUBLIC (ໃຜກໍສະແກນໄດ້) ແລະ ໂໝດ PRIVATE (ຕ້ອງກວດຊື່ກັບລາຍຊື່)
+    // select:false ກັນບໍ່ໃຫ້ token ຫຼຸດອອກໄປກັບ list API ອື່ນໆ (ຕາຕະລາງ/ການຈອງຂອງຂ້ອຍ/ລໍຖ້າອະນຸມັດ) — ຕ້ອງ select('+...') ຊັດເຈນ
+    @Prop({ select: false })
+    inviteToken?: string;
+
+    @Prop({ type: [BookingInviteeSchema], default: [], select: false })
+    invitees!: BookingInvitee[];
+
+    @Prop({ type: [BookingCheckIn], default: [], select: false })
+    checkIns!: BookingCheckIn[];
+
     // ປະຫວັດການປ່ຽນແປງທັງໝົດຂອງການຈອງນີ້ (ເບິ່ງໄດ້ໃນ popup ລາຍລະອຽດ)
     @Prop({ type: [RoomBookingHistoryEntry], default: [] })
     history!: RoomBookingHistoryEntry[];
@@ -127,3 +216,5 @@ export const RoomBookingSchema = SchemaFactory.createForClass(RoomBooking);
 
 RoomBookingSchema.index({ roomId: 1, startAt: 1, endAt: 1 });
 RoomBookingSchema.index({ bookedBy: 1, status: 1 });
+RoomBookingSchema.index({ inviteToken: 1 }, { unique: true, sparse: true });
+RoomBookingSchema.index({ 'invitees.token': 1 }, { sparse: true });
