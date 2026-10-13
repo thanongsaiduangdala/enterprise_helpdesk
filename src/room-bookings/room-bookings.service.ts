@@ -13,6 +13,7 @@ import {
     RoomBooking,
     RoomBookingDocument,
     BookingStatus,
+    RoomBookingHistoryEntry,
 } from './schemas/room-booking.schema';
 import { RoomBookingLock, RoomBookingLockDocument } from './schemas/room-booking-lock.schema';
 import { CreateRoomBookingDto } from './dto/create-room-booking.dto';
@@ -146,6 +147,14 @@ export class RoomBookingsService {
         throw new ConflictException('This room is busy processing another booking request — please try again');
     }
 
+    // ສ້າງ entry ສຳລັບປະຫວັດການຈອງ (append-only) — ໃຊ້ກັບທັງ booking ໃໝ່ ແລະ ການປ່ຽນແປງຕ່າງໆ
+    private historyEvent(
+        action: string,
+        extra: Record<string, any> = {},
+    ): RoomBookingHistoryEntry {
+        return { action, at: new Date(), ...extra } as RoomBookingHistoryEntry;
+    }
+
     async create(dto: CreateRoomBookingDto, bookedBy: string) {
         const room = await this.roomsService.findOne(dto.roomId);
         this.assertRoomBookable(room);
@@ -158,7 +167,21 @@ export class RoomBookingsService {
             if (!dto.recurrence) {
                 await this.assertNoOverlap(dto.roomId, startAt, endAt);
                 const [_id] = await this.generateIdBatch(1);
-                const booking = new this.bookingModel({ _id, roomId: dto.roomId, bookedBy, startAt, endAt, title: dto.title });
+                const booking = new this.bookingModel({
+                    _id,
+                    roomId: dto.roomId,
+                    bookedBy,
+                    startAt,
+                    endAt,
+                    title: dto.title,
+                    history: [
+                        this.historyEvent('CREATED', {
+                            toStartAt: startAt,
+                            toEndAt: endAt,
+                            actorId: bookedBy,
+                        }),
+                    ],
+                });
                 saved = await booking.save();
             } else {
                 const until = new Date(dto.recurrence.until);
@@ -193,6 +216,13 @@ export class RoomBookingsService {
                     recurrence,
                     seriesId,
                     title: dto.title,
+                    history: [
+                        this.historyEvent('CREATED', {
+                            toStartAt: occ.startAt,
+                            toEndAt: occ.endAt,
+                            actorId: bookedBy,
+                        }),
+                    ],
                 }));
 
                 saved = await this.bookingModel.insertMany(bookingsToInsert);
@@ -251,6 +281,8 @@ export class RoomBookingsService {
         return this.bookingModel
             .find({ bookedBy: userId })
             .populate('roomId')
+            // ໃຫ້ມີຊື່ຜູ້ກະທຳໃນປະຫວັດ (ຜູ້ຂໍ ແລະ ຜູ້ອະນຸມັດ) ເພື່ອສະແດງໃນ popup
+            .populate({ path: 'history.actorId', select: 'firstName lastName email' })
             .sort({ startAt: -1 })
             .exec();
     }
@@ -271,13 +303,19 @@ export class RoomBookingsService {
 
         const bookings = await this.bookingModel
             .find(filter)
+            .select('-history') // ຕາຕະລາງບໍ່ຕ້ອງການປະຫວັດ — ຫຼຸດຂະໜາດຄຳຕອບ ແລະ ບໍ່ຮົ່ວຂໍ້ມູນຜູ້ອື່ນ
+            .populate('bookedBy', 'firstName lastName email') // ຕ້ອງການຊື່ຜູ້ຈອງໃສ່ note hover ຂອງກ່ອງການຈອງ (ຈະຖືກ redact ຂ້າງລຸ່ມ ຖ້າຜູ້ເບິ່ງບໍ່ມີສິດ)
             .sort({ startAt: 1 })
             .exec();
 
         if (!viewerId) return bookings;
 
         return bookings.map((booking) => {
-            if (booking.bookedBy.toString() === viewerId) return booking;
+            const bookedBy: any = booking.bookedBy;
+            const ownerId = bookedBy && typeof bookedBy === 'object'
+                ? String(bookedBy._id ?? '')
+                : String(bookedBy ?? '');
+            if (ownerId === viewerId) return booking;
             const redacted: Record<string, any> = booking.toObject();
             redacted.bookedBy = null;
             redacted.reviewedBy = null;
@@ -305,19 +343,63 @@ export class RoomBookingsService {
     //   conflictWith = ຄຳຮ້ອງ PENDING ອື່ນ ທີ່ຊົ່ວກັນ (ຕ້ອງເລືອກວ່າຈະອະນຸມັດລາຍການໃດ)
     //   blockedBy    = booking ທີ່ CONFIRMED ແລ້ວ ທີ່ຊົ່ວກັນ (ອະນຸມັດຈະໂດນ 409 ທັນທີ — ຕ້ອງແກ້ໄຂຫຼືໃຫ້ຜູ້ຂໍປ່ຽນເວລາ)
     async findPendingApprovals(): Promise<PendingApprovalView[]> {
-        const pending = await this.bookingModel
+        // ມີ 2 ປະເພດຄຳຮ້ອງທີ່ລໍຖ້າອະນຸມັດ:
+        //   1) ຄຳຮ້ອງຈອງໃໝ່  — status = PENDING (ເວລາຢູ່ startAt/endAt)
+        //   2) ຄຳຮ້ອງເລື່ອນເວລາ — booking ຍັງ CONFIRMED ຢູ່ເວລາເດີມ ແຕ່ມີ pendingStartAt (ເວລາໃໝ່ທີ່ຂໍປ່ຽນ)
+        const newRequests = await this.bookingModel
             .find({ status: BookingStatus.PENDING })
             .populate('roomId')
             .populate('bookedBy')
             .sort({ createdAt: 1 })
             .exec();
 
-        // ບໍ່ມີຄຳຮ້ອງເວລາຢູ່ລໍຖ້າອະນຸມັດ — ຄືນ array ວ່າງ (ບໍ່ມີ conflict ໃດຕ້ອງຄິດ)
-        if (pending.length === 0) return [];
+        const reschedules = await this.bookingModel
+            .find({
+                pendingStartAt: { $ne: null },
+                pendingEndAt: { $ne: null },
+                status: { $nin: [BookingStatus.CANCELLED, BookingStatus.REJECTED] },
+            })
+            .populate('roomId')
+            .populate('bookedBy')
+            .sort({ pendingRequestedAt: 1 })
+            .exec();
 
-        // ດຶງ booking ທີ່ CONFIRMED ແລ້ວທີ່ທັບເວລາຂອງຄຳຮ້ອງ PENDING ເທົ່ນ ເພື່ອກວດຊົ່ວກັນຢ່າງຄົນລະອຽນ
-        const minStart = new Date(Math.min(...pending.map((p) => p.startAt.getTime())));
-        const maxEnd = new Date(Math.max(...pending.map((p) => p.endAt.getTime())));
+        // ບໍ່ມີຄຳຮ້ອງເວລາຢູ່ລໍຖ້າອະນຸມັດ — ຄືນ array ວ່າງ (ບໍ່ມີ conflict ໃດຕ້ອງຄິດ)
+        if (newRequests.length === 0 && reschedules.length === 0) return [];
+
+        // ແຕ່ລະລາຍການມີ "ເວລາທີ່ຈະຖືກອະນຸມັດ" (effective): ຄຳຮ້ອງໃໝ່ = startAt/endAt, ຄຳຮ້ອງເລື່ອນເວລາ = pendingStartAt/End
+        const items = [
+            ...newRequests.map((doc) => ({
+                doc,
+                startAt: doc.startAt as Date,
+                endAt: doc.endAt as Date,
+                isReschedule: false,
+                originalStartAt: null as Date | null,
+                originalEndAt: null as Date | null,
+            })),
+            ...reschedules.map((doc) => ({
+                doc,
+                startAt: doc.pendingStartAt as Date,
+                endAt: doc.pendingEndAt as Date,
+                isReschedule: true,
+                originalStartAt: doc.startAt as Date,
+                originalEndAt: doc.endAt as Date,
+            })),
+        ];
+
+        items.sort((a, b) => {
+            const aTime = a.isReschedule
+                ? a.doc.pendingRequestedAt ?? (a.doc as any).createdAt
+                : (a.doc as any).createdAt;
+            const bTime = b.isReschedule
+                ? b.doc.pendingRequestedAt ?? (b.doc as any).createdAt
+                : (b.doc as any).createdAt;
+            return new Date(aTime as any).getTime() - new Date(bTime as any).getTime();
+        });
+
+        // ດຶງ booking ທີ່ CONFIRMED ແລ້ວທີ່ທັບເວລາຂອງຄຳຮ້ອງເທົ່ນ ເພື່ອກວດຊົ່ວກັນຢ່າງຄົນລະອຽນ
+        const minStart = new Date(Math.min(...items.map((p) => p.startAt.getTime())));
+        const maxEnd = new Date(Math.max(...items.map((p) => p.endAt.getTime())));
         const confirmed = await this.bookingModel
             .find({
                 status: BookingStatus.CONFIRMED,
@@ -349,22 +431,48 @@ export class RoomBookingsService {
                 : null,
         });
 
-        return pending.map((booking) => {
+        return items.map((item) => {
+            const booking = item.doc;
             const room = roomKey(booking.roomId);
             const selfId = booking._id.toString();
+            const selfRange = { startAt: item.startAt, endAt: item.endAt };
 
-            const conflictWith = pending.filter(
-                (other) => other._id.toString() !== selfId
-                    && roomKey(other.roomId) === room
-                    && overlaps(booking, other),
+            const conflictWith = items.filter(
+                (other) => other.doc._id.toString() !== selfId
+                    && roomKey(other.doc.roomId) === room
+                    && overlaps(selfRange, { startAt: other.startAt, endAt: other.endAt }),
             );
+            // ບໍ່ນັບ booking ຕົວເອງ (legacy/CONFIRMED) — ມັນຢູ່ໃນຜົນຂອງ confirmed ເພາະຍັງ CONFIRMED ຢູ່ເວລາເດີມ
             const blockedBy = confirmed.filter(
-                (other) => roomKey(other.roomId) === room && overlaps(booking, other),
+                (other) => roomKey(other.roomId) === room
+                    && other._id.toString() !== selfId
+                    && overlaps(selfRange, other),
             );
 
             return {
                 ...booking.toObject(),
-                conflictWith: conflictWith.map(summarize),
+                // ສະແດງເວລາທີ່ "ຈະປ່ຽນໄປ / ຈະຖືກອະນຸມັດ" ໃຫ້ຜູ້ອະນຸມັດເຫັນ
+                startAt: item.startAt,
+                endAt: item.endAt,
+                isReschedule: item.isReschedule,
+                originalStartAt: item.originalStartAt,
+                originalEndAt: item.originalEndAt,
+                conflictWith: conflictWith.map((c) => {
+                    const otherBookedBy = c.doc.bookedBy as any;
+                    return {
+                        _id: c.doc._id,
+                        title: c.doc.title,
+                        startAt: c.startAt,
+                        endAt: c.endAt,
+                        bookedBy: otherBookedBy
+                            ? {
+                                firstName: otherBookedBy.firstName,
+                                lastName: otherBookedBy.lastName,
+                                email: otherBookedBy.email,
+                            }
+                            : null,
+                    };
+                }),
                 blockedBy: blockedBy.map(summarize),
             };
         });
@@ -372,6 +480,57 @@ export class RoomBookingsService {
 
     async approve(id: string, approverId: string) {
         const booking = await this.findOne(id);
+
+        // ກໍລະນີຄຳຮ້ອງເລື່ອນເວລາ: booking ຍັງ CONFIRMED ຢູ່ເວລາເດີມ ແລະ ມີເວລາໃໝ່ລໍຖ້າອະນຸມັດ (pendingStartAt)
+        // ອະນຸມັດ = ຍ້າຍໄປເວລາໃໝ່ ແລະ ລຶບຂໍ້ມູນລໍຖ້າ ສ່ວນ status ຍັງເປັນ CONFIRMED
+        if (booking.pendingStartAt && booking.pendingEndAt) {
+            await this.assertNoOverlap(
+                booking.roomId.toString(),
+                booking.pendingStartAt,
+                booking.pendingEndAt,
+                booking._id,
+            );
+
+            const saved = await this.bookingModel
+                .findOneAndUpdate(
+                    {
+                        $expr: { $eq: [{ $toString: '$_id' }, id] },
+                        pendingStartAt: { $ne: null },
+                    },
+                    {
+                        $set: {
+                            startAt: booking.pendingStartAt,
+                            endAt: booking.pendingEndAt,
+                            reviewedBy: approverId,
+                            reviewedAt: new Date(),
+                        },
+                        $unset: {
+                            pendingStartAt: '',
+                            pendingEndAt: '',
+                            pendingRequestedAt: '',
+                            rescheduleRejectionReason: '',
+                        },
+                        $push: {
+                            history: this.historyEvent('RESCHEDULE_APPROVED', {
+                                fromStartAt: booking.startAt,
+                                fromEndAt: booking.endAt,
+                                toStartAt: booking.pendingStartAt,
+                                toEndAt: booking.pendingEndAt,
+                                actorId: approverId,
+                            }),
+                        },
+                    },
+                    { new: true },
+                )
+                .exec();
+            if (!saved) {
+                await this.findOne(id);
+                throw new BadRequestException('This booking has no pending reschedule');
+            }
+            this.roomBookingsGateway.emitBookingsChanged(saved.roomId.toString());
+            return saved;
+        }
+
         if (booking.status !== BookingStatus.PENDING) {
             throw new BadRequestException('This booking is not waiting for approval');
         }
@@ -385,11 +544,15 @@ export class RoomBookingsService {
             booking._id,
         );
 
-        const saved = await this.reviewPending(id, {
-            status: BookingStatus.CONFIRMED,
-            reviewedBy: approverId,
-            reviewedAt: new Date(),
-        });
+        const saved = await this.reviewPending(
+            id,
+            {
+                status: BookingStatus.CONFIRMED,
+                reviewedBy: approverId,
+                reviewedAt: new Date(),
+            },
+            { history: this.historyEvent('APPROVED', { actorId: approverId }) },
+        );
         this.roomBookingsGateway.emitBookingsChanged(saved.roomId.toString());
         return saved;
     }
@@ -397,14 +560,16 @@ export class RoomBookingsService {
     // ອັບເດດ booking ທີ່ PENDING ແບບ atomic ຜ່ານ $toString(_id) — ບໍ່ໃຊ້ booking.save()
     // ເພາະ legacy booking ທີ່ _id ເປັນ ObjectId: save() ຈະ filter ດ້ວຍ _id ແບບ String ແລ້ວບໍ່ເຈໍເອກະສານ
     // => DocumentNotFoundError => 500 (ເກີດກັບຄຳຮ້ອງເກົ່າ/ໝົດອາຍຸ). ການ updateOne ດ້ວຍ $expr ໃຊ້ໄດ້ທັງ RBxxx ແລະ ObjectId
-    private async reviewPending(id: string, set: Record<string, any>) {
+    private async reviewPending(id: string, set: Record<string, any>, push?: Record<string, any>) {
+        const update: Record<string, any> = { $set: set };
+        if (push) update.$push = push;
         const updated = await this.bookingModel
             .findOneAndUpdate(
                 {
                     $expr: { $eq: [{ $toString: '$_id' }, id] },
                     status: BookingStatus.PENDING,
                 },
-                { $set: set },
+                update,
                 { new: true },
             )
             .exec();
@@ -417,12 +582,52 @@ export class RoomBookingsService {
     }
 
     async reject(id: string, approverId: string, dto: RejectRoomBookingDto) {
-        const saved = await this.reviewPending(id, {
-            status: BookingStatus.REJECTED,
-            reviewedBy: approverId,
-            reviewedAt: new Date(),
-            rejectionReason: dto.reason,
-        });
+        const booking = await this.findOne(id);
+
+        // ກໍລະນີຄຳຮ້ອງເລື່ອນເວລາ: ປະຕິເສດ = ພຽງແຕ່ລຶບຄຳຮ້ອງເລື່ອນເວລາອອກ ແລະ ຄົງ booking ທີ່ອະນຸມັດແລ້ວໄວ້ຕາມເດີມ
+        // (ບໍ່ປ່ຽນເປັນ REJECTED — ຜູ້ໃຊ້ຍັງມີການຈອງທີ່ອະນຸມັດຢູ່ເວລາເກົ່າ)
+        if (booking.pendingStartAt && booking.pendingEndAt) {
+            const saved = await this.bookingModel
+                .findOneAndUpdate(
+                    {
+                        $expr: { $eq: [{ $toString: '$_id' }, id] },
+                        pendingStartAt: { $ne: null },
+                    },
+                    {
+                        $set: { rescheduleRejectionReason: dto.reason },
+                        $unset: { pendingStartAt: '', pendingEndAt: '', pendingRequestedAt: '' },
+                        $push: {
+                            history: this.historyEvent('RESCHEDULE_REJECTED', {
+                                fromStartAt: booking.startAt,
+                                fromEndAt: booking.endAt,
+                                toStartAt: booking.pendingStartAt,
+                                toEndAt: booking.pendingEndAt,
+                                actorId: approverId,
+                                note: dto.reason,
+                            }),
+                        },
+                    },
+                    { new: true },
+                )
+                .exec();
+            if (!saved) {
+                await this.findOne(id);
+                throw new BadRequestException('This booking has no pending reschedule');
+            }
+            this.roomBookingsGateway.emitBookingsChanged(saved.roomId.toString());
+            return saved;
+        }
+
+        const saved = await this.reviewPending(
+            id,
+            {
+                status: BookingStatus.REJECTED,
+                reviewedBy: approverId,
+                reviewedAt: new Date(),
+                rejectionReason: dto.reason,
+            },
+            { history: this.historyEvent('REJECTED', { actorId: approverId, note: dto.reason }) },
+        );
         this.roomBookingsGateway.emitBookingsChanged(saved.roomId.toString());
         return saved;
     }
@@ -432,6 +637,14 @@ export class RoomBookingsService {
         if (booking.bookedBy.toString() !== requesterId) {
             throw new BadRequestException('You can only reschedule your own bookings');
         }
+        // ຫ້າມເລື່ອນເວລາ booking ທີ່ຢຸດຕິດແລ້ວ (ຍົກເລີກ/ຖືກປະຕິເສດ) — ບໍ່ດັ່ງນັ້ນມັນຈະຖືກຟື້ນຄືນເປັນ PENDING
+        if (booking.status === BookingStatus.CANCELLED || booking.status === BookingStatus.REJECTED) {
+            throw new BadRequestException('This booking is no longer active and cannot be rescheduled');
+        }
+        // ຖ້າເວລາສິ້ນສຸດຂອງປະຊຸມຜ່ານໄປແລ້ວ (ປະຊຸມຈົບແລ້ວ) ກໍບໍ່ອະນຸຍາດໃຫ້ເລື່ອນເວລາ
+        if (booking.endAt.getTime() <= Date.now()) {
+            throw new BadRequestException('This meeting has already ended and cannot be rescheduled');
+        }
         const room = await this.roomsService.findOne(booking.roomId);
         this.assertRoomBookable(room);
 
@@ -440,10 +653,60 @@ export class RoomBookingsService {
 
         return this.withRoomLock(booking.roomId.toString(), async () => {
             await this.assertNoOverlap(booking.roomId.toString(), startAt, endAt, id);
-            booking.startAt = startAt;
-            booking.endAt = endAt;
-            const saved = await booking.save();
-            this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+
+            // ຖ້າຍັງເປັນຄຳຮ້ອງຈອງໃໝ່ທີ່ຍັງບໍ່ອະນຸມັດ (PENDING) — ຍັງບໍ່ມີເວລາທີ່ອະນຸມັດແລ້ວໃຫ້ປົກປ້ອງ
+            // ຈຶ່ງແກ້ເວລາໃນຄຳຮ້ອງໄດ້ເລີຍ (status ຍັງ PENDING ຄືເກົ່າ)
+            // ຖ້າອະນຸມັດແລ້ວ (CONFIRMED/legacy) — ຕ້ອງເກັບເວລາເດີມໄວ້ ແລະ ຝາກ "ຄຳຮ້ອງເລື່ອນເວລາ" ໄວ້ລໍຖ້າອະນຸມັດ
+            // ໂດຍບໍ່ໄປກະທົບ startAt/endAt ຂອງການຈອງທີ່ອະນຸມັດແລ້ວ — ຖ້າປະຕິເສດ ຈະລຶບພຽງຄຳຮ້ອງນີ້ອອກ
+            // ໃຊ້ findOneAndUpdate ຜ່ານ $toString(_id) ເພື່ອຮອງຮັບ legacy booking ທີ່ _id ເປັນ ObjectId (ຄືກັບ reviewPending)
+            const isPendingNewRequest = booking.status === BookingStatus.PENDING;
+            const saved = await this.bookingModel
+                .findOneAndUpdate(
+                    { $expr: { $eq: [{ $toString: '$_id' }, id] } },
+                    isPendingNewRequest
+                        ? {
+                            $set: { startAt, endAt },
+                            $push: {
+                                history: this.historyEvent('REQUEST_UPDATED', {
+                                    fromStartAt: booking.startAt,
+                                    fromEndAt: booking.endAt,
+                                    toStartAt: startAt,
+                                    toEndAt: endAt,
+                                    actorId: requesterId,
+                                }),
+                            },
+                        }
+                        : {
+                            $set: {
+                                pendingStartAt: startAt,
+                                pendingEndAt: endAt,
+                                pendingRequestedAt: new Date(),
+                            },
+                            $unset: { rescheduleRejectionReason: '' },
+                            $push: {
+                                // ຖ້າມີຄຳຮ້ອງຄ້າງຢູ່ແລ້ວ (ແກ້ໄຂຄຳຮ້ອງ) ບັນທຶກເປັນ "ແກ້ໄຂ"; ບໍ່ດັ່ງນັ້ນເປັນ "ຂໍເລື່ອນເວລາ" ໃໝ່
+                                history: this.historyEvent(
+                                    booking.pendingStartAt && booking.pendingEndAt
+                                        ? 'REQUEST_UPDATED'
+                                        : 'RESCHEDULE_REQUESTED',
+                                    {
+                                        fromStartAt: booking.startAt,
+                                        fromEndAt: booking.endAt,
+                                        toStartAt: startAt,
+                                        toEndAt: endAt,
+                                        actorId: requesterId,
+                                    },
+                                ),
+                            },
+                        },
+                    { new: true },
+                )
+                .exec();
+            if (!saved) {
+                throw new BadRequestException('Booking not found');
+            }
+
+            this.roomBookingsGateway.emitBookingsChanged(saved.roomId.toString());
             return saved;
         });
     }
@@ -453,10 +716,25 @@ export class RoomBookingsService {
         if (booking.bookedBy.toString() !== requesterId) {
             throw new BadRequestException('You can only cancel your own bookings');
         }
+        // ປະຊຸມທີ່ເວລາສິ້ນສຸດຜ່ານໄປແລ້ວ ຍົກເລີກບໍ່ໄດ້ (ເຂົ້າຫ້ອງກໍບໍ່ໄດ້ແລ້ວ ຈຶ່ງບໍ່ມີຄວາມໝາຍທີ່ຈະຍົກເລີກ)
+        if (booking.endAt.getTime() <= Date.now()) {
+            throw new BadRequestException('This meeting has already ended and cannot be cancelled');
+        }
 
-        booking.status = BookingStatus.CANCELLED;
-        const saved = await booking.save();
-        this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
+        // ຍົກເລີກແລ້ວກໍລຶບຄຳຮ້ອງເລື່ອນເວລາທີ່ຄ້າງຢູ່ນຳ (ຖ້າມີ) ເພື່ອບໍ່ໃຫ້ເຫຼືອຂໍ້ມູນຄ້າງ
+        const saved = await this.bookingModel
+            .findOneAndUpdate(
+                { $expr: { $eq: [{ $toString: '$_id' }, id] } },
+                {
+                    $set: { status: BookingStatus.CANCELLED },
+                    $unset: { pendingStartAt: '', pendingEndAt: '', pendingRequestedAt: '' },
+                    $push: { history: this.historyEvent('CANCELLED', { actorId: requesterId }) },
+                },
+                { new: true },
+            )
+            .exec();
+        if (!saved) throw new NotFoundException('Booking not found');
+        this.roomBookingsGateway.emitBookingsChanged(saved.roomId.toString());
         return saved;
     }
 
@@ -473,13 +751,24 @@ export class RoomBookingsService {
         }
 
         const cancellable = bookings.filter(
-            (b) => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING,
+            (b) =>
+                (b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING) &&
+                b.endAt.getTime() > Date.now(),
         );
         if (cancellable.length > 0) {
             await this.bookingModel
                 .updateMany(
-                    { seriesId, status: { $in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] } },
-                    { $set: { status: BookingStatus.CANCELLED } },
+                    {
+                        seriesId,
+                        status: { $in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+                        // ບໍ່ຍົກເລີກຄັ້ງທີ່ເວລາຜ່ານໄປແລ້ວ
+                        endAt: { $gt: new Date() },
+                    },
+                    {
+                        $set: { status: BookingStatus.CANCELLED },
+                        $unset: { pendingStartAt: '', pendingEndAt: '', pendingRequestedAt: '' },
+                        $push: { history: this.historyEvent('CANCELLED', { actorId: requesterId }) },
+                    },
                 )
                 .exec();
             this.roomBookingsGateway.emitBookingsChanged();
@@ -509,6 +798,8 @@ export class RoomBookingsService {
             throw new BadRequestException('This booking has already ended');
         }
         booking.checkedInAt = now;
+        if (!Array.isArray(booking.history)) booking.history = [];
+        booking.history.push(this.historyEvent('CHECKED_IN', { actorId: requesterId }));
         const saved = await booking.save();
         this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
         return saved;
@@ -527,6 +818,8 @@ export class RoomBookingsService {
             throw new BadRequestException('This booking has already been checked out');
         }
         booking.checkedOutAt = new Date();
+        if (!Array.isArray(booking.history)) booking.history = [];
+        booking.history.push(this.historyEvent('CHECKED_OUT', { actorId: requesterId }));
         const saved = await booking.save();
         this.roomBookingsGateway.emitBookingsChanged(booking.roomId.toString());
         return saved;
@@ -566,6 +859,11 @@ export class RoomBookingsService {
                 $set: {
                     status: BookingStatus.CANCELLED,
                     rejectionReason: `ຍົກເລີກອັດຕະໂນມັດ: ບໍ່ໄດ້ check-in ພາຍໃນ ${NO_SHOW_GRACE_MINUTES} ນາທີຫຼັງເວລານັດ (no-show)`,
+                },
+                $push: {
+                    history: this.historyEvent('NO_SHOW', {
+                        note: `ຍົກເລີກອັດຕະໂນມັດ: ບໍ່ໄດ້ check-in ພາຍໃນ ${NO_SHOW_GRACE_MINUTES} ນາທີ (no-show)`,
+                    }),
                 },
             })
             .exec();
