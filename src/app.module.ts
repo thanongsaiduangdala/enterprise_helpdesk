@@ -12,6 +12,7 @@ import { RoomsModule } from './rooms/rooms.module';
 import { RoomBookingsModule } from './room-bookings/room-bookings.module';
 import { SupplyCatalogModule } from './supply-catalog/supply-catalog.module';
 import { SupplyRequestsModule } from './supply-requests/supply-requests.module';
+import { PoprModule } from './popr/popr.module';
 import { CannedResponsesModule } from './canned-responses/canned-responses.module';
 import { TicketMessagesModule } from './ticket-messages/ticket-messages.module';
 import { AssetsModule } from './assets/assets.module';
@@ -54,6 +55,7 @@ import { MaintenanceHistoryModule } from './maintenance-history/maintenance-hist
     RoomBookingsModule,
     SupplyCatalogModule,
     SupplyRequestsModule,
+    PoprModule,
     CannedResponsesModule,
     TicketMessagesModule,
     AssetsModule,
