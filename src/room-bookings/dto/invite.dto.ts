@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { InviteMode } from '../schemas/room-booking.schema';
 
@@ -39,6 +39,16 @@ export class AddInviteeDto {
     @IsString()
     @MaxLength(30)
     phone?: string;
+}
+
+export class BulkInviteDto {
+    @ApiProperty({ type: [String], description: 'User _ids picked from the filtered account list (max 300)' })
+    @IsArray()
+    @ArrayNotEmpty()
+    @ArrayMaxSize(300)
+    @IsString({ each: true })
+    @MaxLength(40, { each: true })
+    userIds!: string[];
 }
 
 export class JoinDto {

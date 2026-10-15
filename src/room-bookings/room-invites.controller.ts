@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, Use
 import { ApiBearerAuth } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { RoomInvitesService } from './room-invites.service';
-import { AddInviteeDto, SetInviteModeDto } from './dto/invite.dto';
+import { AddInviteeDto, BulkInviteDto, SetInviteModeDto } from './dto/invite.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
@@ -27,8 +27,28 @@ export class RoomInvitesController {
 
     @Get(':id/invite/accounts')
     @RequirePermission('rooms', 'read')
-    searchAccounts(@Param('id') id: string, @Query('q') q: string | undefined, @Req() req: any) {
-        return this.invites.searchAccounts(id, req.user, q);
+    searchAccounts(
+        @Param('id') id: string,
+        @Query('q') q: string | undefined,
+        @Query('branchId') branchId: string | undefined,
+        @Query('departmentId') departmentId: string | undefined,
+        @Query('role') role: string | undefined,
+        @Req() req: any,
+    ) {
+        return this.invites.searchAccounts(id, req.user, { q, branchId, departmentId, role });
+    }
+
+    // ຕົວເລືອກຂອງຕົວກອງ (ສາຂາ / ພະແນກ / ສິດ) — ຜູ້ຈອງບໍ່ຈຳເປັນຕ້ອງມີສິດອ່ານສາຂາ/ພະແນກ/ສິດ ເພື່ອໃຊ້ໜ້ານີ້
+    @Get(':id/invite/account-filters')
+    @RequirePermission('rooms', 'read')
+    accountFilters(@Param('id') id: string, @Req() req: any) {
+        return this.invites.accountFilters(id, req.user);
+    }
+
+    @Post(':id/invitees/bulk')
+    @RequirePermission('rooms', 'read')
+    addInviteesBulk(@Param('id') id: string, @Body() dto: BulkInviteDto, @Req() req: any) {
+        return this.invites.addInviteesBulk(id, req.user, dto);
     }
 
     @Post(':id/invitees')

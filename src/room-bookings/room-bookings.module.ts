@@ -10,6 +10,9 @@ import { RoomInvitesController } from './room-invites.controller';
 import { RoomJoinController } from './room-join.controller';
 import { RoomsModule } from '../rooms/rooms.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { Branch, BranchSchema } from '../branches/schemas/branch.schema';
+import { Department, DepartmentSchema } from '../departments/schemas/department.schema';
+import { Role, RoleSchema } from '../roles/schemas/role.schema';
 
 @Module({
     imports: [
@@ -17,6 +20,9 @@ import { User, UserSchema } from '../users/schemas/user.schema';
             { name: RoomBooking.name, schema: RoomBookingSchema },
             { name: RoomBookingLock.name, schema: RoomBookingLockSchema },
             { name: User.name, schema: UserSchema },
+            { name: Branch.name, schema: BranchSchema },
+            { name: Department.name, schema: DepartmentSchema },
+            { name: Role.name, schema: RoleSchema },
         ]),
         forwardRef(() => RoomsModule),
     ],

@@ -20,8 +20,11 @@ import {
     RoomBooking,
     RoomBookingDocument,
 } from './schemas/room-booking.schema';
-import { AddInviteeDto, JoinDto, SetInviteModeDto } from './dto/invite.dto';
+import { AddInviteeDto, BulkInviteDto, JoinDto, SetInviteModeDto } from './dto/invite.dto';
 import { User, UserDocument } from '../users/schemas/user.schema';
+import { Branch, BranchDocument } from '../branches/schemas/branch.schema';
+import { Department, DepartmentDocument } from '../departments/schemas/department.schema';
+import { Role, RoleDocument } from '../roles/schemas/role.schema';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomBookingsGateway } from './room-bookings.gateway';
 import { hasAnyPermission, PermissionUser } from '../common/utils/permission.util';
@@ -171,6 +174,9 @@ export class RoomInvitesService {
     constructor(
         @InjectModel(RoomBooking.name) private bookingModel: Model<RoomBookingDocument>,
         @InjectModel(User.name) private userModel: Model<UserDocument>,
+        @InjectModel(Branch.name) private branchModel: Model<BranchDocument>,
+        @InjectModel(Department.name) private departmentModel: Model<DepartmentDocument>,
+        @InjectModel(Role.name) private roleModel: Model<RoleDocument>,
         @Inject(forwardRef(() => RoomsService)) private roomsService: RoomsService,
         private gateway: RoomBookingsGateway,
     ) { }
@@ -253,31 +259,84 @@ export class RoomInvitesService {
         return u;
     }
 
-    async searchAccounts(id: string, user: HostUser, q?: string) {
+    // ຄົ້ນຫາບັນຊີເພື່ອເຊີນ: ຕົວກອງ ສາຂາ / ພະແນກ / ສິດ (ໃຊ້ຮ່ວມກັນໄດ້) + ຊື່/ລະຫັດພະນັກງານ (ບໍ່ບັງຄັບ)
+    // ຖ້າບໍ່ມີທັງຕົວກອງ ແລະ ຂໍ້ຄວາມຄົ້ນຫາ (>= 2 ຕົວອັກສອນ) → ບໍ່ສົ່ງຜົນ
+    async searchAccounts(
+        id: string,
+        user: HostUser,
+        opts: { q?: string; branchId?: string; departmentId?: string; role?: string } = {},
+    ) {
         const b = await this.load(id);
         this.assertHost(b, user);
-        const term = (q ?? '').trim().slice(0, 60);
-        if (term.length < 2) return [];
-        const tokens = term.split(/\s+/).slice(0, 4);
-        const found = await this.userModel
-            .find({
-                isActive: true,
-                $and: tokens.map((t) => {
-                    const rx = new RegExp(escapeRegex(t), 'i');
-                    return { $or: [{ employeeCode: rx }, { firstName: rx }, { lastName: rx }] };
-                }),
-            })
-            .select('employeeCode firstName lastName')
-            .sort({ firstName: 1 })
-            .limit(8)
-            .exec();
+
+        const term = (opts.q ?? '').trim().slice(0, 60);
+        const tokens = term.length >= 2 ? term.split(/\s+/).slice(0, 4) : [];
+        const str = (v?: string) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 60) : undefined);
+        const branchId = str(opts.branchId);
+        const departmentId = str(opts.departmentId);
+        const role = str(opts.role);
+
+        if (tokens.length === 0 && !branchId && !departmentId && !role) return { items: [], total: 0 };
+
+        const filter: Record<string, any> = { isActive: true };
+        if (branchId) filter.branchId = branchId;
+        if (departmentId) filter.departmentId = departmentId;
+        if (role) filter.role = role;
+        if (tokens.length > 0) {
+            filter.$and = tokens.map((t) => {
+                const rx = new RegExp(escapeRegex(t), 'i');
+                return { $or: [{ employeeCode: rx }, { firstName: rx }, { lastName: rx }] };
+            });
+        }
+
+        const [found, total] = await Promise.all([
+            this.userModel
+                .find(filter)
+                .select('employeeCode firstName lastName branchId departmentId role')
+                .sort({ firstName: 1, lastName: 1 })
+                .limit(MAX_INVITEES)
+                .lean()
+                .exec(),
+            this.userModel.countDocuments(filter).exec(),
+        ]);
+
+        const uniq = (arr: (string | undefined)[]) => [...new Set(arr.filter(Boolean) as string[])];
+        const [branches, departments, roles] = await Promise.all([
+            this.branchModel.find({ _id: { $in: uniq(found.map((u: any) => u.branchId)) } }).select('name').lean().exec(),
+            this.departmentModel.find({ _id: { $in: uniq(found.map((u: any) => u.departmentId)) } }).select('name').lean().exec(),
+            this.roleModel.find({ _id: { $in: uniq(found.map((u: any) => String(u.role))) } }).select('name').lean().exec(),
+        ]);
+        const nameOf = (list: any[]) => new Map(list.map((x) => [String(x._id), x.name as string]));
+        const branchName = nameOf(branches);
+        const deptName = nameOf(departments);
+        const roleName = nameOf(roles);
+
         const invited = new Set(b.invitees.filter((i) => !i.revokedAt && i.userId).map((i) => i.userId));
-        return found.map((u) => ({
+        const items = found.map((u: any) => ({
             userId: String(u._id),
             employeeCode: u.employeeCode,
             name: accountName(u),
+            branch: branchName.get(String(u.branchId)) ?? null,
+            department: u.departmentId ? deptName.get(String(u.departmentId)) ?? null : null,
+            role: roleName.get(String(u.role)) ?? null,
             alreadyInvited: invited.has(String(u._id)),
         }));
+        return { items, total };
+    }
+
+    async accountFilters(id: string, user: HostUser) {
+        const b = await this.load(id);
+        this.assertHost(b, user);
+        const [branches, departments, roles] = await Promise.all([
+            this.branchModel.find({ isActive: true }).select('name').sort({ name: 1 }).lean().exec(),
+            this.departmentModel.find({ isActive: true }).select('name branchId').sort({ name: 1 }).lean().exec(),
+            this.roleModel.find().select('name').sort({ name: 1 }).lean().exec(),
+        ]);
+        return {
+            branches: branches.map((x: any) => ({ id: String(x._id), name: x.name })),
+            departments: departments.map((x: any) => ({ id: String(x._id), name: x.name, branchId: x.branchId })),
+            roles: roles.map((x: any) => ({ id: String(x._id), name: x.name })),
+        };
     }
 
     async getInvite(id: string, user: HostUser) {
@@ -374,6 +433,65 @@ export class RoomInvitesService {
         const invitee = { _id: new Types.ObjectId(), name, email, phone, userId, employeeCode, token: newToken(), addedAt: new Date() };
         await this.bookingModel.updateOne({ _id: b._id }, { $push: { invitees: invitee } });
         return { _id: String(invitee._id), name, email: email ?? null, phone: phone ?? null, employeeCode: employeeCode ?? null };
+    }
+
+    // ເຊີນຫຼາຍຄົນພ້ອມກັນ (ເລືອກຈາກລາຍຊື່ທີ່ກອງແລ້ວ). ຂ້າມຄົນທີ່ຢູ່ໃນລາຍຊື່ແລ້ວ / ບັນຊີທີ່ຖືກປິດ ແລະ ບໍ່ເກີນ MAX_INVITEES
+    async addInviteesBulk(id: string, user: HostUser, dto: BulkInviteDto) {
+        const b = await this.load(id);
+        this.assertHost(b, user);
+        if (b.inviteMode !== InviteMode.PRIVATE) {
+            throw new BadRequestException('Switch the booking to PRIVATE to build a guest list');
+        }
+        if (b.endAt.getTime() <= Date.now()) throw new BadRequestException('This booking has already ended');
+
+        const ids = [...new Set(dto.userIds)].filter((x) => Types.ObjectId.isValid(x));
+        if (ids.length === 0) throw new BadRequestException('No accounts selected');
+
+        const accounts = await this.userModel.find({ _id: { $in: ids }, isActive: true }).exec();
+
+        const active = b.invitees.filter((i) => !i.revokedAt);
+        const onList = new Set(active.map((i) => i.userId).filter(Boolean));
+        const emails = new Set(active.map((i) => i.email).filter(Boolean));
+        const room = Math.max(0, MAX_INVITEES - active.length);
+
+        const toAdd: any[] = [];
+        let alreadyOnList = 0;
+        let overLimit = 0;
+        for (const acc of accounts) {
+            const uid = String(acc._id);
+            const email = acc.email?.trim().toLowerCase() || undefined;
+            if (onList.has(uid) || (email && emails.has(email))) {
+                alreadyOnList++;
+                continue;
+            }
+            if (toAdd.length >= room) {
+                overLimit++;
+                continue;
+            }
+            onList.add(uid);
+            if (email) emails.add(email);
+            toAdd.push({
+                _id: new Types.ObjectId(),
+                name: accountName(acc),
+                email,
+                phone: acc.phone || undefined,
+                userId: uid,
+                employeeCode: acc.employeeCode,
+                token: newToken(),
+                addedAt: new Date(),
+            });
+        }
+
+        if (toAdd.length > 0) {
+            await this.bookingModel.updateOne({ _id: b._id }, { $push: { invitees: { $each: toAdd } } });
+        }
+        return {
+            added: toAdd.length,
+            alreadyOnList,
+            overLimit,
+            unavailable: ids.length - accounts.length, // ບໍ່ພົບບັນຊີ ຫຼື ຖືກປິດໃຊ້ງານແລ້ວ
+            limit: MAX_INVITEES,
+        };
     }
 
     async removeInvitee(id: string, user: HostUser, inviteeId: string) {
