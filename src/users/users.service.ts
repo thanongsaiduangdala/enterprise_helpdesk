@@ -130,8 +130,24 @@ export class UsersService {
         return this.userModel.findOne({ email }).populate('role').exec();
     }
 
+    /** ຄົ້ນຫາດ້ວຍລະຫັດພະນັກງານ (ບໍ່ແຍກຕົວພິມໃຫຍ່/ນ້ອຍ — ໃຫ້ຕົງກັບໜ້າຈໍ) */
     findByEmployeeCode(employeeCode: string) {
-        return this.userModel.findOne({ employeeCode }).exec();
+        const escaped = (employeeCode || '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return this.userModel.findOne({ employeeCode: new RegExp(`^${escaped}$`, 'i') }).exec();
+    }
+
+    /** ຂໍ້ມູນຂັ້ນຕ່ຳເພື່ອໃຫ້ຜູ້ເບີກຈ່າຍກວດຕົວຕົນຜູ້ມາຮັບ (ບໍ່ສົ່ງເບີໂທ/ອີເມວ/ຂໍ້ມູນລະອຽດ) */
+    async lookupByEmployeeCode(employeeCode: string) {
+        const u = await this.findByEmployeeCode(employeeCode);
+        if (!u) throw new NotFoundException(`Employee code "${employeeCode}" not found`);
+        return {
+            employeeCode: u.employeeCode,
+            firstName: u.firstName,
+            lastName: u.lastName,
+            departmentId: u.departmentId,
+            branchId: u.branchId,
+            isActive: u.isActive !== false,
+        };
     }
 
 

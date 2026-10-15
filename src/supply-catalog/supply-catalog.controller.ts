@@ -7,6 +7,7 @@ import {
     Patch,
     Post,
     Query,
+    Req,
     UploadedFile,
     UseGuards,
     UseInterceptors,
@@ -21,12 +22,16 @@ import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Controller('supply-catalog')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class SupplyCatalogController {
-    constructor(private catalogService: SupplyCatalogService) { }
+    constructor(
+        private catalogService: SupplyCatalogService,
+        private auditLogsService: AuditLogsService,
+    ) { }
 
     @Post()
     @RequirePermission('supplies', 'manage')
@@ -74,8 +79,14 @@ export class SupplyCatalogController {
 
     @Patch(':id/adjust-stock')
     @RequirePermission('supplies', 'update')
-    adjustStock(@Param('id') id: string, @Body() dto: AdjustStockDto) {
-        return this.catalogService.adjustStock(id, dto.delta);
+    async adjustStock(@Param('id') id: string, @Body() dto: AdjustStockDto, @Req() req: any) {
+        const before = (await this.catalogService.findOne(id)).toObject();
+        const after = await this.catalogService.adjustStock(id, dto.delta);
+        await this.auditLogsService.log(
+            req.user.userId, 'CATALOG_STOCK_ADJUSTED', 'SupplyCatalogItem', id,
+            { stockQty: before.stockQty }, { stockQty: after.stockQty, delta: dto.delta }, req.ip,
+        );
+        return after;
     }
 
 

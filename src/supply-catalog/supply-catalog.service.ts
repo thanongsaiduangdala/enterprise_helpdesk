@@ -5,7 +5,7 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { ClientSession, Model } from 'mongoose';
 import { parse } from 'csv-parse/sync';
 import { SupplyCatalogItem, SupplyCatalogItemDocument } from './schemas/supply-catalog-item.schema';
 import { CreateSupplyCatalogItemDto } from './dto/create-supply-catalog-item.dto';
@@ -104,16 +104,33 @@ export class SupplyCatalogService {
 
 
 
-    async adjustStock(id: string, delta: number) {
-        const item = await this.findOne(id);
-        const newQty = item.stockQty + delta;
-        if (newQty < 0) {
+    /** ປັບສະຕ໊ອກແບບ atomic (ເງື່ອນໄຂ + $inc ໃນຄຳສັ່ງດຽວ) — ບໍ່ໃຫ້ຕ່ຳກວ່າ 0 ແລະບໍ່ມີ race condition */
+    async adjustStock(id: string, delta: number, session?: ClientSession) {
+        const filter = delta < 0 ? { _id: id, stockQty: { $gte: -delta } } : { _id: id };
+        const updated = await this.catalogModel
+            .findOneAndUpdate(filter, { $inc: { stockQty: delta } }, { new: true, session })
+            .exec();
+        if (!updated) {
+            const item = await this.findOne(id); // NotFound ຖ້າບໍ່ມີ
             throw new BadRequestException(
                 `Insufficient stock for "${item.name}": have ${item.stockQty}, requested ${-delta}`,
             );
         }
-        item.stockQty = newQty;
-        return item.save();
+        return updated;
+    }
+
+    /**
+     * ປັບສະຕ໊ອກຕາມການເຄື່ອນໄຫວຂອງຊັບສິນ (ມອບ/ຄືນ/ສ້ອມ/ປົດ) — ບໍ່ຕັນການເຮັດວຽກ ຖ້າສະຕ໊ອກບໍ່ຕົງ:
+     * ຕັດໄດ້ເທົ່າທີ່ມີ (ບໍ່ຕ່ຳກວ່າ 0) ແລ້ວຄືນ mismatch = ຈຳນວນທີ່ຕັດບໍ່ໄດ້ ເພື່ອໃຫ້ຜູ້ເອີ້ນບັນທຶກ audit
+     */
+    async adjustStockTracked(id: string, delta: number, session?: ClientSession) {
+        const item = await this.catalogModel.findById(id).session(session ?? null).exec();
+        if (!item) return { applied: 0, mismatch: 0, stockBefore: 0, stockAfter: 0 };
+        const applied = delta < 0 ? -Math.min(-delta, item.stockQty) : delta;
+        if (applied !== 0) {
+            await this.catalogModel.updateOne({ _id: id }, { $inc: { stockQty: applied } }, { session }).exec();
+        }
+        return { applied, mismatch: delta - applied, stockBefore: item.stockQty, stockAfter: item.stockQty + applied };
     }
 
     async remove(id: string) {

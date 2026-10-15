@@ -1,6 +1,6 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { ClientSession, Connection, Model } from 'mongoose';
 import { parse } from 'csv-parse/sync';
 import { Asset, AssetDocument, AssetStatus } from './schemas/asset.schema';
 import { CreateAssetDto } from './dto/create-asset.dto';
@@ -11,6 +11,16 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { MaintenanceHistoryService } from '../maintenance-history/maintenance-history.service';
 import { MaintenanceStatus } from '../maintenance-history/schemas/maintenance-history.schema';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
+import {
+    SupplyRequest,
+    SupplyRequestDocument,
+    SupplyRequestStatus,
+} from '../supply-requests/schemas/supply-request.schema';
+import { hasPermission, PermissionUser } from '../common/utils/permission.util';
+import { AuditEvent, runInTransaction, TxCtx } from '../common/utils/transaction.util';
+import { sodEnforced } from '../common/utils/sod.util';
+import { matchAssetToItem } from '../common/utils/supply-match.util';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class AssetsService {
@@ -19,6 +29,9 @@ export class AssetsService {
         private auditLogsService: AuditLogsService,
         private maintenanceHistoryService: MaintenanceHistoryService,
         private catalogService: SupplyCatalogService,
+        @InjectModel(SupplyRequest.name) private supplyRequestModel: Model<SupplyRequestDocument>,
+        private usersService: UsersService,
+        @InjectConnection() private connection: Connection,
     ) { }
 
     private async generateId(): Promise<string> {
@@ -34,7 +47,15 @@ export class AssetsService {
 
 
 
-    async create(dto: CreateAssetDto) {
+    async create(dto: CreateAssetDto, actorId?: string, ip?: string) {
+        const saved = await this.createInternal(dto);
+        if (actorId) {
+            await this.auditLogsService.log(actorId, 'ASSET_CREATED', 'Asset', String(saved._id), undefined, saved.toObject(), ip);
+        }
+        return saved;
+    }
+
+    private async createInternal(dto: CreateAssetDto) {
         const { assetTag, catalogItemId, ...rest } = dto;
 
         // ຜູກກັບລາຍການ catalog (ຕ້ອງມີຈິງ)
@@ -156,15 +177,27 @@ export class AssetsService {
         return this.assetModel.find(query).exec();
     }
 
-    async findOne(id: string) {
-        const asset = await this.assetModel.findById(id).exec();
+    async findOne(id: string, session?: ClientSession) {
+        const asset = await this.assetModel.findById(id).session(session ?? null).exec();
         if (!asset) throw new NotFoundException('Asset not found');
         return asset;
     }
 
-    async findByAssetTag(assetTag: string) {
+    findManyByIds(ids: string[], session?: ClientSession) {
+        if (!ids || ids.length === 0) return Promise.resolve([] as AssetDocument[]);
+        return this.assetModel.find({ _id: { $in: ids } }).session(session ?? null).exec();
+    }
+
+    /** ຄົ້ນຫາດ້ວຍ Asset Tag ກ່ອນ ຖ້າບໍ່ພົບລອງ _id (QR ຂອງຊັບສິນເປັນລິ້ງ /assets/<_id>) */
+    async findByTagOrId(value: string, session?: ClientSession) {
+        const byTag = await this.findByAssetTag(value, session);
+        if (byTag) return byTag;
+        return this.assetModel.findById(value).session(session ?? null).exec();
+    }
+
+    async findByAssetTag(assetTag: string, session?: ClientSession) {
         const escaped = assetTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return this.assetModel.findOne({ assetTag: new RegExp(`^${escaped}$`, 'i') }).exec();
+        return this.assetModel.findOne({ assetTag: new RegExp(`^${escaped}$`, 'i') }).session(session ?? null).exec();
     }
 
 
@@ -177,23 +210,210 @@ export class AssetsService {
 
 
     async assign(id: string, dto: AssignAssetDto, actorId: string, ip?: string) {
-        const asset = await this.findOne(id);
-        return this.performAssign(asset, dto.assigneeId, dto.note, actorId, ip);
+        // ແຍກໜ້າທີ່: ຜູ້ມີສິດ assign ມອບຊັບສິນໃຫ້ຕົນເອງບໍ່ໄດ້ (ຕ້ອງໃຫ້ຄົນອື່ນມອບ ຫຼືຜ່ານໃບຂໍທີ່ອະນຸມັດ)
+        if (sodEnforced() && String(dto.assigneeId) === String(actorId)) {
+            throw new ForbiddenException('Segregation of duties: you cannot assign equipment to yourself');
+        }
+        return this.inTx(undefined, async (ctx) => {
+            const asset = await this.findOne(id, ctx.session);
+            return this.performAssign(asset, dto.assigneeId, dto.note, actorId, ip, ctx);
+        });
     }
 
     /**
      * ອ້າງສິດຮັບເຄື່ອງດ້ວຍຕົນເອງ — ຜູ້ໃຊ້ທີ່ກຳລັງ login ຮັບຊັບສິນທີ່ຍັງວ່າງ
      * (ຈາກການສະແກນ QR/ບາໂຄ໊ດ ໃນໜ້າທະບຽນຊັບສິນ) ໂດຍບໍ່ຕ້ອງມີ assets.assign
      */
-    async claim(id: string, actorId: string, note?: string, ip?: string) {
-        const asset = await this.findOne(id);
-        if (asset.status === AssetStatus.RETIRED) {
-            throw new BadRequestException('Cannot claim a retired asset');
+    /** ມີຊັບສິນ (ທີ່ບໍ່ຖືກປົດ) ຜູກກັບລາຍການ catalog ນີ້ຫຼືບໍ່ — ໃຊ້ແຍກ "ຂອງມີ Asset Tag" ອອກຈາກ "ຂອງໃຊ້ສິ້ນເປືອງ" */
+    async hasAssetsForCatalog(catalogItemId?: string): Promise<boolean> {
+        if (!catalogItemId) return false;
+        const found = await this.assetModel
+            .exists({ catalogItemId, status: { $ne: AssetStatus.RETIRED } })
+            .exec();
+        return !!found;
+    }
+
+    // ───────────── Transaction helpers ─────────────
+
+    /** ຮັນໃນ transaction (ຖ້າຜູ້ເອີ້ນຍັງບໍ່ມີ ctx) ແລ້ວບັນທຶກ audit ຫຼັງ commit ສຳເລັດ */
+    private async inTx<T>(ctx: TxCtx | undefined, fn: (ctx: TxCtx) => Promise<T>): Promise<T> {
+        if (ctx) return fn(ctx);
+        const audits: AuditEvent[] = [];
+        const result = await runInTransaction(this.connection, (session) => {
+            audits.length = 0;
+            return fn({ session, audits });
+        });
+        await this.flushAudits(audits);
+        return result;
+    }
+
+    async flushAudits(audits: AuditEvent[]) {
+        for (const e of audits) {
+            await this.auditLogsService.log(e.actorId, e.action, e.entityType, e.entityId, e.before, e.after, e.ip);
         }
-        if (asset.status !== AssetStatus.AVAILABLE) {
-            throw new BadRequestException(`This asset is not available for claiming (status: ${asset.status})`);
+    }
+
+    /**
+     * ສະຕ໊ອກ Catalog = ຈຳນວນຊັບສິນ "ວ່າງ" ຂອງລາຍການນັ້ນ — ຂະຫຍັບຕາມສະຖານະຊັບສິນອັດຕະໂນມັດ
+     * (ມອບ −1, ຄືນ +1, ສົ່ງສ້ອມ −1, ປົດ −1 ...). ຖ້າສະຕ໊ອກບໍ່ຕົງຈົນຕັດບໍ່ໄດ້ ຈະບໍ່ຕັນການເຮັດວຽກ
+     * ແຕ່ບັນທຶກ STOCK_MISMATCH ໃນ audit log ເພື່ອໃຫ້ຜູ້ຮັບຜິດຊອບກວດ.
+     */
+    private async syncStock(
+        asset: { _id: any; assetTag: string; catalogItemId?: string },
+        from: AssetStatus | undefined,
+        to: AssetStatus | undefined,
+        actorId: string,
+        ip: string | undefined,
+        ctx: TxCtx,
+    ) {
+        if (!asset.catalogItemId) return;
+        const contrib = (st?: AssetStatus) => (st === AssetStatus.AVAILABLE ? 1 : 0);
+        const delta = contrib(to) - contrib(from);
+        if (delta === 0) return;
+        const r = await this.catalogService.adjustStockTracked(asset.catalogItemId, delta, ctx.session);
+        if (r.mismatch !== 0) {
+            ctx.audits.push({
+                actorId,
+                action: 'STOCK_MISMATCH',
+                entityType: 'SupplyCatalogItem',
+                entityId: asset.catalogItemId,
+                before: { stockQty: r.stockBefore },
+                after: { stockQty: r.stockAfter, wanted: delta, assetTag: asset.assetTag, assetId: String(asset._id) },
+                ip,
+            });
         }
-        return this.performAssign(asset, actorId, note, actorId, ip);
+    }
+
+    // ───────────── Claim (ສະແກນ QR/ບາໂຄ໊ດ ໃນທະບຽນຊັບສິນ) ─────────────
+
+    /**
+     * ຮັບ/ມອບເຄື່ອງດ້ວຍການສະແກນ.
+     * - ຜູ້ມີ assets.assign ໃສ່ assigneeCode ເພື່ອມອບໃຫ້ຄົນທີ່ມາຮັບ; ບໍ່ໃສ່ = ຕົນເອງ.
+     * - ຜູ້ບໍ່ມີ assets.assign ຮັບໃຫ້ຕົນເອງເທົ່ານັ້ນ.
+     * - ຜູ້ຮັບຕ້ອງມີໃບຂໍ APPROVED ທີ່ຍັງມີໂຄຕ້າເຫຼືອສຳລັບຊັບສິນນີ້ (ນັບຕາມຈຳນວນທີ່ຂໍ — ເກີນບໍ່ໄດ້).
+     * - ເມື່ອສຳເລັດ ບັນທຶກເຂົ້າໃບຂໍ (receivedAssetIds) ແລະປິດໃບອັດຕະໂນມັດຖ້າລາຍການ Asset Tag ຄົບທຸກລາຍການ.
+     * - ທຸກຢ່າງ (ມອບ, ສະຕ໊ອກ, ໃບຂໍ) ຢູ່ໃນ transaction ດຽວ.
+     */
+    async claim(id: string, user: PermissionUser, note?: string, ip?: string, assigneeCode?: string) {
+        const actorId = user?.userId;
+        if (!actorId) {
+            throw new BadRequestException('Not authenticated');
+        }
+        const canAssign = hasPermission(user, 'assets', 'assign');
+        let targetId = actorId;
+        let targetIsOther = false;
+
+        const code = assigneeCode?.trim();
+        if (code) {
+            const target = await this.usersService.findByEmployeeCode(code);
+            if (!target) {
+                throw new BadRequestException(`Employee code "${code}" not found`);
+            }
+            if (target.isActive === false) {
+                throw new BadRequestException(`Employee code "${code}" is inactive`);
+            }
+            targetId = String(target._id);
+            targetIsOther = targetId !== actorId;
+            if (targetIsOther && !canAssign) {
+                throw new ForbiddenException('You can only claim equipment for yourself');
+            }
+        }
+        // ຜູ້ມີສິດ assign ຮັບໃຫ້ຕົນເອງໂດຍບໍ່ຕ້ອງມີໃບຂໍໄດ້ ສະເພາະເມື່ອບໍ່ບັງຄັບແຍກໜ້າທີ່ (ໂໝດ dev)
+        const needEntitlement = !canAssign || targetIsOther || sodEnforced();
+
+        return this.inTx(undefined, async (ctx) => {
+            const asset = await this.findOne(id, ctx.session);
+            if (asset.status === AssetStatus.RETIRED) {
+                throw new BadRequestException('Cannot claim a retired asset');
+            }
+            if (asset.status !== AssetStatus.AVAILABLE) {
+                throw new BadRequestException(`This asset is not available for claiming (status: ${asset.status})`);
+            }
+
+            let hit: Awaited<ReturnType<AssetsService['findEntitlement']>> = null;
+            if (needEntitlement) {
+                hit = await this.findEntitlement(targetId, asset, ctx.session);
+                if (!hit) {
+                    throw new ForbiddenException(
+                        targetIsOther
+                            ? `Employee "${code}" has no approved supply request with remaining quota for this asset`
+                            : 'You have no approved supply request with remaining quota for this asset',
+                    );
+                }
+            }
+
+            const auditNote = targetIsOther
+                ? `${note ? note + ' — ' : ''}Handed over by ${actorId} to employee ${code}`
+                : note;
+            const saved = await this.performAssign(asset, targetId, auditNote, actorId, ip, ctx);
+            if (hit) {
+                await this.recordReceipt(hit.request, asset, targetId, actorId, ip, ctx, hit.counts, hit.itemIndex);
+            }
+            return saved;
+        });
+    }
+
+    /** ໃບຂໍ APPROVED ຂອງຜູ້ຮັບ ທີ່ຍັງມີໂຄຕ້າເຫຼືອສຳລັບຊັບສິນນີ້ (ນັບຊັບສິນທີ່ຮັບໄປແລ້ວຕາມໃບນັ້ນ) */
+    private async findEntitlement(targetId: string, asset: AssetDocument, session?: ClientSession) {
+        const requests = await this.supplyRequestModel
+            .find({ requestedBy: targetId as any, status: SupplyRequestStatus.APPROVED })
+            .sort({ createdAt: 1 })
+            .session(session ?? null)
+            .exec();
+        for (const r of requests) {
+            const prior = await this.findManyByIds(r.receivedAssetIds ?? [], session);
+            const counts = r.items.map(() => 0);
+            prior.forEach((p) => {
+                const k = matchAssetToItem(r.items, p, counts);
+                if (k >= 0) counts[k] += 1;
+            });
+            const k = matchAssetToItem(r.items, asset, counts);
+            if (k >= 0 && counts[k] < r.items[k].quantity) {
+                return { request: r, itemIndex: k, counts };
+            }
+        }
+        return null;
+    }
+
+    /** ບັນທຶກວ່າຊັບສິນນີ້ຖືກຮັບຕາມໃບຂໍ ແລະປິດໃບເມື່ອລາຍການ Asset Tag ຄົບທັງໝົດ */
+    private async recordReceipt(
+        request: SupplyRequestDocument,
+        asset: AssetDocument,
+        assigneeId: string,
+        actorId: string,
+        ip: string | undefined,
+        ctx: TxCtx,
+        counts: number[],
+        itemIndex: number,
+    ) {
+        const before = request.toObject();
+        request.receivedAssetIds = [...(request.receivedAssetIds ?? []), String(asset._id)];
+        counts[itemIndex] += 1;
+        const tagged = await Promise.all(request.items.map((i) => this.hasAssetsForCatalog(i.catalogItemId)));
+        const complete = request.items.every((it, i) => tagged[i] && counts[i] >= it.quantity);
+        if (complete) {
+            request.status = SupplyRequestStatus.FULFILLED;
+            request.fulfilledBy = actorId as any;
+            request.fulfilledAt = new Date();
+            request.receivedBy = assigneeId as any;
+        }
+        const saved = await request.save({ session: ctx.session });
+        ctx.audits.push({
+            actorId,
+            action: complete ? 'SUPPLY_REQUEST_RECEIVED' : 'SUPPLY_REQUEST_PARTIALLY_RECEIVED',
+            entityType: 'SupplyRequest',
+            entityId: String(request._id),
+            before,
+            after: saved.toObject(),
+            ip,
+        });
+    }
+
+    // ───────────── Assign / Return / Status / Remove ─────────────
+
+    /** ເປີດໃຫ້ service ອື່ນ (ຮັບເຄື່ອງຕາມໃບຂໍ) ມອບຊັບສິນພາຍໃນ transaction ດຽວກັນ */
+    assignInCtx(asset: AssetDocument, assigneeId: string, note: string | undefined, actorId: string, ip: string | undefined, ctx: TxCtx) {
+        return this.performAssign(asset, assigneeId, note, actorId, ip, ctx);
     }
 
     private async performAssign(
@@ -201,12 +421,14 @@ export class AssetsService {
         assigneeId: string,
         note: string | undefined,
         actorId: string,
-        ip?: string,
+        ip: string | undefined,
+        ctx: TxCtx,
     ) {
         if (asset.status === AssetStatus.RETIRED) {
             throw new BadRequestException('Cannot assign a retired asset');
         }
         const before = asset.toObject();
+        const previousStatus = asset.status;
         const wasAssigned = !!asset.currentAssigneeId;
 
         const now = new Date();
@@ -222,72 +444,77 @@ export class AssetsService {
         });
         asset.currentAssigneeId = assigneeId as any;
         asset.status = AssetStatus.ASSIGNED;
-        const saved = await asset.save();
+        const saved = await asset.save({ session: ctx.session });
 
-        await this.auditLogsService.log(
+        await this.syncStock(asset, previousStatus, AssetStatus.ASSIGNED, actorId, ip, ctx);
+        ctx.audits.push({
             actorId,
-            wasAssigned ? 'ASSET_REASSIGNED' : 'ASSET_ASSIGNED',
-            'Asset',
-            asset._id,
+            action: wasAssigned ? 'ASSET_REASSIGNED' : 'ASSET_ASSIGNED',
+            entityType: 'Asset',
+            entityId: String(asset._id),
             before,
-            saved.toObject(),
+            after: saved.toObject(),
             ip,
-        );
+        });
 
         return saved;
     }
 
     async returnAsset(id: string, dto: ReturnAssetDto, actorId: string, ip?: string) {
-        const asset = await this.findOne(id);
-        if (asset.status !== AssetStatus.ASSIGNED) {
-            throw new BadRequestException('This asset is not currently assigned');
-        }
-        const before = asset.toObject();
+        return this.inTx(undefined, async (ctx) => {
+            const asset = await this.findOne(id, ctx.session);
+            if (asset.status !== AssetStatus.ASSIGNED) {
+                throw new BadRequestException('This asset is not currently assigned');
+            }
+            const before = asset.toObject();
 
-        const openEntry = asset.assignmentHistory.find((h) => !h.returnedAt);
-        if (openEntry) {
-            openEntry.returnedAt = new Date();
-            if (dto.note) openEntry.note = dto.note;
-        }
-        asset.currentAssigneeId = undefined;
-        asset.status = AssetStatus.AVAILABLE;
-        const saved = await asset.save();
+            const openEntry = asset.assignmentHistory.find((h) => !h.returnedAt);
+            if (openEntry) {
+                openEntry.returnedAt = new Date();
+                if (dto.note) openEntry.note = dto.note;
+            }
+            asset.currentAssigneeId = undefined;
+            asset.status = AssetStatus.AVAILABLE;
+            const saved = await asset.save({ session: ctx.session });
 
-        await this.auditLogsService.log(
-            actorId,
-            'ASSET_RETURNED',
-            'Asset',
-            id,
-            before,
-            saved.toObject(),
-            ip,
-        );
-
-        return saved;
+            await this.syncStock(asset, AssetStatus.ASSIGNED, AssetStatus.AVAILABLE, actorId, ip, ctx);
+            ctx.audits.push({
+                actorId, action: 'ASSET_RETURNED', entityType: 'Asset', entityId: id,
+                before, after: saved.toObject(), ip,
+            });
+            return saved;
+        });
     }
 
-
-
     async setStatus(id: string, status: 'AVAILABLE' | 'UNDER_REPAIR' | 'RETIRED', actorId: string, ip?: string) {
-        const asset = await this.findOne(id);
-        const before = asset.toObject();
+        const { saved, previousStatus } = await this.inTx(undefined, async (ctx) => {
+            const asset = await this.findOne(id, ctx.session);
+            const before = asset.toObject();
 
-        if (asset.status === AssetStatus.ASSIGNED) {
-            const openEntry = asset.assignmentHistory.find((h) => !h.returnedAt);
-            if (openEntry) openEntry.returnedAt = new Date();
-            asset.currentAssigneeId = undefined;
-        }
+            if (asset.status === AssetStatus.ASSIGNED) {
+                const openEntry = asset.assignmentHistory.find((h) => !h.returnedAt);
+                if (openEntry) openEntry.returnedAt = new Date();
+                asset.currentAssigneeId = undefined;
+            }
 
-        const previousStatus = asset.status;
-        asset.status = status as AssetStatus;
-        const saved = await asset.save();
+            const prev = asset.status;
+            asset.status = status as AssetStatus;
+            const savedAsset = await asset.save({ session: ctx.session });
 
-        // ບັນທຶກປະຫວັດການສ້ອມແປງອັດຕະໂມມັດ: ສົ່ງເຂົ້າ -> ສ້າງບັນທຶກ IN_PROGRESS,
-        // ອອກຈາກການສ້ອມແປງ -> ປິດບັນທຶກທີ່ຍັງຄ້າງຢູ່ເປັນ COMPLETED
+            await this.syncStock(asset, prev, status as AssetStatus, actorId, ip, ctx);
+            ctx.audits.push({
+                actorId, action: 'ASSET_STATUS_CHANGED', entityType: 'Asset', entityId: id,
+                before, after: savedAsset.toObject(), ip,
+            });
+            return { saved: savedAsset, previousStatus: prev };
+        });
+
+        // ບັນທຶກປະຫວັດການສ້ອມແປງອັດຕະໂມມັດ (ເຮັດຫຼັງ commit ເພື່ອບໍ່ໃຫ້ຊ້ຳເມື່ອ transaction retry):
+        // ສົ່ງເຂົ້າ -> ສ້າງບັນທຶກ IN_PROGRESS, ອອກຈາກການສ້ອມແປງ -> ປິດບັນທຶກທີ່ຍັງຄ້າງຢູ່ເປັນ COMPLETED
         if (status === 'UNDER_REPAIR') {
             await this.maintenanceHistoryService.create(
                 {
-                    assetId: asset._id,
+                    assetId: saved._id,
                     maintenanceDate: new Date().toISOString(),
                     status: MaintenanceStatus.IN_PROGRESS,
                     previousStatus,
@@ -298,7 +525,7 @@ export class AssetsService {
                 actorId,
             );
         } else if (String(previousStatus) === 'UNDER_REPAIR') {
-            const records = await this.maintenanceHistoryService.findByAssetId(asset._id);
+            const records = await this.maintenanceHistoryService.findByAssetId(saved._id);
             const open = records.find((r) => r.status === MaintenanceStatus.IN_PROGRESS);
             if (open) {
                 await this.maintenanceHistoryService.update(String(open._id), {
@@ -309,37 +536,23 @@ export class AssetsService {
             }
         }
 
-        await this.auditLogsService.log(
-            actorId,
-            'ASSET_STATUS_CHANGED',
-            'Asset',
-            id,
-            before,
-            saved.toObject(),
-            ip,
-        );
-
         return saved;
     }
 
     async remove(id: string, actorId: string, ip?: string) {
-        const before = await this.assetModel.findById(id).exec();
-        if (!before) throw new NotFoundException('Asset not found');
+        return this.inTx(undefined, async (ctx) => {
+            const before = await this.findOne(id, ctx.session);
 
-        const result = await this.assetModel.findByIdAndDelete(id).exec();
-        if (!result) throw new NotFoundException('Asset not found');
+            const result = await this.assetModel.findByIdAndDelete(id, { session: ctx.session }).exec();
+            if (!result) throw new NotFoundException('Asset not found');
 
-        await this.auditLogsService.log(
-            actorId,
-            'ASSET_DELETED',
-            'Asset',
-            id,
-            before.toObject(),
-            undefined,
-            ip,
-        );
-
-        return { deleted: true };
+            await this.syncStock(before, before.status, undefined, actorId, ip, ctx);
+            ctx.audits.push({
+                actorId, action: 'ASSET_DELETED', entityType: 'Asset', entityId: id,
+                before: before.toObject(), after: undefined, ip,
+            });
+            return { deleted: true };
+        });
     }
 
     async findOverdueReturns() {

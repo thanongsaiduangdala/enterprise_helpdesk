@@ -20,6 +20,7 @@ import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { AssignAssetDto } from './dto/assign-asset.dto';
 import { ReturnAssetDto } from './dto/return-asset.dto';
+import { ClaimAssetDto } from './dto/claim-asset.dto';
 import { SetAssetStatusDto } from './dto/set-asset-status.dto';
 import { AssetStatus } from './schemas/asset.schema';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -34,8 +35,8 @@ export class AssetsController {
 
     @Post()
     @RequirePermission('assets', 'create')
-    create(@Body() dto: CreateAssetDto) {
-        return this.assetsService.create(dto);
+    create(@Body() dto: CreateAssetDto, @Req() req: any) {
+        return this.assetsService.create(dto, req.user.userId, req.ip);
     }
 
     @Post('bulk-import')
@@ -94,8 +95,8 @@ export class AssetsController {
 
     @Patch(':id/claim')
     @RequirePermission('assets', 'read')
-    claim(@Param('id') id: string, @Body() dto: ReturnAssetDto, @Req() req: any) {
-        return this.assetsService.claim(id, req.user.userId, dto.note, req.ip);
+    claim(@Param('id') id: string, @Body() dto: ClaimAssetDto, @Req() req: any) {
+        return this.assetsService.claim(id, req.user, dto.note, req.ip, dto.assigneeCode);
     }
 
     @Patch(':id/return')

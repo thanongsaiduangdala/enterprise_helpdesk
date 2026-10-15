@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { existsSync } from 'fs';
 
 
 
@@ -10,6 +11,13 @@ export function rowsToPdfBuffer(title: string, rows: Record<string, any>[]): Pro
         doc.on('data', (chunk) => chunks.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(chunks)));
         doc.on('error', reject);
+
+        // Optional custom font (e.g. Lao) — falls back to the built-in font when unset/missing
+        const fontPath = process.env.PDF_FONT_PATH;
+        if (fontPath && existsSync(fontPath)) {
+            doc.registerFont('ReportFont', fontPath);
+            doc.font('ReportFont');
+        }
 
         doc.fontSize(16).text(title, { underline: true });
         doc.moveDown();

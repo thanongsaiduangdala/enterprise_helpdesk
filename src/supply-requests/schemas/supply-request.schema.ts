@@ -57,6 +57,10 @@ export class SupplyRequest {
 
     @Prop({ type: Types.ObjectId, ref: 'User' })
     receivedBy?: Types.ObjectId;
+
+    /** ຊັບສິນ (_id) ທີ່ຮັບໄປແລ້ວຕາມໃບນີ້ — ໃຊ້ນັບໂຄຕ້າ ບໍ່ໃຫ້ claim/ຮັບເກີນຈຳນວນທີ່ຂໍ */
+    @Prop({ type: [String], default: [] })
+    receivedAssetIds!: string[];
 }
 
 export const SupplyRequestSchema = SchemaFactory.createForClass(SupplyRequest);

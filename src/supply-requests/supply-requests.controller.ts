@@ -40,7 +40,7 @@ export class SupplyRequestsController {
     @Post()
     @RequirePermission('supplies', 'create')
     create(@Body() dto: CreateSupplyRequestDto, @Req() req: any) {
-        return this.requestsService.create(dto, req.user.userId);
+        return this.requestsService.create(dto, req.user.userId, req.ip);
     }
 
 
@@ -56,6 +56,13 @@ export class SupplyRequestsController {
     @ApiQuery({ name: 'status', required: false, enum: SupplyRequestStatus })
     findAll(@Query('status') status: SupplyRequestStatus | undefined, @Req() req: any) {
         return this.requestsService.findAll(status, this.scopingUserId(req));
+    }
+
+    /** ໃບຮັບເຄື່ອງ: ຂໍ້ມູນໃບຂໍ + ລາຍການທີ່ຕ້ອງສະແກນ Asset Tag + ສິດຢືນຢັນຂອງຜູ້ເປີດ */
+    @Get(':id/receipt')
+    @RequirePermission('supplies', 'read')
+    getReceipt(@Param('id') id: string, @Req() req: any) {
+        return this.requestsService.getReceipt(id, req.user);
     }
 
     @Get(':id')
@@ -84,8 +91,9 @@ export class SupplyRequestsController {
         return this.requestsService.fulfill(id, req.user.userId, req.ip);
     }
 
+    // ຜູ້ຂໍ (supplies.read) ຢືນຢັນຮັບເອງໄດ້ — service ກວດວ່າເປັນຜູ້ຂໍ ຫຼື ມີສິດ supplies.fulfill
     @Patch(':id/receive')
-    @RequirePermission('supplies', 'fulfill')
+    @RequirePermission('supplies', 'read')
     receive(@Param('id') id: string, @Body() dto: ReceiveSupplyRequestDto, @Req() req: any) {
         return this.requestsService.receive(id, dto, req.user, req.ip);
     }

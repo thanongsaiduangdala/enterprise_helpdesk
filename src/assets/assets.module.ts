@@ -6,13 +6,20 @@ import { AssetsController } from './assets.controller';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { MaintenanceHistoryModule } from '../maintenance-history/maintenance-history.module';
 import { SupplyCatalogModule } from '../supply-catalog/supply-catalog.module';
+import { SupplyRequest, SupplyRequestSchema } from '../supply-requests/schemas/supply-request.schema';
+import { UsersModule } from '../users/users.module';
 
 @Module({
     imports: [
-        MongooseModule.forFeature([{ name: Asset.name, schema: AssetSchema }]),
+        MongooseModule.forFeature([
+            { name: Asset.name, schema: AssetSchema },
+            // ໃຊ້ອ່ານໃບຂໍທີ່ອະນຸມັດແລ້ວ ເພື່ອກວດສິດ claim (schema ເທົ່ານັ້ນ ບໍ່ import SupplyRequestsModule ເພື່ອບໍ່ໃຫ້ວົງກົມ)
+            { name: SupplyRequest.name, schema: SupplyRequestSchema },
+        ]),
         AuditLogsModule,
         MaintenanceHistoryModule,
         SupplyCatalogModule,
+        UsersModule,
     ],
     controllers: [AssetsController],
     providers: [AssetsService],

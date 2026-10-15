@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model } from 'mongoose';
 import {
     SupplyRequest,
     SupplyRequestDocument,
@@ -13,7 +13,10 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { UsersService } from '../users/users.service';
 import { AssetsService } from '../assets/assets.service';
 import { AssetDocument, AssetStatus } from '../assets/schemas/asset.schema';
-import { hasPermission, PermissionUser } from '../common/utils/permission.util';
+import { hasAnyPermission, hasPermission, PermissionUser } from '../common/utils/permission.util';
+import { AuditEvent, runInTransaction, TxCtx } from '../common/utils/transaction.util';
+import { sodEnforced } from '../common/utils/sod.util';
+import { matchAssetToItem } from '../common/utils/supply-match.util';
 
 @Injectable()
 export class SupplyRequestsService {
@@ -23,6 +26,7 @@ export class SupplyRequestsService {
         private auditLogsService: AuditLogsService,
         private usersService: UsersService,
         private assetsService: AssetsService,
+        @InjectConnection() private connection: Connection,
     ) { }
 
     private async generateId(): Promise<string> {
@@ -37,14 +41,16 @@ export class SupplyRequestsService {
     }
 
 
-    async create(dto: CreateSupplyRequestDto, requestedBy: string) {
+    async create(dto: CreateSupplyRequestDto, requestedBy: string, ip?: string) {
         for (const item of dto.items) {
             if (item.catalogItemId) {
                 await this.catalogService.findOne(item.catalogItemId);
             }
         }
         const _id = await this.generateId();
-        return new this.requestModel({ _id, requestedBy, items: dto.items }).save();
+        const saved = await new this.requestModel({ _id, requestedBy, items: dto.items }).save();
+        await this.auditLogsService.log(requestedBy, 'SUPPLY_REQUEST_CREATED', 'SupplyRequest', _id, undefined, saved.toObject(), ip);
+        return saved;
     }
 
 
@@ -85,6 +91,10 @@ export class SupplyRequestsService {
     async approve(id: string, approverId: string, ip?: string) {
         const request = await this.findOne(id);
         this.assertStatus(request, SupplyRequestStatus.REQUESTED);
+        // ແຍກໜ້າທີ່: ຜູ້ຂໍອະນຸມັດໃບຂອງຕົນເອງບໍ່ໄດ້
+        if (sodEnforced() && request.requestedBy.toString() === approverId) {
+            throw new ForbiddenException('Segregation of duties: you cannot approve your own request');
+        }
         const before = request.toObject();
 
         request.status = SupplyRequestStatus.APPROVED;
@@ -136,6 +146,14 @@ export class SupplyRequestsService {
         this.assertStatus(request, SupplyRequestStatus.APPROVED);
         const before = request.toObject();
 
+        // ລາຍການທີ່ມີ Asset Tag ຕ້ອງຮັບຜ່ານການສະແກນ (receive) ເພື່ອໃຫ້ທະບຽນຊັບສິນມີຜູ້ຮັບຜິດຊອບ — fulfill ປິດໃບແບບບໍ່ມີຄົນຮັບບໍ່ໄດ້
+        const taggedFlags = await Promise.all(request.items.map((i) => this.assetsService.hasAssetsForCatalog(i.catalogItemId)));
+        if (taggedFlags.some(Boolean)) {
+            throw new BadRequestException(
+                'This request contains items tracked by Asset Tag — use the scan receive flow (PATCH /supply-requests/:id/receive) instead of fulfill',
+            );
+        }
+
 
 
 
@@ -173,111 +191,214 @@ export class SupplyRequestsService {
 
 
 
+    /**
+     * ໃບຮັບເຄື່ອງ (ເປີດຈາກ QR ຂອງໃບຂໍ) — ຜູ້ຂໍ ຫຼື ຜູ້ມີສິດ supplies.fulfill ເທົ່ານັ້ນ
+     */
+    async getReceipt(id: string, user: PermissionUser) {
+        const request = await this.requestModel
+            .findById(id)
+            .populate('requestedBy', 'firstName lastName employeeCode')
+            .exec();
+        if (!request) throw new NotFoundException('Supply request not found');
+
+        const ref: any = request.requestedBy;
+        const requesterId = String(ref?._id ?? ref);
+        const elevated = hasAnyPermission(user, 'supplies', ['approve', 'fulfill', 'manage']);
+        if (!elevated && requesterId !== user.userId) {
+            throw new NotFoundException('Supply request not found');
+        }
+
+        const flags = await Promise.all(
+            request.items.map((i) => this.assetsService.hasAssetsForCatalog(i.catalogItemId)),
+        );
+        const obj: any = request.toObject();
+        return {
+            ...obj,
+            items: obj.items.map((it: any, k: number) => ({ ...it, requiresAssetTag: flags[k] })),
+            isRequester: requesterId === user.userId,
+            canConfirm:
+                request.status === SupplyRequestStatus.APPROVED &&
+                (requesterId === user.userId || hasPermission(user, 'supplies', 'fulfill')),
+        };
+    }
+
+    /**
+     * ຢືນຢັນຮັບເຄື່ອງທັງໃບໃນຄັ້ງດຽວ — ທຸກຢ່າງຢູ່ໃນ transaction ດຽວ (ສຳເລັດທັງໝົດ ຫຼືບໍ່ມີຫຍັງປ່ຽນ):
+     * - ຜູ້ເຮັດ: ຜູ້ຂໍເອງ ຫຼື ຜູ້ມີ supplies.fulfill (ຜູ້ດູແລສາງ)
+     * - ຂອງມີ Asset Tag (catalog ທີ່ມີຊັບສິນຜູກຢູ່): ຕ້ອງສະແກນຄົບຕາມຈຳນວນທີ່ຂໍ (ນັບລວມທີ່ເຄີຍຮັບແລ້ວຜ່ານການສະແກນ)
+     * - ສະຕ໊ອກ Catalog ຂອງຂອງມີ Asset Tag ຂະຫຍັບອັດຕະໂນມັດຕາມຊັບສິນ (ເບິ່ງ AssetsService.syncStock)
+     * - ຂອງໃຊ້ສິ້ນເປືອງ: ຕ້ອງ confirmConsumables = true ແລະລະບົບຕັດສະຕ໊ອກ
+     * - ແຍກໜ້າທີ່ (ເມື່ອເປີດ): ຜູ້ອະນຸມັດເບີກຈ່າຍໃຫ້ໃບຂອງຕົນເອງບໍ່ໄດ້
+     */
     async receive(
         id: string,
         dto: ReceiveSupplyRequestDto,
         user: PermissionUser,
         ip?: string,
     ) {
-        const request = await this.findOne(id);
-        this.assertStatus(request, SupplyRequestStatus.APPROVED);
-        const actorId = user.userId;
-        if (!actorId) {
-            throw new BadRequestException('Not authenticated');
-        }
+        const audits: AuditEvent[] = [];
+        const saved = await runInTransaction(this.connection, async (session) => {
+            audits.length = 0;
+            const ctx: TxCtx = { session, audits };
 
-        // 1. ຜູ້ຮັບເຄື່ອງ — default ແມ່ນຜູ້ທີ່ກຳລັງສະແກນ; ຖ້າໃຫ້ຄົນອື່ນ ຕ້ອງມີ assets.assign
-        let assigneeId: string;
-        if (dto.assigneeCode) {
-            const assignee = await this.usersService.findByEmployeeCode(dto.assigneeCode);
-            if (!assignee) {
-                throw new BadRequestException(`Employee code "${dto.assigneeCode}" not found`);
+            const request = await this.requestModel.findById(id).session(session ?? null).exec();
+            if (!request) throw new NotFoundException('Supply request not found');
+            this.assertStatus(request, SupplyRequestStatus.APPROVED);
+            const actorId = user.userId;
+            if (!actorId) {
+                throw new BadRequestException('Not authenticated');
             }
-            if (assignee.isActive === false) {
-                throw new BadRequestException(`Employee code "${dto.assigneeCode}" is inactive`);
+
+            const requesterId = request.requestedBy.toString();
+            const isRequester = actorId === requesterId;
+            const canFulfill = hasPermission(user, 'supplies', 'fulfill');
+            if (!isRequester && !canFulfill) {
+                throw new ForbiddenException(
+                    'Only the requester (or warehouse staff with supplies.fulfill) can confirm receipt of this request',
+                );
             }
-            assigneeId = assignee._id.toString();
-            if (assigneeId !== actorId && !hasPermission(user, 'assets', 'assign')) {
+            if (sodEnforced() && !isRequester && request.approvedBy && String(request.approvedBy) === actorId) {
+                throw new ForbiddenException('Segregation of duties: the approver of this request cannot also issue the equipment');
+            }
+
+            // 1. ຜູ້ຮັບເຄື່ອງ — default ແມ່ນຜູ້ຂໍ
+            let assigneeId = requesterId;
+            if (dto.assigneeCode) {
+                const assignee = await this.usersService.findByEmployeeCode(dto.assigneeCode.trim());
+                if (!assignee) {
+                    throw new BadRequestException(`Employee code "${dto.assigneeCode}" not found`);
+                }
+                if (assignee.isActive === false) {
+                    throw new BadRequestException(`Employee code "${dto.assigneeCode}" is inactive`);
+                }
+                assigneeId = assignee._id.toString();
+            }
+            const allowedAssignee =
+                (isRequester && assigneeId === actorId) ||
+                hasPermission(user, 'assets', 'assign') ||
+                (canFulfill && assigneeId === requesterId);
+            if (!allowedAssignee) {
                 throw new ForbiddenException(
                     'Giving the equipment to another employee requires the "assets.assign" permission',
                 );
             }
-        } else {
-            assigneeId = actorId;
-        }
 
-        // 2. ກວດ Asset Tag ກັບທະບຽນຊັບສິນ + ສະຖານະ AVAILABLE ກ່ອນ
-        const tags = [...new Set(dto.assetTags.map((t) => t.trim()).filter(Boolean))];
-        if (tags.length === 0) {
-            throw new BadRequestException('No valid asset tags provided');
-        }
-
-        const issues: string[] = [];
-        const resolved: AssetDocument[] = [];
-        for (const tag of tags) {
-            const asset = await this.assetsService.findByAssetTag(tag);
-            if (!asset) {
-                issues.push(`"${tag}": ບໍ່ພົບໃນທະບຽນຊັບສິນ`);
-                continue;
+            // 2. ກວດ Asset Tag ກັບທະບຽນຊັບສິນ + ສະຖານະ AVAILABLE
+            const tags = [...new Set((dto.assetTags ?? []).map((t) => t.trim()).filter(Boolean))];
+            const issues: string[] = [];
+            const resolved: AssetDocument[] = [];
+            const seenAssetIds = new Set<string>();
+            for (const tag of tags) {
+                const asset = await this.assetsService.findByTagOrId(tag, session);
+                if (!asset) {
+                    issues.push(`"${tag}": ບໍ່ພົບໃນທະບຽນຊັບສິນ`);
+                    continue;
+                }
+                // tag ກັບ _id ຂອງຊັບສິນດຽວກັນ (ສະແກນທັງ QR ແລະບາໂຄ໊ດ) ນັບເປັນຊິ້ນດຽວ
+                if (seenAssetIds.has(String(asset._id))) continue;
+                seenAssetIds.add(String(asset._id));
+                if (asset.status !== AssetStatus.AVAILABLE) {
+                    issues.push(`"${tag}": ສະຖານະ ${asset.status} — ບໍ່ວ່າງ`);
+                    continue;
+                }
+                resolved.push(asset);
             }
-            if (asset.status !== AssetStatus.AVAILABLE) {
-                issues.push(`"${tag}": ສະຖານະ ${asset.status} — ບໍ່ວ່າງ`);
-                continue;
-            }
-            resolved.push(asset);
-        }
 
-        // 3. ກວດຊະນິດ ແລະ ຈຳນວນບໍ່ເກີນລາຍການທີ່ຂໍ
-        const itemNames = request.items.map((i) => (i.name || '').toLowerCase()).filter(Boolean);
-        if (itemNames.length > 0) {
-            const matchedCount: Record<number, number> = {};
+            // 3. ຈັບຄູ່ຊັບສິນກັບລາຍການທີ່ຂໍ — ນັບລວມຊັບສິນທີ່ເຄີຍຮັບແລ້ວຕາມໃບນີ້ (ຜ່ານການສະແກນຮັບເປັນຊິ້ນ)
+            const items = request.items;
+            const catalogTagged = await Promise.all(
+                items.map((i) => this.assetsService.hasAssetsForCatalog(i.catalogItemId)),
+            );
+            const prior = await this.assetsService.findManyByIds(request.receivedAssetIds ?? [], session);
+            const matched: number[] = items.map(() => 0);
+            prior.forEach((p) => {
+                const k = matchAssetToItem(items, p, matched);
+                if (k >= 0) matched[k] += 1;
+            });
             for (const asset of resolved) {
-                const t = (asset.type || '').toLowerCase();
-                const idx = itemNames.findIndex((n) => n.includes(t) || t.includes(n));
+                const idx = matchAssetToItem(items, asset, matched);
                 if (idx === -1) {
                     issues.push(`"${asset.assetTag}": ຊະນິດ "${asset.type}" ບໍ່ກົງກັບລາຍການທີ່ຂໍ`);
                     continue;
                 }
-                const allowed = request.items[idx].quantity;
-                const scanned = (matchedCount[idx] = (matchedCount[idx] || 0) + 1);
-                if (scanned > allowed) {
+                matched[idx] += 1;
+                if (matched[idx] > items[idx].quantity) {
                     issues.push(
-                        `"${asset.assetTag}": ເກີນຈຳນວນທີ່ຂໍສຳລັບ "${request.items[idx].name}" (ຂໍ ${allowed}, ສະແກນຮອດ ${scanned})`,
+                        `"${asset.assetTag}": ເກີນຈຳນວນທີ່ຂໍສຳລັບ "${items[idx].name}" (ຂໍ ${items[idx].quantity}, ສະແກນຮອດ ${matched[idx]})`,
                     );
                 }
             }
-        }
-        if (issues.length > 0) {
-            throw new BadRequestException(issues.join('; '));
-        }
 
-        // 4. ມອບໝາຍເຄື່ອງແຕ່ລະອັນໃຫ້ຜູ້ຮັບ (ເຂົ້າທະບຽນຊັບສິນ: assignmentHistory + currentAssigneeId + ASSIGNED)
-        const before = request.toObject();
-        for (const asset of resolved) {
-            await this.assetsService.assign(
-                asset._id,
-                { assigneeId, note: `ມາຈາກຄຳຂໍ ${id} (ຮັບເຄື່ອງທີ່ຄັງດ້ວຍການສະແກນ)` },
+            // 4. ຂອງມີ Asset Tag ຕ້ອງຄົບ; ຂອງໃຊ້ສິ້ນເປືອງຕ້ອງຢືນຢັນ + ສະຕ໊ອກພໍ
+            const consumableIdx: number[] = [];
+            items.forEach((it, k) => {
+                if (catalogTagged[k]) {
+                    if (matched[k] !== it.quantity) {
+                        issues.push(`"${it.name}": ຕ້ອງສະແກນ ${it.quantity} ຊິ້ນ (ສະແກນຖືກຕ້ອງແລ້ວ ${matched[k]})`);
+                    }
+                } else if (matched[k] === 0) {
+                    consumableIdx.push(k);
+                }
+            });
+            if (consumableIdx.length > 0 && !dto.confirmConsumables) {
+                issues.push(
+                    `ກະລຸນາຢືນຢັນວ່າໄດ້ຮັບຂອງໃຊ້ສິ້ນເປືອງຄົບ: ${consumableIdx.map((k) => items[k].name).join(', ')}`,
+                );
+            }
+            if (consumableIdx.length > 0 && dto.confirmConsumables) {
+                for (const k of consumableIdx) {
+                    const it = items[k];
+                    if (!it.catalogItemId) continue;
+                    const cat = await this.catalogService.findOne(it.catalogItemId.toString());
+                    if (cat.stockQty < it.quantity) {
+                        issues.push(`"${it.name}": ສະຕ໊ອກບໍ່ພໍ (ມີ ${cat.stockQty}, ຂໍ ${it.quantity})`);
+                    }
+                }
+            }
+            if (issues.length > 0) {
+                throw new BadRequestException(issues.join('; '));
+            }
+
+            // 5. ບັນທຶກທັງໝົດໃນ transaction: ມອບຊັບສິນ (ສະຕ໊ອກຂອງມີ Asset Tag ຂະຫຍັບໃຫ້ເອງ) + ຕັດສະຕ໊ອກຂອງສິ້ນເປືອງ + ປິດໃບຂໍ
+            const before = request.toObject();
+            for (const asset of resolved) {
+                await this.assetsService.assignInCtx(
+                    asset,
+                    assigneeId,
+                    `ມາຈາກຄຳຂໍ ${id} (ຮັບເຄື່ອງດ້ວຍການສະແກນ QR)`,
+                    actorId,
+                    ip,
+                    ctx,
+                );
+            }
+            for (const k of consumableIdx) {
+                const it = items[k];
+                if (it.catalogItemId) {
+                    await this.catalogService.adjustStock(it.catalogItemId.toString(), -it.quantity, session);
+                }
+            }
+
+            request.receivedAssetIds = [...(request.receivedAssetIds ?? []), ...resolved.map((a) => String(a._id))];
+            request.status = SupplyRequestStatus.FULFILLED;
+            request.fulfilledBy = actorId as any;
+            request.fulfilledAt = new Date();
+            request.receivedBy = assigneeId as any;
+            const savedRequest = await request.save({ session });
+
+            audits.push({
                 actorId,
+                action: 'SUPPLY_REQUEST_RECEIVED',
+                entityType: 'SupplyRequest',
+                entityId: id,
+                before,
+                after: savedRequest.toObject(),
                 ip,
-            );
-        }
+            });
+            return savedRequest;
+        });
 
-        request.status = SupplyRequestStatus.FULFILLED;
-        request.fulfilledBy = actorId as any;
-        request.fulfilledAt = new Date();
-        request.receivedBy = assigneeId as any;
-        const saved = await request.save();
-
-        await this.auditLogsService.log(
-            actorId,
-            'SUPPLY_REQUEST_RECEIVED',
-            'SupplyRequest',
-            id,
-            before,
-            saved.toObject(),
-            ip,
-        );
-
+        // audit ບັນທຶກຫຼັງ commit ສຳເລັດເທົ່ານັ້ນ
+        await this.assetsService.flushAudits(audits);
         return saved;
     }
 

@@ -74,6 +74,13 @@ export class UsersController {
         return this.usersService.findAll({ branchId, departmentId, role });
     }
 
+    /** ຜູ້ເບີກຈ່າຍ (assets.assign) ກວດຊື່ຜູ້ມາຮັບຈາກລະຫັດພະນັກງານ — ບໍ່ຕ້ອງມີສິດ users.read ແລະບໍ່ໄດ້ຂໍ້ມູນລະອຽດ */
+    @Get('lookup/:employeeCode')
+    @RequirePermission('assets', 'assign')
+    lookup(@Param('employeeCode') employeeCode: string) {
+        return this.usersService.lookupByEmployeeCode(employeeCode);
+    }
+
     @Get(':id')
     @RequirePermission('users', 'read')
     findOne(@Param('id') id: string) {
