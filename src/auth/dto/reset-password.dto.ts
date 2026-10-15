@@ -11,10 +11,10 @@ export class ResetPasswordDto {
     @Length(6, 6)
     code!: string;
 
-    @ApiPropertyOptional({ example: '654321', description: 'Authenticator-app code, required only if the account uses an authenticator app for MFA' })
+    @ApiPropertyOptional({ example: '654321', description: 'Authenticator-app code or PIN, required only if the account uses an authenticator app or PIN for MFA' })
     @IsOptional()
     @IsString()
-    @Length(6, 6)
+    @Length(6, 8)
     mfaCode?: string;
 
     @ApiProperty({ minLength: 8 })

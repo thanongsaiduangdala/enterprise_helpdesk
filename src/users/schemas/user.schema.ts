@@ -7,6 +7,11 @@ class Mfa {
     @Prop({ default: false })
     enabled!: boolean;
 
+    // ວິທີທີ່ເປີດໃຊ້ຢູ່ ('email' | 'pin' | 'totp') — ເປີດໄດ້ຫຼາຍວິທີພ້ອມກັນ
+    @Prop({ type: [String], default: [] })
+    methods!: string[];
+
+    // legacy: ວິທີດຽວແບບເກົ່າ — ຍັງເກັບໄວ້ (= ວິທີທຳອິດໃນ methods) ເພື່ອໃຫ້ຂໍ້ມູນເກົ່າໃຊ້ໄດ້
     @Prop()
     method?: string;
 
@@ -18,6 +23,13 @@ class Mfa {
 
     @Prop()
     pendingMethod?: string;
+
+    // PIN ທີ່ຜູ້ໃຊ້ຕັ້ງເອງ — ເກັບເປັນ bcrypt hash ເທົ່ານັ້ນ
+    @Prop()
+    pinHash?: string;
+
+    @Prop()
+    pendingPinHash?: string;
 }
 
 @Schema({ _id: false })
@@ -40,6 +52,8 @@ class NotificationPrefs {
             if (ret.mfa) {
                 delete ret.mfa.secret;
                 delete ret.mfa.pendingSecret;
+                delete ret.mfa.pinHash;
+                delete ret.mfa.pendingPinHash;
             }
             return ret;
         },

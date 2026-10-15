@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
@@ -11,6 +11,7 @@ import { RolesService } from '../roles/roles.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { MailService } from '../mail/mail.service';
 import { SessionsService } from '../sessions/sessions.service';
+import { getEnabledMethods } from '../common/utils/mfa-methods.util';
 
 const SENSITIVE_FIELDS = ['passwordHash', 'password'];
 
@@ -19,6 +20,12 @@ function sanitize(obj: Record<string, any> | null | undefined) {
     const plain = typeof obj.toObject === 'function' ? obj.toObject() : obj;
     const clone = { ...plain };
     for (const field of SENSITIVE_FIELDS) delete clone[field];
+    // ຢ່າໃຫ້ secret / PIN hash ຂອງ MFA ຕິດເຂົ້າໄປໃນ audit log
+    if (clone.mfa) {
+        const { secret, pendingSecret, pinHash, pendingPinHash, ...safeMfa } = clone.mfa;
+        void secret; void pendingSecret; void pinHash; void pendingPinHash;
+        clone.mfa = safeMfa;
+    }
     return clone;
 }
 
@@ -264,7 +271,7 @@ export class UsersService {
     async setPendingMfaSecret(id: string, secret: string) {
         const user = await this.userModel.findByIdAndUpdate(
             id,
-            { 'mfa.pendingSecret': secret, 'mfa.pendingMethod': 'totp' },
+            { $set: { 'mfa.pendingSecret': secret, 'mfa.pendingMethod': 'totp' }, $unset: { 'mfa.pendingPinHash': '' } },
             { new: true },
         ).exec();
         if (!user) throw new NotFoundException('User not found');
@@ -274,13 +281,24 @@ export class UsersService {
     async setPendingMfaMethod(id: string, method: string) {
         const user = await this.userModel.findByIdAndUpdate(
             id,
-            { 'mfa.pendingMethod': method, $unset: { 'mfa.pendingSecret': '' } },
+            { 'mfa.pendingMethod': method, $unset: { 'mfa.pendingSecret': '', 'mfa.pendingPinHash': '' } },
             { new: true },
         ).exec();
         if (!user) throw new NotFoundException('User not found');
         return user;
     }
 
+    async setPendingMfaPin(id: string, pinHash: string) {
+        const user = await this.userModel.findByIdAndUpdate(
+            id,
+            { $set: { 'mfa.pendingPinHash': pinHash, 'mfa.pendingMethod': 'pin' }, $unset: { 'mfa.pendingSecret': '' } },
+            { new: true },
+        ).exec();
+        if (!user) throw new NotFoundException('User not found');
+        return user;
+    }
+
+    // ເພີ່ມວິທີທີ່ pending ເຂົ້າໃນລາຍການ methods (ບໍ່ລຶບວິທີອື່ນທີ່ເປີດຢູ່ແລ້ວ)
     async confirmMfaEnabled(id: string) {
         const user = await this.userModel.findById(id).exec();
         if (!user) throw new NotFoundException('User not found');
@@ -290,9 +308,13 @@ export class UsersService {
             throw new NotFoundException('No pending MFA setup to confirm');
         }
 
+        const current = getEnabledMethods(user.mfa);
+        const methods = current.includes(method as any) ? current : [...current, method as any];
+
         const set: Record<string, any> = {
             'mfa.enabled': true,
-            'mfa.method': method,
+            'mfa.methods': methods,
+            'mfa.method': methods[0],
         };
         const unset: Record<string, ''> = { 'mfa.pendingMethod': '' };
 
@@ -304,11 +326,56 @@ export class UsersService {
             unset['mfa.pendingSecret'] = '';
         }
 
+        if (method === 'pin') {
+            if (!user.mfa?.pendingPinHash) {
+                throw new NotFoundException('No pending PIN to confirm');
+            }
+            set['mfa.pinHash'] = user.mfa.pendingPinHash;
+            unset['mfa.pendingPinHash'] = '';
+        }
+
         const updated = await this.userModel.findByIdAndUpdate(
             id,
             { $set: set, $unset: unset },
             { new: true },
         ).exec();
+        if (!updated) throw new NotFoundException('User not found');
+        return updated;
+    }
+
+    // ປິດວິທີ MFA ໜຶ່ງວິທີ (ວິທີອື່ນຍັງເປີດຢູ່ຕາມເດີມ)
+    async removeMfaMethod(id: string, method: string) {
+        const user = await this.userModel.findById(id).exec();
+        if (!user) throw new NotFoundException('User not found');
+
+        const current = getEnabledMethods(user.mfa);
+        if (!current.includes(method as any)) {
+            throw new BadRequestException('This MFA method is not enabled');
+        }
+        const methods = current.filter((m) => m !== method);
+
+        const set: Record<string, any> = {
+            'mfa.enabled': methods.length > 0,
+            'mfa.methods': methods,
+        };
+        const unset: Record<string, ''> = {};
+        if (methods.length > 0) set['mfa.method'] = methods[0];
+        else unset['mfa.method'] = '';
+
+        if (method === 'totp') {
+            unset['mfa.secret'] = '';
+            unset['mfa.pendingSecret'] = '';
+        }
+        if (method === 'pin') {
+            unset['mfa.pinHash'] = '';
+            unset['mfa.pendingPinHash'] = '';
+        }
+        if (user.mfa?.pendingMethod === method) unset['mfa.pendingMethod'] = '';
+
+        const update: Record<string, any> = { $set: set };
+        if (Object.keys(unset).length > 0) update.$unset = unset;
+
+        const updated = await this.userModel.findByIdAndUpdate(id, update, { new: true }).exec();
         if (!updated) throw new NotFoundException('User not found');
         return updated;
     }

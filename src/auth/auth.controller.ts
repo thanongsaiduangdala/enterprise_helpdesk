@@ -11,6 +11,9 @@ import { MfaCodeDto } from "./dto/mfa-code.dto";
 import { MfaVerifyLoginDto } from "./dto/mfa-verify-login.dto";
 import { SetupMfaDto } from "./dto/setup-mfa.dto";
 import { ResendMfaCodeDto } from "./dto/resend-mfa-code.dto";
+import { DisableMfaDto } from "./dto/disable-mfa.dto";
+import { StepUpSendCodeDto } from "./dto/step-up-send-code.dto";
+import { SelectMfaMethodDto } from "./dto/select-mfa-method.dto";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { MfaSetupGuard } from "./mfa-setup.guard";
 
@@ -61,11 +64,43 @@ export class AuthController {
 
 
 
+    // ວິທີ MFA ທີ່ເປີດຢູ່ + ກົດວ່າຕ້ອງຢືນຢັນດ້ວຍວິທີໃດກ່ອນແກ້ໄຂແຕ່ລະວິທີ
+    @Get('mfa/status')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    mfaStatus(@Req() req: any) {
+        return this.authService.getMfaStatus(req.user.userId);
+    }
+
+    // ສົ່ງລະຫັດອີເມວເພື່ອຢືນຢັນກ່ອນເພີ່ມ/ປ່ຽນ/ປິດວິທີ MFA
+    @Post('mfa/step-up/send-code')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    @Throttle({ default: { limit: 3, ttl: 60000 } })
+    sendStepUpCode(@Body() dto: StepUpSendCodeDto, @Req() req: any) {
+        return this.authService.sendStepUpEmailCode(req.user.userId, dto.target);
+    }
+
     @Post('mfa/setup')
     @UseGuards(MfaSetupGuard)
     @ApiBearerAuth()
     setupMfa(@Body() dto: SetupMfaDto, @Req() req: any) {
-        return this.authService.setupMfa(req.user.userId, dto.method);
+        return this.authService.setupMfa(
+            req.user.userId,
+            dto.method,
+            dto.pin,
+            dto.confirmPin,
+            dto.verifyMethod,
+            dto.verifyCode,
+        );
+    }
+
+    @Post('mfa/disable')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    @Throttle({ default: { limit: 5, ttl: 60000 } })
+    disableMfa(@Body() dto: DisableMfaDto, @Req() req: any) {
+        return this.authService.disableMfa(req.user.userId, dto.method, dto.verifyMethod, dto.verifyCode);
     }
 
     @Post('mfa/resend-code')
@@ -96,7 +131,14 @@ export class AuthController {
     @Post('mfa/verify-login')
     @Throttle({ default: { limit: 5, ttl: 60000 } })
     verifyMfaLogin(@Body() dto: MfaVerifyLoginDto, @Req() req: any) {
-        return this.authService.verifyMfaLogin(dto.mfaToken, dto.code, extractDeviceInfo(req));
+        return this.authService.verifyMfaLogin(dto.mfaToken, dto.code, extractDeviceInfo(req), dto.method);
+    }
+
+    // ຜູ້ໃຊ້ທີ່ມີຫຼາຍວິທີ MFA ເລືອກວິທີທີ່ຈະໃຊ້ (email ຈະສົ່ງລະຫັດທັນທີ)
+    @Post('mfa/login/select')
+    @Throttle({ default: { limit: 5, ttl: 60000 } })
+    selectLoginMethod(@Body() dto: SelectMfaMethodDto) {
+        return this.authService.selectLoginMethod(dto.mfaToken, dto.method);
     }
 
     @Post('mfa/login/resend-code')
