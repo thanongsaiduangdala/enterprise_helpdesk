@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { randomBytes } from 'crypto';
+import { createSocket } from 'dgram';
 import { networkInterfaces } from 'os';
 import { Model, Types } from 'mongoose';
 import {
@@ -89,21 +90,60 @@ const isLocalOrLanOrigin = (origin: string) => {
     }
 };
 
-const lanIp = (): string | null => {
+const allLanIps = (): string[] => {
     const found: string[] = [];
     for (const list of Object.values(networkInterfaces())) {
         for (const n of list ?? []) {
             if (n.family === 'IPv4' && !n.internal && isPrivateIp(n.address)) found.push(n.address);
         }
     }
+    return found;
+};
+
+// IP ຂອງ network ທີ່ເຄື່ອງນີ້ໃຊ້ອອກຈິງ (interface ທີ່ມີ default route) — ໃຊ້ UDP connect ທີ່ບໍ່ສົ່ງ packet ແທ້.
+// ເຄື່ອງທີ່ມີຫຼາຍ IP (Wi-Fi + LAN, VPN, DHCP ປ່ຽນ) ຈະໄດ້ IP ດຽວກັນສະເໝີ ແທນທີ່ຈະ "ເລືອກໂຕທຳອິດທີ່ເຈິ" ທີ່ສະຫຼັບໄປມາ.
+const activeLanIp = (): Promise<string | null> =>
+    new Promise((resolve) => {
+        const socket = createSocket('udp4');
+        let finished = false;
+        const done = (ip: string | null) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            try { socket.close(); } catch { /* ignore */ }
+            resolve(ip);
+        };
+        const timer = setTimeout(() => done(null), 500);
+        socket.once('error', () => done(null));
+        try {
+            socket.connect(53, '8.8.8.8', () => {
+                try {
+                    const ip = socket.address().address;
+                    done(isPrivateIp(ip) ? ip : null);
+                } catch {
+                    done(null);
+                }
+            });
+        } catch {
+            done(null);
+        }
+    });
+
+const currentLanIp = async (): Promise<string | null> => {
+    const active = await activeLanIp();
+    if (active) return active;
+    // ບໍ່ມີ default route (LAN ປິດ) → ເລືອກແບບຄົງທີ່: 192.168.x ກ່ອນ, ແລ້ວ 10.x, ແລ້ວ 172.16-31, ລຽງຕາມຕົວເລກ
+    const found = allLanIps().sort();
     return found.find((a) => a.startsWith('192.168.')) ?? found.find((a) => a.startsWith('10.')) ?? found[0] ?? null;
 };
 
-const toReachable = (base: string) => {
+// QR ຕ້ອງຕາມ URL ທີ່ເປີດ frontend ຢູ່ (ເຊັ່ນ ເປີດທີ່ 10.4.9.88:5173 → QR ກໍເປັນ 10.4.9.88:5173).
+// ປ່ຽນສະເພາະ localhost/127.0.0.1 (ມືຖືເຂົ້າບໍ່ໄດ້) ໃຫ້ເປັນ IP ປັດຈຸບັນຂອງເຄື່ອງ server — IP ວົງ LAN ອື່ນ ແລະ port ຮັກສາໄວ້ຕາມເດີມ.
+const toReachable = async (base: string) => {
     try {
         const u = new URL(base);
         if (isLocalHost(u.hostname)) {
-            const ip = lanIp();
+            const ip = await currentLanIp();
             if (ip) u.hostname = ip;
         }
         return u.toString().replace(/\/+$/, '');
@@ -168,7 +208,7 @@ export class RoomInvitesService {
         return { title: booking.title, roomName: room.name, startAt: booking.startAt, endAt: booking.endAt, capacity: room.capacity };
     }
 
-    private appBaseUrl(requested?: string): string {
+    private async appBaseUrl(requested?: string): Promise<string> {
         const configured = process.env.PUBLIC_APP_URL?.trim().replace(/\/+$/, '');
         if (configured) return configured;
         const allowed = (process.env.FRONTEND_URLS || 'http://localhost:5173')
@@ -180,8 +220,8 @@ export class RoomInvitesService {
         return toReachable(base);
     }
 
-    private joinUrl(token: string, baseUrl?: string) {
-        return `${this.appBaseUrl(baseUrl)}/join/${token}`;
+    private joinUrl(token: string, appBase: string) {
+        return `${appBase}/join/${token}`;
     }
 
     private async loadAccount(userId?: string) {
@@ -358,9 +398,10 @@ export class RoomInvitesService {
         const info = await this.bookingInfo(b);
         const base = { bookingTitle: info.title, roomName: info.roomName, startAt: info.startAt, endAt: info.endAt, mode: b.inviteMode } as const;
 
+        const appBase = await this.appBaseUrl(opts.baseUrl); // ຄຳນວນຄັ້ງດຽວ ໃຫ້ທຸກ QR ໃນ PDF ໃຊ້ host ດຽວກັນ
         const pages: QrPageInput[] = [];
         if (b.inviteMode === InviteMode.PUBLIC || opts.target === 'door') {
-            pages.push({ ...base, url: this.joinUrl(b.inviteToken, opts.baseUrl) });
+            pages.push({ ...base, url: this.joinUrl(b.inviteToken, appBase) });
         } else {
             let list = b.invitees.filter((i) => !i.revokedAt);
             if (opts.inviteeId) {
@@ -368,7 +409,7 @@ export class RoomInvitesService {
                 if (!list.length) throw new NotFoundException('Invitee not found');
             }
             if (!list.length) throw new BadRequestException('Add at least one guest before printing passes');
-            for (const i of list) pages.push({ ...base, url: this.joinUrl(i.token, opts.baseUrl), guestName: i.name, guestAccountId: i.employeeCode });
+            for (const i of list) pages.push({ ...base, url: this.joinUrl(i.token, appBase), guestName: i.name, guestAccountId: i.employeeCode });
         }
         return buildQrPdf(pages);
     }
