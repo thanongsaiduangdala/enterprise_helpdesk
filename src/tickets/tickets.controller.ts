@@ -1,17 +1,17 @@
 import {
-    BadRequestException,
-    Body,
-    Controller,
-    Delete,
-    Get,
-    Param,
-    Patch,
-    Post,
-    Query,
-    Req,
-    UploadedFile,
-    UseInterceptors,
-    UseGuards,
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UploadedFile,
+  UseInterceptors,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiQuery } from '@nestjs/swagger';
@@ -30,110 +30,122 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class TicketsController {
-    constructor(private ticketsService: TicketsService) { }
+  constructor(private ticketsService: TicketsService) {}
 
+  @Post()
+  @RequirePermission('tickets', 'create')
+  create(@Body() dto: CreateTicketDto, @Req() req: any) {
+    return this.ticketsService.create(dto, req.user.userId);
+  }
 
-    @Post()
-    @RequirePermission('tickets', 'create')
-    create(@Body() dto: CreateTicketDto, @Req() req: any) {
-        return this.ticketsService.create(dto, req.user.userId);
+  @Post('bulk-import')
+  @RequirePermission('tickets', 'import')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  bulkImport(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
+    if (!file) {
+      throw new BadRequestException(
+        'No file uploaded — expected a CSV file under field name "file"',
+      );
     }
+    return this.ticketsService.bulkImport(file.buffer, req.user.userId);
+  }
 
-    @Post('bulk-import')
-    @RequirePermission('tickets', 'import')
-    @UseInterceptors(FileInterceptor('file'))
-    @ApiConsumes('multipart/form-data')
-    @ApiBody({
-        schema: {
-            type: 'object',
-            properties: { file: { type: 'string', format: 'binary' } },
-        },
-    })
-    bulkImport(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
-        if (!file) {
-            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
-        }
-        return this.ticketsService.bulkImport(file.buffer, req.user.userId);
-    }
+  @Get('my')
+  @RequirePermission('tickets', 'read')
+  findMine(@Req() req: any) {
+    return this.ticketsService.findMine(req.user.userId);
+  }
 
-    @Get('my')
-    @RequirePermission('tickets', 'read')
-    findMine(@Req() req: any) {
-        return this.ticketsService.findMine(req.user.userId);
-    }
+  @Get('assigned-to-me')
+  @RequirePermission('tickets', 'read')
+  findAssignedToMe(@Req() req: any) {
+    return this.ticketsService.findAssignedToMe(req.user.userId);
+  }
 
+  @Get()
+  @RequirePermission('tickets', 'read')
+  @ApiQuery({ name: 'branchId', required: false })
+  @ApiQuery({ name: 'departmentId', required: false })
+  @ApiQuery({ name: 'status', required: false, enum: TicketStatus })
+  @ApiQuery({ name: 'priority', required: false })
+  @ApiQuery({ name: 'assignedAgent', required: false })
+  findAll(
+    @Query('branchId') branchId?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('status') status?: TicketStatus,
+    @Query('priority') priority?: string,
+    @Query('assignedAgent') assignedAgent?: string,
+    @Req() req?: any,
+  ) {
+    return this.ticketsService.findAll(
+      { branchId, departmentId, status, priority, assignedAgent },
+      req.user.userId,
+      req.user.role,
+    );
+  }
 
-    @Get('assigned-to-me')
-    @RequirePermission('tickets', 'read')
-    findAssignedToMe(@Req() req: any) {
-        return this.ticketsService.findAssignedToMe(req.user.userId);
-    }
+  @Get(':id')
+  @RequirePermission('tickets', 'read')
+  findOne(@Param('id') id: string, @Req() req: any) {
+    return this.ticketsService.findOneForUser(
+      id,
+      req.user.userId,
+      req.user.permissions,
+    );
+  }
 
+  @Patch(':id')
+  @RequirePermission('tickets', 'update')
+  update(@Param('id') id: string, @Body() dto: UpdateTicketDto) {
+    return this.ticketsService.update(id, dto);
+  }
 
-    @Get()
-    @RequirePermission('tickets', 'read')
-    @ApiQuery({ name: 'branchId', required: false })
-    @ApiQuery({ name: 'departmentId', required: false })
-    @ApiQuery({ name: 'status', required: false, enum: TicketStatus })
-    @ApiQuery({ name: 'priority', required: false })
-    @ApiQuery({ name: 'assignedAgent', required: false })
-    findAll(
-        @Query('branchId') branchId?: string,
-        @Query('departmentId') departmentId?: string,
-        @Query('status') status?: TicketStatus,
-        @Query('priority') priority?: string,
-        @Query('assignedAgent') assignedAgent?: string,
-        @Req() req?: any,
-    ) {
-        return this.ticketsService.findAll(
-            { branchId, departmentId, status, priority, assignedAgent },
-            req.user.userId,
-            req.user.role,
-        );
-    }
+  @Get(':id/assignable-agents')
+  @RequirePermission('tickets', 'assign')
+  getAssignableAgents(@Param('id') id: string) {
+    return this.ticketsService.getAssignableAgents(id);
+  }
 
-    @Get(':id')
-    @RequirePermission('tickets', 'read')
-    findOne(@Param('id') id: string, @Req() req: any) {
-        return this.ticketsService.findOneForUser(id, req.user.userId, req.user.permissions);
-    }
+  @Patch(':id/assign')
+  @RequirePermission('tickets', 'assign')
+  assign(
+    @Param('id') id: string,
+    @Body() dto: AssignTicketDto,
+    @Req() req: any,
+  ) {
+    return this.ticketsService.assign(id, dto, req.user.userId, req.ip);
+  }
 
+  @Patch(':id/status')
+  @RequirePermission('tickets', 'update')
+  changeStatus(
+    @Param('id') id: string,
+    @Body() dto: ChangeTicketStatusDto,
+    @Req() req: any,
+  ) {
+    return this.ticketsService.changeStatus(id, dto, req.user.userId, req.ip);
+  }
 
-    @Patch(':id')
-    @RequirePermission('tickets', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateTicketDto) {
-        return this.ticketsService.update(id, dto);
-    }
+  @Post(':id/feedback')
+  @RequirePermission('tickets', 'read')
+  submitFeedback(
+    @Param('id') id: string,
+    @Body() dto: SubmitTicketFeedbackDto,
+    @Req() req: any,
+  ) {
+    return this.ticketsService.submitFeedback(id, dto, req.user.userId);
+  }
 
-    @Get(':id/assignable-agents')
-    @RequirePermission('tickets', 'assign')
-    getAssignableAgents(@Param('id') id: string) {
-        return this.ticketsService.getAssignableAgents(id);
-    }
-
-    @Patch(':id/assign')
-    @RequirePermission('tickets', 'assign')
-    assign(@Param('id') id: string, @Body() dto: AssignTicketDto, @Req() req: any) {
-        return this.ticketsService.assign(id, dto, req.user.userId, req.ip);
-    }
-
-    @Patch(':id/status')
-    @RequirePermission('tickets', 'update')
-    changeStatus(@Param('id') id: string, @Body() dto: ChangeTicketStatusDto, @Req() req: any) {
-        return this.ticketsService.changeStatus(id, dto, req.user.userId, req.ip);
-    }
-
-
-
-    @Post(':id/feedback')
-    @RequirePermission('tickets', 'read')
-    submitFeedback(@Param('id') id: string, @Body() dto: SubmitTicketFeedbackDto, @Req() req: any) {
-        return this.ticketsService.submitFeedback(id, dto, req.user.userId);
-    }
-
-    @Delete(':id')
-    @RequirePermission('tickets', 'delete')
-    remove(@Param('id') id: string, @Req() req: any) {
-        return this.ticketsService.remove(id, req.user.userId, req.ip);
-    }
+  @Delete(':id')
+  @RequirePermission('tickets', 'delete')
+  remove(@Param('id') id: string, @Req() req: any) {
+    return this.ticketsService.remove(id, req.user.userId, req.ip);
+  }
 }

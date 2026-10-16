@@ -1,14 +1,14 @@
 import {
-    Body,
-    Controller,
-    Delete,
-    Get,
-    Param,
-    Patch,
-    Post,
-    Query,
-    Req,
-    UseGuards,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CannedResponsesService } from './canned-responses.service';
@@ -22,36 +22,49 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class CannedResponsesController {
-    constructor(private responsesService: CannedResponsesService) { }
+  constructor(private responsesService: CannedResponsesService) {}
 
-    @Post()
-    @RequirePermission('tickets', 'create')
-    create(@Body() dto: CreateCannedResponseDto, @Req() req: any) {
-        return this.responsesService.create(dto, req.user.userId);
-    }
+  @Post()
+  @RequirePermission('tickets', 'create')
+  create(@Body() dto: CreateCannedResponseDto, @Req() req: any) {
+    return this.responsesService.create(dto, req.user.userId);
+  }
 
-    @Get()
-    @RequirePermission('tickets', 'read')
-    @ApiQuery({ name: 'departmentId', required: false })
-    findAll(@Query('departmentId') departmentId?: string) {
-        return this.responsesService.findAll(departmentId);
-    }
+  @Get()
+  @RequirePermission('tickets', 'read')
+  @ApiQuery({ name: 'departmentId', required: false })
+  findAll(@Query('departmentId') departmentId?: string) {
+    return this.responsesService.findAll(departmentId);
+  }
 
-    @Get(':id')
-    @RequirePermission('tickets', 'read')
-    findOne(@Param('id') id: string) {
-        return this.responsesService.findOne(id);
-    }
+  @Get(':id')
+  @RequirePermission('tickets', 'read')
+  findOne(@Param('id') id: string) {
+    return this.responsesService.findOne(id);
+  }
 
-    @Patch(':id')
-    @RequirePermission('tickets', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateCannedResponseDto, @Req() req: any) {
-        return this.responsesService.update(id, dto, req.user.userId, req.user.permissions);
-    }
+  @Patch(':id')
+  @RequirePermission('tickets', 'update')
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateCannedResponseDto,
+    @Req() req: any,
+  ) {
+    return this.responsesService.update(
+      id,
+      dto,
+      req.user.userId,
+      req.user.permissions,
+    );
+  }
 
-    @Delete(':id')
-    @RequirePermission('tickets', 'delete')
-    remove(@Param('id') id: string, @Req() req: any) {
-        return this.responsesService.remove(id, req.user.userId, req.user.permissions);
-    }
+  @Delete(':id')
+  @RequirePermission('tickets', 'delete')
+  remove(@Param('id') id: string, @Req() req: any) {
+    return this.responsesService.remove(
+      id,
+      req.user.userId,
+      req.user.permissions,
+    );
+  }
 }

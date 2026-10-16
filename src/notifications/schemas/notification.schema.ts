@@ -5,28 +5,26 @@ export type NotificationDocument = Notification & Document;
 
 @Schema({ timestamps: { createdAt: true, updatedAt: false } })
 export class Notification {
-    @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-    userId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  userId!: Types.ObjectId;
 
-    @Prop({ required: true })
-    type!: string;
+  @Prop({ required: true })
+  type!: string;
 
+  @Prop({ required: true })
+  refId!: string;
 
+  @Prop({ required: true })
+  refModel!: string;
 
-    @Prop({ required: true })
-    refId!: string;
+  @Prop({ required: true })
+  title!: string;
 
-    @Prop({ required: true })
-    refModel!: string;
+  @Prop({ required: true })
+  body!: string;
 
-    @Prop({ required: true })
-    title!: string;
-
-    @Prop({ required: true })
-    body!: string;
-
-    @Prop({ default: false })
-    isRead!: boolean;
+  @Prop({ default: false })
+  isRead!: boolean;
 }
 
 export const NotificationSchema = SchemaFactory.createForClass(Notification);

@@ -10,8 +10,8 @@ export const ASSIGNABLE_ROLES: string[] = ['AGENT'];
 
 /** Tickets that still count as "work the agent needs to do". */
 export const ACTIVE_WORKLOAD_STATUSES: TicketStatus[] = [
-    TicketStatus.OPEN,
-    TicketStatus.ASSIGNED,
-    TicketStatus.IN_PROGRESS,
-    TicketStatus.WAITING_ON_USER,
+  TicketStatus.OPEN,
+  TicketStatus.ASSIGNED,
+  TicketStatus.IN_PROGRESS,
+  TicketStatus.WAITING_ON_USER,
 ];

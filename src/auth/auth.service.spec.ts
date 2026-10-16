@@ -4,20 +4,19 @@ import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { SessionsService } from '../sessions/sessions.service';
 
-
 describe('AuthService', () => {
   let service: AuthService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-
-
-
       providers: [
         AuthService,
         { provide: UsersService, useValue: { findByEmail: jest.fn() } },
         { provide: JwtService, useValue: { sign: jest.fn() } },
-        { provide: SessionsService, useValue: { create: jest.fn(), isValid: jest.fn(), touch: jest.fn() } },
+        {
+          provide: SessionsService,
+          useValue: { create: jest.fn(), isValid: jest.fn(), touch: jest.fn() },
+        },
       ],
     }).compile();
 

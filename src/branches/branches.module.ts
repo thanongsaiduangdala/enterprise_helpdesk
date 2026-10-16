@@ -6,12 +6,12 @@ import { BranchesController } from './branches.controller';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
-    imports: [
-        MongooseModule.forFeature([{ name: Branch.name, schema: BranchSchema }]),
-        AuditLogsModule,
-    ],
-    controllers: [BranchesController],
-    providers: [BranchesService],
-    exports: [BranchesService],
+  imports: [
+    MongooseModule.forFeature([{ name: Branch.name, schema: BranchSchema }]),
+    AuditLogsModule,
+  ],
+  controllers: [BranchesController],
+  providers: [BranchesService],
+  exports: [BranchesService],
 })
-export class BranchesModule { }
+export class BranchesModule {}

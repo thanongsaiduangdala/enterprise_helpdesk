@@ -5,21 +5,22 @@ export type CannedResponseDocument = CannedResponse & Omit<Document, '_id'>;
 
 @Schema({ timestamps: true })
 export class CannedResponse {
-    @Prop({ type: String })
-    _id!: string;
+  @Prop({ type: String })
+  _id!: string;
 
-    @Prop({ type: String, ref: 'Department', required: true })
-    departmentId!: string;
+  @Prop({ type: String, ref: 'Department', required: true })
+  departmentId!: string;
 
-    @Prop({ required: true })
-    title!: string;
+  @Prop({ required: true })
+  title!: string;
 
-    @Prop({ required: true })
-    body!: string;
+  @Prop({ required: true })
+  body!: string;
 
-    @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-    createdBy!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  createdBy!: Types.ObjectId;
 }
 
-export const CannedResponseSchema = SchemaFactory.createForClass(CannedResponse);
+export const CannedResponseSchema =
+  SchemaFactory.createForClass(CannedResponse);
 CannedResponseSchema.index({ departmentId: 1 });

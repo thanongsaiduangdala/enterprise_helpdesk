@@ -5,16 +5,17 @@ export type KbArticleFeedbackDocument = KbArticleFeedback & Document;
 
 @Schema({ timestamps: true })
 export class KbArticleFeedback {
-    @Prop({ type: String, ref: 'KbArticle', required: true })
-    articleId!: string;
+  @Prop({ type: String, ref: 'KbArticle', required: true })
+  articleId!: string;
 
-    @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-    userId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  userId!: Types.ObjectId;
 
-    @Prop({ required: true })
-    helpful!: boolean;
+  @Prop({ required: true })
+  helpful!: boolean;
 }
 
-export const KbArticleFeedbackSchema = SchemaFactory.createForClass(KbArticleFeedback);
+export const KbArticleFeedbackSchema =
+  SchemaFactory.createForClass(KbArticleFeedback);
 
 KbArticleFeedbackSchema.index({ articleId: 1, userId: 1 }, { unique: true });

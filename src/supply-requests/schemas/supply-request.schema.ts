@@ -4,63 +4,62 @@ import { Document, Types } from 'mongoose';
 export type SupplyRequestDocument = SupplyRequest & Omit<Document, '_id'>;
 
 export enum SupplyRequestStatus {
-    REQUESTED = 'REQUESTED',
-    APPROVED = 'APPROVED',
-    REJECTED = 'REJECTED',
-    FULFILLED = 'FULFILLED',
+  REQUESTED = 'REQUESTED',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  FULFILLED = 'FULFILLED',
 }
 
 @Schema({ _id: false })
 class SupplyRequestItem {
+  @Prop({ type: String, ref: 'SupplyCatalogItem' })
+  catalogItemId?: string;
 
-    @Prop({ type: String, ref: 'SupplyCatalogItem' })
-    catalogItemId?: string;
+  @Prop({ required: true })
+  name!: string;
 
-    @Prop({ required: true })
-    name!: string;
+  @Prop({ required: true, min: 1 })
+  quantity!: number;
 
-    @Prop({ required: true, min: 1 })
-    quantity!: number;
-
-    @Prop()
-    reason?: string;
+  @Prop()
+  reason?: string;
 }
 
 @Schema({ timestamps: true })
 export class SupplyRequest {
-    @Prop({ type: String })
-    _id!: string;
+  @Prop({ type: String })
+  _id!: string;
 
-    @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-    requestedBy!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  requestedBy!: Types.ObjectId;
 
-    @Prop({ type: [SupplyRequestItem], required: true })
-    items!: SupplyRequestItem[];
+  @Prop({ type: [SupplyRequestItem], required: true })
+  items!: SupplyRequestItem[];
 
-    @Prop({ enum: SupplyRequestStatus, default: SupplyRequestStatus.REQUESTED })
-    status!: SupplyRequestStatus;
+  @Prop({ enum: SupplyRequestStatus, default: SupplyRequestStatus.REQUESTED })
+  status!: SupplyRequestStatus;
 
-    @Prop({ type: Types.ObjectId, ref: 'User' })
-    approvedBy?: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  approvedBy?: Types.ObjectId;
 
-    @Prop()
-    approvedAt?: Date;
+  @Prop()
+  approvedAt?: Date;
 
-    @Prop()
-    rejectionReason?: string;
+  @Prop()
+  rejectionReason?: string;
 
-    @Prop({ type: Types.ObjectId, ref: 'User' })
-    fulfilledBy?: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  fulfilledBy?: Types.ObjectId;
 
-    @Prop()
-    fulfilledAt?: Date;
+  @Prop()
+  fulfilledAt?: Date;
 
-    @Prop({ type: Types.ObjectId, ref: 'User' })
-    receivedBy?: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  receivedBy?: Types.ObjectId;
 
-    /** ຊັບສິນ (_id) ທີ່ຮັບໄປແລ້ວຕາມໃບນີ້ — ໃຊ້ນັບໂຄຕ້າ ບໍ່ໃຫ້ claim/ຮັບເກີນຈຳນວນທີ່ຂໍ */
-    @Prop({ type: [String], default: [] })
-    receivedAssetIds!: string[];
+  /** ຊັບສິນ (_id) ທີ່ຮັບໄປແລ້ວຕາມໃບນີ້ — ໃຊ້ນັບໂຄຕ້າ ບໍ່ໃຫ້ claim/ຮັບເກີນຈຳນວນທີ່ຂໍ */
+  @Prop({ type: [String], default: [] })
+  receivedAssetIds!: string[];
 }
 
 export const SupplyRequestSchema = SchemaFactory.createForClass(SupplyRequest);

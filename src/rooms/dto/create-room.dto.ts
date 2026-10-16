@@ -1,55 +1,61 @@
 import {
-    IsArray,
-    IsBoolean,
-    IsIn,
-    IsInt,
-    IsNotEmpty,
-    IsOptional,
-    IsString,
-    Min,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RoomStatus } from '../schemas/room.schema';
 
 export class CreateRoomDto {
-    @ApiProperty({ example: 'BX001' })
-    @IsNotEmpty()
-    @IsString()
-    branchId!: string;
+  @ApiProperty({ example: 'BX001' })
+  @IsNotEmpty()
+  @IsString()
+  branchId!: string;
 
-    @ApiProperty({ example: 'Conference Room A' })
-    @IsNotEmpty()
-    @IsString()
-    name!: string;
+  @ApiProperty({ example: 'Conference Room A' })
+  @IsNotEmpty()
+  @IsString()
+  name!: string;
 
-    @ApiPropertyOptional({ example: '3rd Floor', description: 'Floor the room sits on — drives the floor filter' })
-    @IsOptional()
-    @IsString()
-    floor?: string;
+  @ApiPropertyOptional({
+    example: '3rd Floor',
+    description: 'Floor the room sits on — drives the floor filter',
+  })
+  @IsOptional()
+  @IsString()
+  floor?: string;
 
-    @ApiPropertyOptional({ example: 'East Wing', description: 'Position within the floor (wing, side, suite)' })
-    @IsOptional()
-    @IsString()
-    location?: string;
+  @ApiPropertyOptional({
+    example: 'East Wing',
+    description: 'Position within the floor (wing, side, suite)',
+  })
+  @IsOptional()
+  @IsString()
+  location?: string;
 
-    @ApiProperty({ example: 8 })
-    @IsInt()
-    @Min(1)
-    capacity!: number;
+  @ApiProperty({ example: 8 })
+  @IsInt()
+  @Min(1)
+  capacity!: number;
 
-    @ApiPropertyOptional({ example: ['projector', 'whiteboard', 'video conf'] })
-    @IsOptional()
-    @IsArray()
-    @IsString({ each: true })
-    amenities?: string[];
+  @ApiPropertyOptional({ example: ['projector', 'whiteboard', 'video conf'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  amenities?: string[];
 
-    @ApiPropertyOptional({ enum: RoomStatus, example: RoomStatus.AVAILABLE })
-    @IsOptional()
-    @IsIn(Object.values(RoomStatus))
-    status?: RoomStatus;
+  @ApiPropertyOptional({ enum: RoomStatus, example: RoomStatus.AVAILABLE })
+  @IsOptional()
+  @IsIn(Object.values(RoomStatus))
+  status?: RoomStatus;
 
-    @ApiPropertyOptional({ example: true })
-    @IsOptional()
-    @IsBoolean()
-    isActive?: boolean;
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

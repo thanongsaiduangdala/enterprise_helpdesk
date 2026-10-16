@@ -7,15 +7,15 @@ import { RolesController } from './roles.controller';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
-    imports: [
-        MongooseModule.forFeature([
-            { name: Role.name, schema: RoleSchema },
-            { name: Counter.name, schema: CounterSchema },
-        ]),
-        AuditLogsModule,
-    ],
-    controllers: [RolesController],
-    providers: [RolesService],
-    exports: [RolesService],
+  imports: [
+    MongooseModule.forFeature([
+      { name: Role.name, schema: RoleSchema },
+      { name: Counter.name, schema: CounterSchema },
+    ]),
+    AuditLogsModule,
+  ],
+  controllers: [RolesController],
+  providers: [RolesService],
+  exports: [RolesService],
 })
-export class RolesModule { }
+export class RolesModule {}

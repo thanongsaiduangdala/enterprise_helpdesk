@@ -5,11 +5,11 @@ import { SessionsService } from './sessions.service';
 import { SessionsController } from './sessions.controller';
 
 @Module({
-    imports: [
-        MongooseModule.forFeature([{ name: Session.name, schema: SessionSchema }]),
-    ],
-    controllers: [SessionsController],
-    providers: [SessionsService],
-    exports: [SessionsService],
+  imports: [
+    MongooseModule.forFeature([{ name: Session.name, schema: SessionSchema }]),
+  ],
+  controllers: [SessionsController],
+  providers: [SessionsService],
+  exports: [SessionsService],
 })
-export class SessionsModule { }
+export class SessionsModule {}

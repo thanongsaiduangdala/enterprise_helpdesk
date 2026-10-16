@@ -1,22 +1,20 @@
-
-
 export function toCsv(rows: Record<string, any>[]): string {
-    if (!rows.length) return '';
-    const headerSet = new Set<string>();
-    rows.forEach((row) => {
-        Object.keys(row).forEach((k) => headerSet.add(k));
-    });
-    const headers = Array.from(headerSet);
+  if (!rows.length) return '';
+  const headerSet = new Set<string>();
+  rows.forEach((row) => {
+    Object.keys(row).forEach((k) => headerSet.add(k));
+  });
+  const headers = Array.from(headerSet);
 
-    const escape = (value: any) => {
-        const str = value === null || value === undefined ? '' : String(value);
+  const escape = (value: any) => {
+    const str = value === null || value === undefined ? '' : String(value);
 
-        return `"${str.replace(/"/g, '""')}"`;
-    };
+    return `"${str.replace(/"/g, '""')}"`;
+  };
 
-    const lines = [
-        headers.join(','),
-        ...rows.map((row) => headers.map((h) => escape(row[h])).join(',')),
-    ];
-    return lines.join('\n');
+  const lines = [
+    headers.join(','),
+    ...rows.map((row) => headers.map((h) => escape(row[h])).join(',')),
+  ];
+  return lines.join('\n');
 }

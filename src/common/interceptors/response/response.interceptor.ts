@@ -2,12 +2,11 @@ import {
   CallHandler,
   ExecutionContext,
   Injectable,
-  NestInterceptor
-} from "@nestjs/common";
+  NestInterceptor,
+} from '@nestjs/common';
 
-
-import { Observable } from "rxjs";
-import { map } from "rxjs/operators";
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
 
 export interface StandardResponse<T> {
   response: number;
@@ -17,8 +16,10 @@ export interface StandardResponse<T> {
 }
 
 @Injectable()
-export class ResponseInterceptor<T>
-  implements NestInterceptor<T, StandardResponse<T>> {
+export class ResponseInterceptor<T> implements NestInterceptor<
+  T,
+  StandardResponse<T>
+> {
   intercept(
     context: ExecutionContext,
     next: CallHandler,

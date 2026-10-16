@@ -5,65 +5,65 @@ export type BranchDocument = Branch & Omit<Document, '_id'>;
 
 @Schema({ _id: false })
 class Location {
-    @Prop({ required: true })
-    address!: string;
+  @Prop({ required: true })
+  address!: string;
 
-    @Prop({ required: true })
-    city!: string;
+  @Prop({ required: true })
+  city!: string;
 
-    @Prop({ required: true })
-    country!: string;
+  @Prop({ required: true })
+  country!: string;
 
-    @Prop({ required: true })
-    timezone!: string;
+  @Prop({ required: true })
+  timezone!: string;
 }
 
 @Schema({ _id: false })
 class DayHours {
-    @Prop({
-        required: true,
-        enum: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
-    })
-    day!: string;
+  @Prop({
+    required: true,
+    enum: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
+  })
+  day!: string;
 
-    @Prop({ default: true })
-    isOpen!: boolean;
+  @Prop({ default: true })
+  isOpen!: boolean;
 
-    @Prop({ example: '09:00' })
-    open?: string;
+  @Prop({ example: '09:00' })
+  open?: string;
 
-    @Prop({ example: '18:00' })
-    close?: string;
+  @Prop({ example: '18:00' })
+  close?: string;
 }
 
 @Schema({ _id: false })
 class Holiday {
-    @Prop({ required: true })
-    date!: Date;
+  @Prop({ required: true })
+  date!: Date;
 
-    @Prop({ required: true })
-    name!: string;
+  @Prop({ required: true })
+  name!: string;
 }
 
 @Schema({ timestamps: true })
 export class Branch {
-    @Prop({ type: String })
-    _id!: string;
+  @Prop({ type: String })
+  _id!: string;
 
-    @Prop({ required: true, unique: true })
-    name!: string;
+  @Prop({ required: true, unique: true })
+  name!: string;
 
-    @Prop({ type: Location, required: true })
-    location!: Location;
+  @Prop({ type: Location, required: true })
+  location!: Location;
 
-    @Prop({ type: [DayHours], default: [] })
-    businessHours!: DayHours[];
+  @Prop({ type: [DayHours], default: [] })
+  businessHours!: DayHours[];
 
-    @Prop({ type: [Holiday], default: [] })
-    holidays!: Holiday[];
+  @Prop({ type: [Holiday], default: [] })
+  holidays!: Holiday[];
 
-    @Prop({ default: true })
-    isActive!: boolean;
+  @Prop({ default: true })
+  isActive!: boolean;
 }
 
 export const BranchSchema = SchemaFactory.createForClass(Branch);

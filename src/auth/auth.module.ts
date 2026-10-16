@@ -17,9 +17,9 @@ import { MfaSetupGuard } from './mfa-setup.guard';
     UsersModule,
     SessionsModule,
     MfaAttemptsModule,
-        MailModule,
-        AuditLogsModule,
-        PassportModule,
+    MailModule,
+    AuditLogsModule,
+    PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -32,4 +32,4 @@ import { MfaSetupGuard } from './mfa-setup.guard';
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, MfaSetupGuard],
 })
-export class AuthModule { }
+export class AuthModule {}

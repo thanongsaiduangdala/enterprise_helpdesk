@@ -1,16 +1,16 @@
 import {
-    Body,
-    Controller,
-    Delete,
-    Get,
-    Param,
-    Patch,
-    Post,
-    Query,
-    UploadedFile,
-    UseInterceptors,
-    UseGuards,
-    BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseInterceptors,
+  UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiBody, ApiQuery } from '@nestjs/swagger';
@@ -28,84 +28,89 @@ import { parseRequiredDate } from '../common/utils/parse-date.util';
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class RoomsController {
-    constructor(private roomsService: RoomsService) { }
+  constructor(private roomsService: RoomsService) {}
 
-    @Post()
-    @RequirePermission('rooms', 'manage')
-    create(@Body() dto: CreateRoomDto) {
-        return this.roomsService.create(dto);
+  @Post()
+  @RequirePermission('rooms', 'manage')
+  create(@Body() dto: CreateRoomDto) {
+    return this.roomsService.create(dto);
+  }
+
+  @Post('bulk-import')
+  @RequirePermission('rooms', 'import')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  bulkImport(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException(
+        'No file uploaded — expected a CSV file under field name "file"',
+      );
     }
+    return this.roomsService.bulkImport(file.buffer);
+  }
 
-    @Post('bulk-import')
-    @RequirePermission('rooms', 'import')
-    @UseInterceptors(FileInterceptor('file'))
-    @ApiConsumes('multipart/form-data')
-    @ApiBody({
-        schema: {
-            type: 'object',
-            properties: { file: { type: 'string', format: 'binary' } },
-        },
-    })
-    bulkImport(@UploadedFile() file: Express.Multer.File) {
-        if (!file) {
-            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
-        }
-        return this.roomsService.bulkImport(file.buffer);
-    }
+  @Get()
+  @RequirePermission('rooms', 'read')
+  @ApiQuery({
+    name: 'branchId',
+    required: false,
+    description: 'Filter by branch — omit to get all rooms across every branch',
+  })
+  findAll(@Query('branchId') branchId?: string) {
+    return this.roomsService.findAllWithLiveStatus(branchId);
+  }
 
-    @Get()
-    @RequirePermission('rooms', 'read')
-    @ApiQuery({ name: 'branchId', required: false, description: 'Filter by branch — omit to get all rooms across every branch' })
-    findAll(@Query('branchId') branchId?: string) {
-        return this.roomsService.findAllWithLiveStatus(branchId);
-    }
+  // ຄົ້ນຫາຫ້ອງທີ່ວ່າງໃນຊ່ວງເວລາທີ່ເລືອກ — ຕ້ອງຢູ່ກ່ອນ @Get(':id')
+  @Get('available')
+  @RequirePermission('rooms', 'read')
+  @ApiQuery({ name: 'from', description: 'ISO start datetime' })
+  @ApiQuery({ name: 'to', description: 'ISO end datetime' })
+  @ApiQuery({ name: 'branchId', required: false })
+  findAvailable(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('branchId') branchId?: string,
+  ) {
+    return this.roomsService.findAvailableBetween(
+      parseRequiredDate(from, 'from'),
+      parseRequiredDate(to, 'to'),
+      branchId,
+    );
+  }
 
+  @Get('utilization')
+  @RequirePermission('rooms', 'manage')
+  utilization(@Query('from') from: string, @Query('to') to: string) {
+    return this.roomsService.utilization(new Date(from), new Date(to));
+  }
 
-    // ຄົ້ນຫາຫ້ອງທີ່ວ່າງໃນຊ່ວງເວລາທີ່ເລືອກ — ຕ້ອງຢູ່ກ່ອນ @Get(':id')
-    @Get('available')
-    @RequirePermission('rooms', 'read')
-    @ApiQuery({ name: 'from', description: 'ISO start datetime' })
-    @ApiQuery({ name: 'to', description: 'ISO end datetime' })
-    @ApiQuery({ name: 'branchId', required: false })
-    findAvailable(
-        @Query('from') from: string,
-        @Query('to') to: string,
-        @Query('branchId') branchId?: string,
-    ) {
-        return this.roomsService.findAvailableBetween(
-            parseRequiredDate(from, 'from'),
-            parseRequiredDate(to, 'to'),
-            branchId,
-        );
-    }
+  @Get(':id')
+  @RequirePermission('rooms', 'read')
+  findOne(@Param('id') id: string) {
+    return this.roomsService.findOneWithLiveStatus(id);
+  }
 
-    @Get('utilization')
-    @RequirePermission('rooms', 'manage')
-    utilization(@Query('from') from: string, @Query('to') to: string) {
-        return this.roomsService.utilization(new Date(from), new Date(to));
-    }
+  @Patch(':id')
+  @RequirePermission('rooms', 'update')
+  update(@Param('id') id: string, @Body() dto: UpdateRoomDto) {
+    return this.roomsService.update(id, dto);
+  }
 
-    @Get(':id')
-    @RequirePermission('rooms', 'read')
-    findOne(@Param('id') id: string) {
-        return this.roomsService.findOneWithLiveStatus(id);
-    }
+  @Patch(':id/status')
+  @RequirePermission('rooms', 'update')
+  setStatus(@Param('id') id: string, @Body() dto: SetRoomStatusDto) {
+    return this.roomsService.setStatus(id, dto.status);
+  }
 
-    @Patch(':id')
-    @RequirePermission('rooms', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateRoomDto) {
-        return this.roomsService.update(id, dto);
-    }
-
-    @Patch(':id/status')
-    @RequirePermission('rooms', 'update')
-    setStatus(@Param('id') id: string, @Body() dto: SetRoomStatusDto) {
-        return this.roomsService.setStatus(id, dto.status);
-    }
-
-    @Delete(':id')
-    @RequirePermission('rooms', 'delete')
-    remove(@Param('id') id: string) {
-        return this.roomsService.remove(id);
-    }
+  @Delete(':id')
+  @RequirePermission('rooms', 'delete')
+  remove(@Param('id') id: string) {
+    return this.roomsService.remove(id);
+  }
 }

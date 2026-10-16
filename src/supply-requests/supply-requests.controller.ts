@@ -1,13 +1,13 @@
 import {
-    Body,
-    Controller,
-    Get,
-    Param,
-    Patch,
-    Post,
-    Query,
-    Req,
-    UseGuards,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { SupplyRequestsService } from './supply-requests.service';
@@ -25,82 +25,92 @@ import { hasAnyPermission } from '../common/utils/permission.util';
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class SupplyRequestsController {
-    constructor(private requestsService: SupplyRequestsService) { }
+  constructor(private requestsService: SupplyRequestsService) {}
 
-    /**
-     * Undefined => caller can see every request (approve/fulfill/manage).
-     * userId   => caller only sees requests they raised.
-     */
-    private scopingUserId(req: any): string | undefined {
-        const elevated = hasAnyPermission(req.user, 'supplies', ['approve', 'fulfill', 'manage']);
-        return elevated ? undefined : req.user.userId;
-    }
+  /**
+   * Undefined => caller can see every request (approve/fulfill/manage).
+   * userId   => caller only sees requests they raised.
+   */
+  private scopingUserId(req: any): string | undefined {
+    const elevated = hasAnyPermission(req.user, 'supplies', [
+      'approve',
+      'fulfill',
+      'manage',
+    ]);
+    return elevated ? undefined : req.user.userId;
+  }
 
+  @Post()
+  @RequirePermission('supplies', 'create')
+  create(@Body() dto: CreateSupplyRequestDto, @Req() req: any) {
+    return this.requestsService.create(dto, req.user.userId, req.ip);
+  }
 
-    @Post()
-    @RequirePermission('supplies', 'create')
-    create(@Body() dto: CreateSupplyRequestDto, @Req() req: any) {
-        return this.requestsService.create(dto, req.user.userId, req.ip);
-    }
+  @Get('my')
+  @RequirePermission('supplies', 'read')
+  findMine(@Req() req: any) {
+    return this.requestsService.findMine(req.user.userId);
+  }
 
+  @Get()
+  @RequirePermission('supplies', 'read')
+  @ApiQuery({ name: 'status', required: false, enum: SupplyRequestStatus })
+  findAll(
+    @Query('status') status: SupplyRequestStatus | undefined,
+    @Req() req: any,
+  ) {
+    return this.requestsService.findAll(status, this.scopingUserId(req));
+  }
 
-    @Get('my')
-    @RequirePermission('supplies', 'read')
-    findMine(@Req() req: any) {
-        return this.requestsService.findMine(req.user.userId);
-    }
+  /** ໃບຮັບເຄື່ອງ: ຂໍ້ມູນໃບຂໍ + ລາຍການທີ່ຕ້ອງສະແກນ Asset Tag + ສິດຢືນຢັນຂອງຜູ້ເປີດ */
+  @Get(':id/receipt')
+  @RequirePermission('supplies', 'read')
+  getReceipt(@Param('id') id: string, @Req() req: any) {
+    return this.requestsService.getReceipt(id, req.user);
+  }
 
+  @Get(':id')
+  @RequirePermission('supplies', 'read')
+  findOne(@Param('id') id: string, @Req() req: any) {
+    return this.requestsService.findOne(id, this.scopingUserId(req));
+  }
 
-    @Get()
-    @RequirePermission('supplies', 'read')
-    @ApiQuery({ name: 'status', required: false, enum: SupplyRequestStatus })
-    findAll(@Query('status') status: SupplyRequestStatus | undefined, @Req() req: any) {
-        return this.requestsService.findAll(status, this.scopingUserId(req));
-    }
+  @Patch(':id/approve')
+  @RequirePermission('supplies', 'approve')
+  approve(@Param('id') id: string, @Req() req: any) {
+    return this.requestsService.approve(id, req.user.userId, req.ip);
+  }
 
-    /** ໃບຮັບເຄື່ອງ: ຂໍ້ມູນໃບຂໍ + ລາຍການທີ່ຕ້ອງສະແກນ Asset Tag + ສິດຢືນຢັນຂອງຜູ້ເປີດ */
-    @Get(':id/receipt')
-    @RequirePermission('supplies', 'read')
-    getReceipt(@Param('id') id: string, @Req() req: any) {
-        return this.requestsService.getReceipt(id, req.user);
-    }
+  @Patch(':id/reject')
+  @RequirePermission('supplies', 'approve')
+  reject(
+    @Param('id') id: string,
+    @Body() dto: RejectSupplyRequestDto,
+    @Req() req: any,
+  ) {
+    return this.requestsService.reject(id, req.user.userId, dto.reason, req.ip);
+  }
 
-    @Get(':id')
-    @RequirePermission('supplies', 'read')
-    findOne(@Param('id') id: string, @Req() req: any) {
-        return this.requestsService.findOne(id, this.scopingUserId(req));
-    }
+  @Patch(':id/fulfill')
+  @RequirePermission('supplies', 'fulfill')
+  fulfill(@Param('id') id: string, @Req() req: any) {
+    return this.requestsService.fulfill(id, req.user.userId, req.ip);
+  }
 
+  // ຜູ້ຂໍ (supplies.read) ຢືນຢັນຮັບເອງໄດ້ — service ກວດວ່າເປັນຜູ້ຂໍ ຫຼື ມີສິດ supplies.fulfill
+  @Patch(':id/receive')
+  @RequirePermission('supplies', 'read')
+  receive(
+    @Param('id') id: string,
+    @Body() dto: ReceiveSupplyRequestDto,
+    @Req() req: any,
+  ) {
+    return this.requestsService.receive(id, dto, req.user, req.ip);
+  }
 
-    @Patch(':id/approve')
-    @RequirePermission('supplies', 'approve')
-    approve(@Param('id') id: string, @Req() req: any) {
-        return this.requestsService.approve(id, req.user.userId, req.ip);
-    }
-
-    @Patch(':id/reject')
-    @RequirePermission('supplies', 'approve')
-    reject(@Param('id') id: string, @Body() dto: RejectSupplyRequestDto, @Req() req: any) {
-        return this.requestsService.reject(id, req.user.userId, dto.reason, req.ip);
-    }
-
-
-    @Patch(':id/fulfill')
-    @RequirePermission('supplies', 'fulfill')
-    fulfill(@Param('id') id: string, @Req() req: any) {
-        return this.requestsService.fulfill(id, req.user.userId, req.ip);
-    }
-
-    // ຜູ້ຂໍ (supplies.read) ຢືນຢັນຮັບເອງໄດ້ — service ກວດວ່າເປັນຜູ້ຂໍ ຫຼື ມີສິດ supplies.fulfill
-    @Patch(':id/receive')
-    @RequirePermission('supplies', 'read')
-    receive(@Param('id') id: string, @Body() dto: ReceiveSupplyRequestDto, @Req() req: any) {
-        return this.requestsService.receive(id, dto, req.user, req.ip);
-    }
-
-    @Post('bulk-fulfill')
-    @RequirePermission('supplies', 'fulfill')
-    bulkFulfill(@Body() dto: BulkFulfillDto, @Req() req: any) {
-        return this.requestsService.bulkFulfill(dto.ids, req.user.userId, req.ip);
-    }
+  @Post('bulk-fulfill')
+  @RequirePermission('supplies', 'fulfill')
+  bulkFulfill(@Body() dto: BulkFulfillDto, @Req() req: any) {
+    return this.requestsService.bulkFulfill(dto.ids, req.user.userId, req.ip);
+  }
 }

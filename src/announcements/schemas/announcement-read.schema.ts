@@ -5,16 +5,20 @@ export type AnnouncementReadDocument = AnnouncementRead & Document;
 
 @Schema({ timestamps: false })
 export class AnnouncementRead {
-    @Prop({ type: String, ref: 'Announcement', required: true })
-    announcementId!: string;
+  @Prop({ type: String, ref: 'Announcement', required: true })
+  announcementId!: string;
 
-    @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-    userId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  userId!: Types.ObjectId;
 
-    @Prop({ required: true, default: Date.now })
-    readAt!: Date;
+  @Prop({ required: true, default: Date.now })
+  readAt!: Date;
 }
 
-export const AnnouncementReadSchema = SchemaFactory.createForClass(AnnouncementRead);
+export const AnnouncementReadSchema =
+  SchemaFactory.createForClass(AnnouncementRead);
 
-AnnouncementReadSchema.index({ announcementId: 1, userId: 1 }, { unique: true });
+AnnouncementReadSchema.index(
+  { announcementId: 1, userId: 1 },
+  { unique: true },
+);

@@ -5,40 +5,35 @@ export type AuditLogDocument = AuditLog & Document;
 
 @Schema({ timestamps: false })
 export class AuditLog {
-    @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-    actorId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  actorId!: Types.ObjectId;
 
-    @Prop({ required: true })
-    action!: string;
+  @Prop({ required: true })
+  action!: string;
 
-    @Prop({ required: true })
-    entityType!: string;
+  @Prop({ required: true })
+  entityType!: string;
 
+  @Prop({ required: true })
+  entityId!: string;
 
+  @Prop({ type: Object })
+  before?: Record<string, any>;
 
-    @Prop({ required: true })
-    entityId!: string;
+  @Prop({ type: Object })
+  after?: Record<string, any>;
 
-    @Prop({ type: Object })
-    before?: Record<string, any>;
+  @Prop()
+  ip?: string;
 
-    @Prop({ type: Object })
-    after?: Record<string, any>;
+  @Prop({ required: true })
+  timestamp!: Date;
 
-    @Prop()
-    ip?: string;
+  @Prop({ required: true })
+  hash!: string;
 
-    @Prop({ required: true })
-    timestamp!: Date;
-
-
-
-
-    @Prop({ required: true })
-    hash!: string;
-
-    @Prop({ required: true })
-    prevHash!: string;
+  @Prop({ required: true })
+  prevHash!: string;
 }
 
 export const AuditLogSchema = SchemaFactory.createForClass(AuditLog);

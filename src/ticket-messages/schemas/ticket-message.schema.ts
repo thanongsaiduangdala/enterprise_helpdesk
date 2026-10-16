@@ -5,23 +5,23 @@ export type TicketMessageDocument = TicketMessage & Document;
 
 @Schema({ timestamps: true })
 export class TicketMessage {
-    @Prop({ type: String, ref: 'Ticket', required: true })
-    ticketId!: string;
+  @Prop({ type: String, ref: 'Ticket', required: true })
+  ticketId!: string;
 
-    @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-    senderId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  senderId!: Types.ObjectId;
 
-    @Prop({ required: true })
-    body!: string;
+  @Prop({ required: true })
+  body!: string;
 
-    @Prop({ type: [String], default: [] })
-    attachments!: string[];
+  @Prop({ type: [String], default: [] })
+  attachments!: string[];
 
-    @Prop({ default: false })
-    isCannedResponse!: boolean;
+  @Prop({ default: false })
+  isCannedResponse!: boolean;
 
-    @Prop({ type: String, ref: 'CannedResponse' })
-    cannedResponseId?: string;
+  @Prop({ type: String, ref: 'CannedResponse' })
+  cannedResponseId?: string;
 }
 
 export const TicketMessageSchema = SchemaFactory.createForClass(TicketMessage);

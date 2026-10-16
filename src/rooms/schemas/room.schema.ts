@@ -4,41 +4,38 @@ import { Document } from 'mongoose';
 export type RoomDocument = Room & Document;
 
 export enum RoomStatus {
-    AVAILABLE = 'AVAILABLE',
-    MAINTENANCE = 'MAINTENANCE',
+  AVAILABLE = 'AVAILABLE',
+  MAINTENANCE = 'MAINTENANCE',
 }
 
 @Schema({ timestamps: true })
 export class Room {
-    @Prop({ type: String })
-    _id!: string;
+  @Prop({ type: String })
+  _id!: string;
 
-    @Prop({ type: String, ref: 'Branch', required: true })
-    branchId!: string;
+  @Prop({ type: String, ref: 'Branch', required: true })
+  branchId!: string;
 
-    @Prop({ required: true })
-    name!: string;
+  @Prop({ required: true })
+  name!: string;
 
-    @Prop()
-    floor?: string;
+  @Prop()
+  floor?: string;
 
-    @Prop()
-    location?: string;
+  @Prop()
+  location?: string;
 
-    @Prop({ required: true })
-    capacity!: number;
+  @Prop({ required: true })
+  capacity!: number;
 
-    @Prop({ type: [String], default: [] })
-    amenities!: string[];
+  @Prop({ type: [String], default: [] })
+  amenities!: string[];
 
+  @Prop({ enum: RoomStatus, default: RoomStatus.AVAILABLE })
+  status!: RoomStatus;
 
-
-
-    @Prop({ enum: RoomStatus, default: RoomStatus.AVAILABLE })
-    status!: RoomStatus;
-
-    @Prop({ default: true })
-    isActive!: boolean;
+  @Prop({ default: true })
+  isActive!: boolean;
 }
 
 export const RoomSchema = SchemaFactory.createForClass(Room);

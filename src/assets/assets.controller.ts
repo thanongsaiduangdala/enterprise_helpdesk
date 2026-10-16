@@ -1,17 +1,17 @@
 import {
-    Body,
-    Controller,
-    Delete,
-    Get,
-    Param,
-    Patch,
-    Post,
-    Query,
-    Req,
-    UploadedFile,
-    UseInterceptors,
-    UseGuards,
-    BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UploadedFile,
+  UseInterceptors,
+  UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiBody, ApiQuery } from '@nestjs/swagger';
@@ -31,89 +31,114 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class AssetsController {
-    constructor(private assetsService: AssetsService) { }
+  constructor(private assetsService: AssetsService) {}
 
-    @Post()
-    @RequirePermission('assets', 'create')
-    create(@Body() dto: CreateAssetDto, @Req() req: any) {
-        return this.assetsService.create(dto, req.user.userId, req.ip);
-    }
+  @Post()
+  @RequirePermission('assets', 'create')
+  create(@Body() dto: CreateAssetDto, @Req() req: any) {
+    return this.assetsService.create(dto, req.user.userId, req.ip);
+  }
 
-    @Post('bulk-import')
-    @RequirePermission('assets', 'create')
-    @UseInterceptors(FileInterceptor('file'))
-    @ApiConsumes('multipart/form-data')
-    @ApiBody({
-        schema: {
-            type: 'object',
-            properties: { file: { type: 'string', format: 'binary' } },
-        },
-    })
-    bulkImport(@UploadedFile() file: Express.Multer.File) {
-        if (!file) {
-            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
-        }
-        return this.assetsService.bulkImport(file.buffer);
+  @Post('bulk-import')
+  @RequirePermission('assets', 'create')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  bulkImport(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException(
+        'No file uploaded — expected a CSV file under field name "file"',
+      );
     }
+    return this.assetsService.bulkImport(file.buffer);
+  }
 
-    @Get()
-    @RequirePermission('assets', 'read')
-    @ApiQuery({ name: 'branchId', required: false })
-    @ApiQuery({ name: 'status', required: false, enum: AssetStatus })
-    @ApiQuery({ name: 'assigneeId', required: false })
-    findAll(
-        @Query('branchId') branchId?: string,
-        @Query('status') status?: AssetStatus,
-        @Query('assigneeId') assigneeId?: string,
-    ) {
-        return this.assetsService.findAll({ branchId, status, assigneeId });
-    }
+  @Get()
+  @RequirePermission('assets', 'read')
+  @ApiQuery({ name: 'branchId', required: false })
+  @ApiQuery({ name: 'status', required: false, enum: AssetStatus })
+  @ApiQuery({ name: 'assigneeId', required: false })
+  findAll(
+    @Query('branchId') branchId?: string,
+    @Query('status') status?: AssetStatus,
+    @Query('assigneeId') assigneeId?: string,
+  ) {
+    return this.assetsService.findAll({ branchId, status, assigneeId });
+  }
 
-    @Get('overdue')
-    @RequirePermission('assets', 'read')
-    findOverdue() {
-        return this.assetsService.findOverdueReturns();
-    }
+  @Get('overdue')
+  @RequirePermission('assets', 'read')
+  findOverdue() {
+    return this.assetsService.findOverdueReturns();
+  }
 
-    @Get(':id')
-    @RequirePermission('assets', 'read')
-    findOne(@Param('id') id: string) {
-        return this.assetsService.findOne(id);
-    }
+  @Get(':id')
+  @RequirePermission('assets', 'read')
+  findOne(@Param('id') id: string) {
+    return this.assetsService.findOne(id);
+  }
 
-    @Patch(':id')
-    @RequirePermission('assets', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateAssetDto) {
-        return this.assetsService.update(id, dto);
-    }
+  @Patch(':id')
+  @RequirePermission('assets', 'update')
+  update(@Param('id') id: string, @Body() dto: UpdateAssetDto) {
+    return this.assetsService.update(id, dto);
+  }
 
-    @Patch(':id/assign')
-    @RequirePermission('assets', 'assign')
-    assign(@Param('id') id: string, @Body() dto: AssignAssetDto, @Req() req: any) {
-        return this.assetsService.assign(id, dto, req.user.userId, req.ip);
-    }
+  @Patch(':id/assign')
+  @RequirePermission('assets', 'assign')
+  assign(
+    @Param('id') id: string,
+    @Body() dto: AssignAssetDto,
+    @Req() req: any,
+  ) {
+    return this.assetsService.assign(id, dto, req.user.userId, req.ip);
+  }
 
-    @Patch(':id/claim')
-    @RequirePermission('assets', 'read')
-    claim(@Param('id') id: string, @Body() dto: ClaimAssetDto, @Req() req: any) {
-        return this.assetsService.claim(id, req.user, dto.note, req.ip, dto.assigneeCode);
-    }
+  @Patch(':id/claim')
+  @RequirePermission('assets', 'read')
+  claim(@Param('id') id: string, @Body() dto: ClaimAssetDto, @Req() req: any) {
+    return this.assetsService.claim(
+      id,
+      req.user,
+      dto.note,
+      req.ip,
+      dto.assigneeCode,
+    );
+  }
 
-    @Patch(':id/return')
-    @RequirePermission('assets', 'assign')
-    returnAsset(@Param('id') id: string, @Body() dto: ReturnAssetDto, @Req() req: any) {
-        return this.assetsService.returnAsset(id, dto, req.user.userId, req.ip);
-    }
+  @Patch(':id/return')
+  @RequirePermission('assets', 'assign')
+  returnAsset(
+    @Param('id') id: string,
+    @Body() dto: ReturnAssetDto,
+    @Req() req: any,
+  ) {
+    return this.assetsService.returnAsset(id, dto, req.user.userId, req.ip);
+  }
 
-    @Patch(':id/status')
-    @RequirePermission('assets', 'update')
-    setStatus(@Param('id') id: string, @Body() dto: SetAssetStatusDto, @Req() req: any) {
-        return this.assetsService.setStatus(id, dto.status, req.user.userId, req.ip);
-    }
+  @Patch(':id/status')
+  @RequirePermission('assets', 'update')
+  setStatus(
+    @Param('id') id: string,
+    @Body() dto: SetAssetStatusDto,
+    @Req() req: any,
+  ) {
+    return this.assetsService.setStatus(
+      id,
+      dto.status,
+      req.user.userId,
+      req.ip,
+    );
+  }
 
-    @Delete(':id')
-    @RequirePermission('assets', 'delete')
-    remove(@Param('id') id: string, @Req() req: any) {
-        return this.assetsService.remove(id, req.user.userId, req.ip);
-    }
+  @Delete(':id')
+  @RequirePermission('assets', 'delete')
+  remove(@Param('id') id: string, @Req() req: any) {
+    return this.assetsService.remove(id, req.user.userId, req.ip);
+  }
 }

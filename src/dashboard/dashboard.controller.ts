@@ -7,11 +7,15 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class DashboardController {
-    constructor(private dashboardService: DashboardService) { }
+  constructor(private dashboardService: DashboardService) {}
 
-    @Get()
-    @ApiQuery({ name: 'branchId', required: false, description: 'Filter overview/report stats to a single branch' })
-    getDashboard(@Req() req: any, @Query('branchId') branchId?: string) {
-        return this.dashboardService.getDashboard(req.user.userId, branchId);
-    }
+  @Get()
+  @ApiQuery({
+    name: 'branchId',
+    required: false,
+    description: 'Filter overview/report stats to a single branch',
+  })
+  getDashboard(@Req() req: any, @Query('branchId') branchId?: string) {
+    return this.dashboardService.getDashboard(req.user.userId, branchId);
+  }
 }

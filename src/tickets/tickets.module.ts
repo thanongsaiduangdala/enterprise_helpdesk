@@ -17,29 +17,29 @@ import { RolesModule } from '../roles/roles.module';
 import { UsersModule } from '../users/users.module';
 
 @Module({
-    imports: [
-        MongooseModule.forFeature([{ name: Ticket.name, schema: TicketSchema }]),
-        TicketTypesModule,
-        SlaPoliciesModule,
-        DepartmentsModule,
-        BranchesModule,
-        NotificationsModule,
-        AuditLogsModule,
-        RolesModule,
-        UsersModule,
-        // TicketsGateway validates the socket handshake itself, so it needs
-        // JwtService. Registered here rather than importing AuthModule to avoid
-        // pulling in its whole dependency graph (sessions/mfa/mail).
-        JwtModule.registerAsync({
-            imports: [ConfigModule],
-            inject: [ConfigService],
-            useFactory: (configService: ConfigService) => ({
-                secret: configService.get<string>('JWT_SECRET'),
-            }),
-        }),
-    ],
-    controllers: [TicketsController],
-    providers: [TicketsService, SlaMonitorService, TicketsGateway],
-    exports: [TicketsService, TicketsGateway],
+  imports: [
+    MongooseModule.forFeature([{ name: Ticket.name, schema: TicketSchema }]),
+    TicketTypesModule,
+    SlaPoliciesModule,
+    DepartmentsModule,
+    BranchesModule,
+    NotificationsModule,
+    AuditLogsModule,
+    RolesModule,
+    UsersModule,
+    // TicketsGateway validates the socket handshake itself, so it needs
+    // JwtService. Registered here rather than importing AuthModule to avoid
+    // pulling in its whole dependency graph (sessions/mfa/mail).
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.get<string>('JWT_SECRET'),
+      }),
+    }),
+  ],
+  controllers: [TicketsController],
+  providers: [TicketsService, SlaMonitorService, TicketsGateway],
+  exports: [TicketsService, TicketsGateway],
 })
-export class TicketsModule { }
+export class TicketsModule {}

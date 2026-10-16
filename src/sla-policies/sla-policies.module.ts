@@ -7,13 +7,15 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { TicketTypesModule } from '../ticket-types/ticket-type.module';
 
 @Module({
-    imports: [
-        MongooseModule.forFeature([{ name: SlaPolicy.name, schema: SlaPolicySchema }]),
-        AuditLogsModule,
-        TicketTypesModule,
-    ],
-    controllers: [SlaPoliciesController],
-    providers: [SlaPoliciesService],
-    exports: [SlaPoliciesService],
+  imports: [
+    MongooseModule.forFeature([
+      { name: SlaPolicy.name, schema: SlaPolicySchema },
+    ]),
+    AuditLogsModule,
+    TicketTypesModule,
+  ],
+  controllers: [SlaPoliciesController],
+  providers: [SlaPoliciesService],
+  exports: [SlaPoliciesService],
 })
-export class SlaPoliciesModule { }
+export class SlaPoliciesModule {}

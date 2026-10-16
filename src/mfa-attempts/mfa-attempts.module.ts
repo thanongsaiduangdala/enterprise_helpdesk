@@ -4,10 +4,12 @@ import { MfaAttempt, MfaAttemptSchema } from './schemas/mfa-attempt.schema';
 import { MfaAttemptsService } from './mfa-attempts.service';
 
 @Module({
-    imports: [
-        MongooseModule.forFeature([{ name: MfaAttempt.name, schema: MfaAttemptSchema }]),
-    ],
-    providers: [MfaAttemptsService],
-    exports: [MfaAttemptsService],
+  imports: [
+    MongooseModule.forFeature([
+      { name: MfaAttempt.name, schema: MfaAttemptSchema },
+    ]),
+  ],
+  providers: [MfaAttemptsService],
+  exports: [MfaAttemptsService],
 })
-export class MfaAttemptsModule { }
+export class MfaAttemptsModule {}

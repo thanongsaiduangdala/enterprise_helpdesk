@@ -5,11 +5,13 @@ import { TicketTypesService } from './ticket-types.service';
 import { TicketTypesController } from './ticket-types.controller';
 
 @Module({
-    imports: [
-        MongooseModule.forFeature([{ name: TicketType.name, schema: TicketTypeSchema }]),
-    ],
-    controllers: [TicketTypesController],
-    providers: [TicketTypesService],
-    exports: [TicketTypesService],
+  imports: [
+    MongooseModule.forFeature([
+      { name: TicketType.name, schema: TicketTypeSchema },
+    ]),
+  ],
+  controllers: [TicketTypesController],
+  providers: [TicketTypesService],
+  exports: [TicketTypesService],
 })
-export class TicketTypesModule { }
+export class TicketTypesModule {}

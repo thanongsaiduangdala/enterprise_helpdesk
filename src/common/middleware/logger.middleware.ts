@@ -3,18 +3,18 @@ import { Request, Response, NextFunction } from 'express';
 
 @Injectable()
 export class LoggerMiddleware implements NestMiddleware {
-    use(req: Request, res: Response, next: NextFunction) {
-        const { method } = req;
-        // token ຂອງ QR (/join/:token) ເປັນຄວາມລັບ — ບໍ່ໃຫ້ເຂົ້າ log
-        const originalUrl = req.originalUrl.replace(/(\/join\/)[^/?]+/, '$1***');
-        const start = Date.now();
+  use(req: Request, res: Response, next: NextFunction) {
+    const { method } = req;
+    // token ຂອງ QR (/join/:token) ເປັນຄວາມລັບ — ບໍ່ໃຫ້ເຂົ້າ log
+    const originalUrl = req.originalUrl.replace(/(\/join\/)[^/?]+/, '$1***');
+    const start = Date.now();
 
-        res.on('finish', () => {
-            const { statusCode } = res;
-            const duration = Date.now() - start;
-            console.log(`${method} ${originalUrl} ${statusCode} - ${duration}ms`);
-        });
+    res.on('finish', () => {
+      const { statusCode } = res;
+      const duration = Date.now() - start;
+      console.log(`${method} ${originalUrl} ${statusCode} - ${duration}ms`);
+    });
 
-        next();
-    }
+    next();
+  }
 }

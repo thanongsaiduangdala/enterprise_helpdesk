@@ -1,12 +1,10 @@
-import { NestFactory } from "@nestjs/core";
-import { NestExpressApplication } from "@nestjs/platform-express";
-import { ValidationPipe } from "@nestjs/common";
-import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
-import { AppModule } from "./app.module";
-import { ResponseInterceptor } from "./common/interceptors/response/response.interceptor";
-import { HttpExceptionFilter } from "./common/filters/http-exception/http-exception.filter";
-
-
+import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { ValidationPipe } from '@nestjs/common';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { AppModule } from './app.module';
+import { ResponseInterceptor } from './common/interceptors/response/response.interceptor';
+import { HttpExceptionFilter } from './common/filters/http-exception/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -17,11 +15,17 @@ async function bootstrap() {
     const numeric = Number(trustProxy);
     app.set(
       'trust proxy',
-      Number.isNaN(numeric) ? (trustProxy === 'true' ? 1 : trustProxy) : numeric,
+      Number.isNaN(numeric)
+        ? trustProxy === 'true'
+          ? 1
+          : trustProxy
+        : numeric,
     );
   }
 
-  const allowedOrigins = (process.env.FRONTEND_URLS || 'http://localhost:5173').split(',');
+  const allowedOrigins = (
+    process.env.FRONTEND_URLS || 'http://localhost:5173'
+  ).split(',');
   app.enableCors({
     origin: allowedOrigins,
     credentials: true,

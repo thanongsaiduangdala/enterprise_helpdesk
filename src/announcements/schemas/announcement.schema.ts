@@ -4,45 +4,42 @@ import { Document, Types } from 'mongoose';
 export type AnnouncementDocument = Announcement & Omit<Document, '_id'>;
 
 export enum AnnouncementScope {
-    COMPANY = 'COMPANY',
-    BRANCH = 'BRANCH',
-    DEPARTMENT = 'DEPARTMENT',
+  COMPANY = 'COMPANY',
+  BRANCH = 'BRANCH',
+  DEPARTMENT = 'DEPARTMENT',
 }
 
 @Schema({ timestamps: true })
 export class Announcement {
-    @Prop({ type: String })
-    _id!: string;
+  @Prop({ type: String })
+  _id!: string;
 
-    @Prop({ required: true })
-    title!: string;
+  @Prop({ required: true })
+  title!: string;
 
-    @Prop({ required: true })
-    body!: string;
+  @Prop({ required: true })
+  body!: string;
 
-    @Prop({ enum: AnnouncementScope, required: true })
-    scope!: AnnouncementScope;
+  @Prop({ enum: AnnouncementScope, required: true })
+  scope!: AnnouncementScope;
 
+  @Prop({ type: String, ref: 'Branch' })
+  branchId?: string;
 
-    @Prop({ type: String, ref: 'Branch' })
-    branchId?: string;
+  @Prop({ type: String, ref: 'Department' })
+  departmentId?: string;
 
+  @Prop({ required: true })
+  publishAt!: Date;
 
-    @Prop({ type: String, ref: 'Department' })
-    departmentId?: string;
+  @Prop()
+  expireAt?: Date;
 
+  @Prop({ default: false })
+  pinned!: boolean;
 
-    @Prop({ required: true })
-    publishAt!: Date;
-
-    @Prop()
-    expireAt?: Date;
-
-    @Prop({ default: false })
-    pinned!: boolean;
-
-    @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-    createdBy!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  createdBy!: Types.ObjectId;
 }
 
 export const AnnouncementSchema = SchemaFactory.createForClass(Announcement);

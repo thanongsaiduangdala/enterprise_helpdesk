@@ -10,17 +10,17 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class OrganizationSettingsController {
-    constructor(private settingsService: OrganizationSettingsService) { }
+  constructor(private settingsService: OrganizationSettingsService) {}
 
-    @Get()
-    @RequirePermission('settings', 'read')
-    getSettings() {
-        return this.settingsService.getSettings();
-    }
+  @Get()
+  @RequirePermission('settings', 'read')
+  getSettings() {
+    return this.settingsService.getSettings();
+  }
 
-    @Patch()
-    @RequirePermission('settings', 'update')
-    updateSettings(@Body() dto: UpdateOrganizationSettingsDto, @Req() req: any) {
-        return this.settingsService.update(dto);
-    }
+  @Patch()
+  @RequirePermission('settings', 'update')
+  updateSettings(@Body() dto: UpdateOrganizationSettingsDto, @Req() req: any) {
+    return this.settingsService.update(dto);
+  }
 }

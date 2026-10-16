@@ -8,14 +8,16 @@ import { TicketTypesModule } from '../ticket-types/ticket-type.module';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
-    imports: [
-        MongooseModule.forFeature([{ name: Department.name, schema: DepartmentSchema }]),
-        BranchesModule,
-        TicketTypesModule,
-        AuditLogsModule,
-    ],
-    controllers: [DepartmentsController],
-    providers: [DepartmentsService],
-    exports: [DepartmentsService],
+  imports: [
+    MongooseModule.forFeature([
+      { name: Department.name, schema: DepartmentSchema },
+    ]),
+    BranchesModule,
+    TicketTypesModule,
+    AuditLogsModule,
+  ],
+  controllers: [DepartmentsController],
+  providers: [DepartmentsService],
+  exports: [DepartmentsService],
 })
-export class DepartmentsModule { }
+export class DepartmentsModule {}

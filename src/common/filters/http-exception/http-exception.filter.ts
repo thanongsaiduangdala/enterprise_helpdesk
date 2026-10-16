@@ -3,12 +3,10 @@ import {
   Catch,
   ExceptionFilter,
   HttpException,
-  HttpStatus
-} from "@nestjs/common";
+  HttpStatus,
+} from '@nestjs/common';
 
 import { Response } from 'express';
-
-
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -26,7 +24,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
       if (typeof exceptionResponse == 'string') {
         message = exceptionResponse;
       } else if (
-        typeof exceptionResponse === 'object' && 'message' in exceptionResponse
+        typeof exceptionResponse === 'object' &&
+        'message' in exceptionResponse
       ) {
         const msg = (exceptionResponse as any).message;
         message = Array.isArray(msg) ? msg.join(', ') : msg;

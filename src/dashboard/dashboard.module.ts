@@ -8,14 +8,14 @@ import { AnnouncementsModule } from '../announcements/announcements.module';
 import { ReportsModule } from '../reports/reports.module';
 
 @Module({
-    imports: [
-        TicketsModule,
-        UsersModule,
-        NotificationsModule,
-        AnnouncementsModule,
-        ReportsModule,
-    ],
-    controllers: [DashboardController],
-    providers: [DashboardService],
+  imports: [
+    TicketsModule,
+    UsersModule,
+    NotificationsModule,
+    AnnouncementsModule,
+    ReportsModule,
+  ],
+  controllers: [DashboardController],
+  providers: [DashboardService],
 })
-export class DashboardModule { }
+export class DashboardModule {}

@@ -9,15 +9,15 @@ import { MailModule } from '../mail/mail.module';
 import { SessionsModule } from '../sessions/sessions.module';
 
 @Module({
-    imports: [
-        MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
-        RolesModule,
-        AuditLogsModule,
-        MailModule,
-        SessionsModule,
-    ],
-    controllers: [UsersController],
-    providers: [UsersService],
-    exports: [UsersService],
+  imports: [
+    MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
+    RolesModule,
+    AuditLogsModule,
+    MailModule,
+    SessionsModule,
+  ],
+  controllers: [UsersController],
+  providers: [UsersService],
+  exports: [UsersService],
 })
-export class UsersModule { }
+export class UsersModule {}

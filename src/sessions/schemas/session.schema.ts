@@ -5,40 +5,40 @@ export type SessionDocument = Session & Document;
 
 @Schema({ _id: false })
 class DeviceInfo {
-    @Prop()
-    userAgent?: string;
+  @Prop()
+  userAgent?: string;
 
-    @Prop()
-    ip?: string;
+  @Prop()
+  ip?: string;
 
-    @Prop()
-    os?: string;
+  @Prop()
+  os?: string;
 
-    @Prop()
-    browser?: string;
+  @Prop()
+  browser?: string;
 }
 
 @Schema()
 export class Session {
-    @Prop({ required: true })
-    userId!: string;
+  @Prop({ required: true })
+  userId!: string;
 
-    @Prop({ type: DeviceInfo, default: () => ({}) })
-    deviceInfo!: DeviceInfo;
+  @Prop({ type: DeviceInfo, default: () => ({}) })
+  deviceInfo!: DeviceInfo;
 
-    @Prop({ required: true, default: () => new Date() })
-    issuedAt!: Date;
+  @Prop({ required: true, default: () => new Date() })
+  issuedAt!: Date;
 
-    @Prop({ required: true, default: () => new Date() })
-    lastSeenAt!: Date;
+  @Prop({ required: true, default: () => new Date() })
+  lastSeenAt!: Date;
 
-    @Prop({ required: true })
-    expiresAt!: Date;
+  @Prop({ required: true })
+  expiresAt!: Date;
 
-    @Prop({ default: false })
-    revoked!: boolean;
+  @Prop({ default: false })
+  revoked!: boolean;
 }
 
 export const SessionSchema = SchemaFactory.createForClass(Session);
 SessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-SessionSchema.index({ userId: 1 }); 
+SessionSchema.index({ userId: 1 });

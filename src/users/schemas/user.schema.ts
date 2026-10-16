@@ -4,110 +4,109 @@ export type UserDocument = User & Document;
 
 @Schema({ _id: false })
 class Mfa {
-    @Prop({ default: false })
-    enabled!: boolean;
+  @Prop({ default: false })
+  enabled!: boolean;
 
-    // ວິທີທີ່ເປີດໃຊ້ຢູ່ ('email' | 'pin' | 'totp') — ເປີດໄດ້ຫຼາຍວິທີພ້ອມກັນ
-    @Prop({ type: [String], default: [] })
-    methods!: string[];
+  // ວິທີທີ່ເປີດໃຊ້ຢູ່ ('email' | 'pin' | 'totp') — ເປີດໄດ້ຫຼາຍວິທີພ້ອມກັນ
+  @Prop({ type: [String], default: [] })
+  methods!: string[];
 
-    // legacy: ວິທີດຽວແບບເກົ່າ — ຍັງເກັບໄວ້ (= ວິທີທຳອິດໃນ methods) ເພື່ອໃຫ້ຂໍ້ມູນເກົ່າໃຊ້ໄດ້
-    @Prop()
-    method?: string;
+  // legacy: ວິທີດຽວແບບເກົ່າ — ຍັງເກັບໄວ້ (= ວິທີທຳອິດໃນ methods) ເພື່ອໃຫ້ຂໍ້ມູນເກົ່າໃຊ້ໄດ້
+  @Prop()
+  method?: string;
 
-    @Prop()
-    secret?: string;
+  @Prop()
+  secret?: string;
 
-    @Prop()
-    pendingSecret?: string;
+  @Prop()
+  pendingSecret?: string;
 
-    @Prop()
-    pendingMethod?: string;
+  @Prop()
+  pendingMethod?: string;
 
-    // PIN ທີ່ຜູ້ໃຊ້ຕັ້ງເອງ — ເກັບເປັນ bcrypt hash ເທົ່ານັ້ນ
-    @Prop()
-    pinHash?: string;
+  // PIN ທີ່ຜູ້ໃຊ້ຕັ້ງເອງ — ເກັບເປັນ bcrypt hash ເທົ່ານັ້ນ
+  @Prop()
+  pinHash?: string;
 
-    @Prop()
-    pendingPinHash?: string;
+  @Prop()
+  pendingPinHash?: string;
 }
 
 @Schema({ _id: false })
 class NotificationPrefs {
-    @Prop({ default: true })
-    emailTicketUpdates!: boolean;
+  @Prop({ default: true })
+  emailTicketUpdates!: boolean;
 
-    @Prop({ default: true })
-    emailAnnouncements!: boolean;
+  @Prop({ default: true })
+  emailAnnouncements!: boolean;
 
-    @Prop({ default: 'daily' })
-    digest!: string;
+  @Prop({ default: 'daily' })
+  digest!: string;
 }
 
 @Schema({
-    timestamps: true,
-    toJSON: {
-        transform: (_doc, ret: Record<string, any>) => {
-            delete ret.passwordHash;
-            if (ret.mfa) {
-                delete ret.mfa.secret;
-                delete ret.mfa.pendingSecret;
-                delete ret.mfa.pinHash;
-                delete ret.mfa.pendingPinHash;
-            }
-            return ret;
-        },
+  timestamps: true,
+  toJSON: {
+    transform: (_doc, ret: Record<string, any>) => {
+      delete ret.passwordHash;
+      if (ret.mfa) {
+        delete ret.mfa.secret;
+        delete ret.mfa.pendingSecret;
+        delete ret.mfa.pinHash;
+        delete ret.mfa.pendingPinHash;
+      }
+      return ret;
     },
+  },
 })
 export class User {
+  @Prop({ required: true, unique: true })
+  employeeCode!: string;
 
-    @Prop({ required: true, unique: true })
-    employeeCode!: string;
+  @Prop({ required: true })
+  firstName!: string;
 
-    @Prop({ required: true })
-    firstName!: string;
+  @Prop({ required: true })
+  lastName!: string;
 
-    @Prop({ required: true })
-    lastName!: string;
+  @Prop({ required: true, unique: true, lowercase: true, trim: true })
+  email!: string;
 
-    @Prop({ required: true, unique: true, lowercase: true, trim: true })
-    email!: string;
+  @Prop({ required: true })
+  passwordHash!: string;
 
-    @Prop({ required: true })
-    passwordHash!: string;
+  @Prop({ unique: true, sparse: true })
+  phone?: string;
 
-    @Prop({ unique: true, sparse: true })
-    phone?: string;
+  @Prop({ type: String, ref: 'Role', required: true })
+  role!: string;
 
-    @Prop({ type: String, ref: 'Role', required: true })
-    role!: string;
+  @Prop({ required: true })
+  branchId!: string;
 
-    @Prop({ required: true })
-    branchId!: string;
+  @Prop({ type: String, ref: 'Department' })
+  departmentId?: string;
 
-    @Prop({ type: String, ref: 'Department' })
-    departmentId?: string;
+  @Prop({ default: true })
+  isActive!: boolean;
 
-    @Prop({ default: true })
-    isActive!: boolean;
+  @Prop({ type: Mfa, default: () => ({}) })
+  mfa!: Mfa;
 
-    @Prop({ type: Mfa, default: () => ({}) })
-    mfa!: Mfa;
+  @Prop({ type: NotificationPrefs, default: () => ({}) })
+  notificationPrefs!: NotificationPrefs;
 
-    @Prop({ type: NotificationPrefs, default: () => ({}) })
-    notificationPrefs!: NotificationPrefs;
+  @Prop()
+  lastLoginAt?: Date;
 
-    @Prop()
-    lastLoginAt?: Date;
+  @Prop({ default: 0 })
+  failedLoginAttempts?: number;
 
-    @Prop({ default: 0 })
-    failedLoginAttempts?: number;
+  @Prop()
+  lockedUntil?: Date;
 
-    @Prop()
-    lockedUntil?: Date;
-
-    @Prop()
-    deactivatedAt?: Date;
+  @Prop()
+  deactivatedAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

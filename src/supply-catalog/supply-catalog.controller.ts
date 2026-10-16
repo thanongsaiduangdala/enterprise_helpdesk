@@ -1,16 +1,16 @@
 import {
-    Body,
-    Controller,
-    Delete,
-    Get,
-    Param,
-    Patch,
-    Post,
-    Query,
-    Req,
-    UploadedFile,
-    UseGuards,
-    UseInterceptors,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiQuery } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -28,74 +28,84 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class SupplyCatalogController {
-    constructor(
-        private catalogService: SupplyCatalogService,
-        private auditLogsService: AuditLogsService,
-    ) { }
+  constructor(
+    private catalogService: SupplyCatalogService,
+    private auditLogsService: AuditLogsService,
+  ) {}
 
-    @Post()
-    @RequirePermission('supplies', 'manage')
-    create(@Body() dto: CreateSupplyCatalogItemDto) {
-        return this.catalogService.create(dto);
+  @Post()
+  @RequirePermission('supplies', 'manage')
+  create(@Body() dto: CreateSupplyCatalogItemDto) {
+    return this.catalogService.create(dto);
+  }
+
+  @Get()
+  @RequirePermission('supplies', 'read')
+  @ApiQuery({
+    name: 'lowStockOnly',
+    required: false,
+    type: Boolean,
+    description: 'true = only items at/below their low-stock threshold',
+  })
+  findAll(@Query('lowStockOnly') lowStockOnly?: string) {
+    return this.catalogService.findAll(lowStockOnly === 'true');
+  }
+
+  @Post('bulk-import')
+  @RequirePermission('supplies', 'import')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  bulkImport(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException(
+        'No file uploaded — expected a CSV file under field name "file"',
+      );
     }
+    return this.catalogService.bulkImport(file.buffer);
+  }
 
-    @Get()
-    @RequirePermission('supplies', 'read')
-    @ApiQuery({ name: 'lowStockOnly', required: false, type: Boolean, description: 'true = only items at/below their low-stock threshold' })
-    findAll(@Query('lowStockOnly') lowStockOnly?: string) {
-        return this.catalogService.findAll(lowStockOnly === 'true');
-    }
+  @Get(':id')
+  @RequirePermission('supplies', 'read')
+  findOne(@Param('id') id: string) {
+    return this.catalogService.findOne(id);
+  }
 
-    @Post('bulk-import')
-    @RequirePermission('supplies', 'import')
-    @UseInterceptors(FileInterceptor('file'))
-    @ApiConsumes('multipart/form-data')
-    @ApiBody({
-        schema: {
-            type: 'object',
-            properties: { file: { type: 'string', format: 'binary' } },
-        },
-    })
-    bulkImport(@UploadedFile() file: Express.Multer.File) {
-        if (!file) {
-            throw new BadRequestException('No file uploaded — expected a CSV file under field name "file"');
-        }
-        return this.catalogService.bulkImport(file.buffer);
-    }
+  @Patch(':id')
+  @RequirePermission('supplies', 'update')
+  update(@Param('id') id: string, @Body() dto: UpdateSupplyCatalogItemDto) {
+    return this.catalogService.update(id, dto);
+  }
 
-    @Get(':id')
-    @RequirePermission('supplies', 'read')
-    findOne(@Param('id') id: string) {
-        return this.catalogService.findOne(id);
-    }
+  @Patch(':id/adjust-stock')
+  @RequirePermission('supplies', 'update')
+  async adjustStock(
+    @Param('id') id: string,
+    @Body() dto: AdjustStockDto,
+    @Req() req: any,
+  ) {
+    const before = (await this.catalogService.findOne(id)).toObject();
+    const after = await this.catalogService.adjustStock(id, dto.delta);
+    await this.auditLogsService.log(
+      req.user.userId,
+      'CATALOG_STOCK_ADJUSTED',
+      'SupplyCatalogItem',
+      id,
+      { stockQty: before.stockQty },
+      { stockQty: after.stockQty, delta: dto.delta },
+      req.ip,
+    );
+    return after;
+  }
 
-    @Patch(':id')
-    @RequirePermission('supplies', 'update')
-    update(@Param('id') id: string, @Body() dto: UpdateSupplyCatalogItemDto) {
-        return this.catalogService.update(id, dto);
-    }
-
-
-
-    @Patch(':id/adjust-stock')
-    @RequirePermission('supplies', 'update')
-    async adjustStock(@Param('id') id: string, @Body() dto: AdjustStockDto, @Req() req: any) {
-        const before = (await this.catalogService.findOne(id)).toObject();
-        const after = await this.catalogService.adjustStock(id, dto.delta);
-        await this.auditLogsService.log(
-            req.user.userId, 'CATALOG_STOCK_ADJUSTED', 'SupplyCatalogItem', id,
-            { stockQty: before.stockQty }, { stockQty: after.stockQty, delta: dto.delta }, req.ip,
-        );
-        return after;
-    }
-
-
-
-
-
-    @Delete(':id')
-    @RequirePermission('supplies', 'delete')
-    remove(@Param('id') id: string) {
-        return this.catalogService.remove(id);
-    }
+  @Delete(':id')
+  @RequirePermission('supplies', 'delete')
+  remove(@Param('id') id: string) {
+    return this.catalogService.remove(id);
+  }
 }

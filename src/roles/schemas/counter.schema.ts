@@ -5,11 +5,11 @@ export type CounterDocument = Counter & Omit<Document, '_id'>;
 
 @Schema()
 export class Counter {
-    @Prop({ required: true })
-    _id!: string;
+  @Prop({ required: true })
+  _id!: string;
 
-    @Prop({ default: 0 })
-    seq!: number;
+  @Prop({ default: 0 })
+  seq!: number;
 }
 
 export const CounterSchema = SchemaFactory.createForClass(Counter);

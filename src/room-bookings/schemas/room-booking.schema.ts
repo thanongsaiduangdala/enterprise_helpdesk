@@ -4,19 +4,19 @@ import { Document, Types } from 'mongoose';
 export type RoomBookingDocument = RoomBooking & Omit<Document, '_id'>;
 
 export enum BookingStatus {
-    PENDING = 'PENDING',
-    CONFIRMED = 'CONFIRMED',
-    REJECTED = 'REJECTED',
-    CANCELLED = 'CANCELLED',
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  REJECTED = 'REJECTED',
+  CANCELLED = 'CANCELLED',
 }
 
 @Schema({ _id: false })
 class Recurrence {
-    @Prop({ required: true, enum: ['daily', 'weekly'] })
-    frequency!: string;
+  @Prop({ required: true, enum: ['daily', 'weekly'] })
+  frequency!: string;
 
-    @Prop({ required: true })
-    until!: Date;
+  @Prop({ required: true })
+  until!: Date;
 }
 
 // ປະຫວັດການປ່ຽນແປງຂອງການຈອງ (timeline) — ເກັບແບບ append-only ໝົດທຸກເຫດການ:
@@ -24,37 +24,37 @@ class Recurrence {
 // ເພື່ອໃນຄລິກລາຍການຈອງແລ້ວເຫັນ "ປະຫວັດວ່າເກີດຫຍັງຂຶ້ນແດ່" ໂດຍບໍ່ສູນເສຍຂໍ້ມູນເວລາເດີມ
 @Schema({ _id: false })
 export class RoomBookingHistoryEntry {
-    @Prop({ required: true })
-    action!: string; // CREATED | APPROVED | REJECTED | RESCHEDULE_REQUESTED | REQUEST_UPDATED | RESCHEDULE_APPROVED | RESCHEDULE_REJECTED | CANCELLED | NO_SHOW | CHECKED_IN | CHECKED_OUT
+  @Prop({ required: true })
+  action!: string; // CREATED | APPROVED | REJECTED | RESCHEDULE_REQUESTED | REQUEST_UPDATED | RESCHEDULE_APPROVED | RESCHEDULE_REJECTED | CANCELLED | NO_SHOW | CHECKED_IN | CHECKED_OUT
 
-    // ເວລາເດີມ (ກ່ອນປ່ຽນ) ສຳລັບເຫດການທີ່ກ່ຽວກັບເວລາ
-    @Prop()
-    fromStartAt?: Date;
+  // ເວລາເດີມ (ກ່ອນປ່ຽນ) ສຳລັບເຫດການທີ່ກ່ຽວກັບເວລາ
+  @Prop()
+  fromStartAt?: Date;
 
-    @Prop()
-    fromEndAt?: Date;
+  @Prop()
+  fromEndAt?: Date;
 
-    // ເວລາໃໝ່ (ຫຼັງປ່ຽນ/ທີ່ຂໍ) ສຳລັບເຫດການທີ່ກ່ຽວກັບເວລາ
-    @Prop()
-    toStartAt?: Date;
+  // ເວລາໃໝ່ (ຫຼັງປ່ຽນ/ທີ່ຂໍ) ສຳລັບເຫດການທີ່ກ່ຽວກັບເວລາ
+  @Prop()
+  toStartAt?: Date;
 
-    @Prop()
-    toEndAt?: Date;
+  @Prop()
+  toEndAt?: Date;
 
-    // ຜູ້ກະທຳ (ຜູ້ຂໍ/ຜູ້ອະນຸມັດ) — ອາດບໍ່ມີສຳລັບເຫດການອັດຕະໂນມັດ (no-show)
-    @Prop({ type: Types.ObjectId, ref: 'User' })
-    actorId?: Types.ObjectId;
+  // ຜູ້ກະທຳ (ຜູ້ຂໍ/ຜູ້ອະນຸມັດ) — ອາດບໍ່ມີສຳລັບເຫດການອັດຕະໂນມັດ (no-show)
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  actorId?: Types.ObjectId;
 
-    @Prop()
-    note?: string;
+  @Prop()
+  note?: string;
 
-    @Prop({ required: true, default: Date.now })
-    at!: Date;
+  @Prop({ required: true, default: Date.now })
+  at!: Date;
 }
 
 export enum InviteMode {
-    PRIVATE = 'PRIVATE', // ມີແຕ່ຄົນໃນລາຍຊື່ເທົ່ານັ້ນທີ່ເຂົ້າໄດ້ — ຜູ້ຈອງເພີ່ມຄົນເທື່ອລະຄົນ
-    PUBLIC = 'PUBLIC', // ໃຜສະແກນ QR ກໍເຂົ້າໄດ້
+  PRIVATE = 'PRIVATE', // ມີແຕ່ຄົນໃນລາຍຊື່ເທົ່ານັ້ນທີ່ເຂົ້າໄດ້ — ຜູ້ຈອງເພີ່ມຄົນເທື່ອລະຄົນ
+  PUBLIC = 'PUBLIC', // ໃຜສະແກນ QR ກໍເຂົ້າໄດ້
 }
 
 export type CheckInResult = 'ADMITTED' | 'DENIED';
@@ -62,154 +62,154 @@ export type CheckInResult = 'ADMITTED' | 'DENIED';
 // ແຂກທີ່ຖືກເຊີນແບບ PRIVATE — ແຕ່ລະຄົນມີ token ສ່ວນຕົວ (ໃຊ້ສ້າງ QR ສະເພາະຄົນ)
 @Schema()
 export class BookingInvitee {
-    _id?: Types.ObjectId;
+  _id?: Types.ObjectId;
 
-    @Prop({ required: true })
-    name!: string;
+  @Prop({ required: true })
+  name!: string;
 
-    @Prop()
-    email?: string;
+  @Prop()
+  email?: string;
 
-    @Prop()
-    phone?: string;
+  @Prop()
+  phone?: string;
 
-    @Prop()
-    userId?: string;
+  @Prop()
+  userId?: string;
 
-    @Prop()
-    employeeCode?: string;
+  @Prop()
+  employeeCode?: string;
 
-    @Prop({ required: true })
-    token!: string;
+  @Prop({ required: true })
+  token!: string;
 
-    @Prop({ default: Date.now })
-    addedAt!: Date;
+  @Prop({ default: Date.now })
+  addedAt!: Date;
 
-    // ຜູ້ຈອງລຶບອອກຈາກລາຍຊື່ — ເກັບໄວ້ (ບໍ່ລຶບແທ້) ເພື່ອໃຫ້ QR ເກົ່າຖືກປະຕິເສດ ແລະ ຍັງມີຫຼັກຖານໃນລາຍງານ
-    @Prop()
-    revokedAt?: Date;
+  // ຜູ້ຈອງລຶບອອກຈາກລາຍຊື່ — ເກັບໄວ້ (ບໍ່ລຶບແທ້) ເພື່ອໃຫ້ QR ເກົ່າຖືກປະຕິເສດ ແລະ ຍັງມີຫຼັກຖານໃນລາຍງານ
+  @Prop()
+  revokedAt?: Date;
 
-    @Prop()
-    joinedAt?: Date;
+  @Prop()
+  joinedAt?: Date;
 }
-export const BookingInviteeSchema = SchemaFactory.createForClass(BookingInvitee);
+export const BookingInviteeSchema =
+  SchemaFactory.createForClass(BookingInvitee);
 
 // ບັນທຶກທຸກການສະແກນ QR ທີ່ເຂົ້າມາ (ຜ່ານ ແລະ ຖືກປະຕິເສດ) — ໃຊ້ອອກລາຍງານ CSV/PDF
 @Schema({ _id: false })
 export class BookingCheckIn {
-    @Prop({ required: true })
-    name!: string;
+  @Prop({ required: true })
+  name!: string;
 
-    @Prop()
-    contact?: string;
+  @Prop()
+  contact?: string;
 
-    @Prop()
-    inviteeId?: string;
+  @Prop()
+  inviteeId?: string;
 
-    @Prop()
-    userId?: string;
+  @Prop()
+  userId?: string;
 
-    @Prop()
-    employeeCode?: string;
+  @Prop()
+  employeeCode?: string;
 
-    @Prop({ required: true, enum: ['ADMITTED', 'DENIED'] })
-    result!: CheckInResult;
+  @Prop({ required: true, enum: ['ADMITTED', 'DENIED'] })
+  result!: CheckInResult;
 
-    @Prop()
-    reason?: string;
+  @Prop()
+  reason?: string;
 
-    @Prop({ required: true, enum: ['DOOR_QR', 'PERSONAL_QR'] })
-    via!: string;
+  @Prop({ required: true, enum: ['DOOR_QR', 'PERSONAL_QR'] })
+  via!: string;
 
-    @Prop({ required: true, default: Date.now })
-    at!: Date;
+  @Prop({ required: true, default: Date.now })
+  at!: Date;
 }
 
 @Schema({ timestamps: true })
 export class RoomBooking {
-    @Prop({ type: String })
-    _id!: string;
+  @Prop({ type: String })
+  _id!: string;
 
-    @Prop({ required: true })
-    title!: string;
+  @Prop({ required: true })
+  title!: string;
 
-    @Prop({ type: String, ref: 'Room', required: true })
-    roomId!: string;
+  @Prop({ type: String, ref: 'Room', required: true })
+  roomId!: string;
 
-    @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-    bookedBy!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  bookedBy!: Types.ObjectId;
 
-    @Prop({ required: true })
-    startAt!: Date;
+  @Prop({ required: true })
+  startAt!: Date;
 
-    @Prop({ required: true })
-    endAt!: Date;
+  @Prop({ required: true })
+  endAt!: Date;
 
-    @Prop({ type: Recurrence })
-    recurrence?: Recurrence;
+  @Prop({ type: Recurrence })
+  recurrence?: Recurrence;
 
+  @Prop()
+  seriesId?: string;
 
-    @Prop()
-    seriesId?: string;
+  @Prop({ enum: BookingStatus, default: BookingStatus.PENDING })
+  status!: BookingStatus;
 
-    @Prop({ enum: BookingStatus, default: BookingStatus.PENDING })
-    status!: BookingStatus;
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  reviewedBy?: Types.ObjectId;
 
-    @Prop({ type: Types.ObjectId, ref: 'User' })
-    reviewedBy?: Types.ObjectId;
+  @Prop()
+  reviewedAt?: Date;
 
-    @Prop()
-    reviewedAt?: Date;
+  @Prop()
+  rejectionReason?: string;
 
-    @Prop()
-    rejectionReason?: string;
+  // ຄຳຮ້ອງເລື່ອນເວລາທີ່ລໍຖ້າການອະນຸມັດ — ເກັບໄວ້ແຍກຕ່າງຫາກ ເພື່ອບໍ່ໃຫ້ກະທົບເວລາເດີມທີ່
+  // ອະນຸມັດແລ້ວ (startAt/endAt). ຖ້າອະນຸມັດ ຈະຍ້າຍໄປເວລາໃໝ່; ຖ້າປະຕິເສດ ຈະລຶບອອກ ແລະ ຄົງເວລາເດີມໄວ້
+  @Prop()
+  pendingStartAt?: Date;
 
-    // ຄຳຮ້ອງເລື່ອນເວລາທີ່ລໍຖ້າການອະນຸມັດ — ເກັບໄວ້ແຍກຕ່າງຫາກ ເພື່ອບໍ່ໃຫ້ກະທົບເວລາເດີມທີ່
-    // ອະນຸມັດແລ້ວ (startAt/endAt). ຖ້າອະນຸມັດ ຈະຍ້າຍໄປເວລາໃໝ່; ຖ້າປະຕິເສດ ຈະລຶບອອກ ແລະ ຄົງເວລາເດີມໄວ້
-    @Prop()
-    pendingStartAt?: Date;
+  @Prop()
+  pendingEndAt?: Date;
 
-    @Prop()
-    pendingEndAt?: Date;
+  @Prop()
+  pendingRequestedAt?: Date;
 
-    @Prop()
-    pendingRequestedAt?: Date;
+  // ເຫດຜົນທີ່ຜູ້ອະນຸມັດບໍ່ອະນຸມັດ "ຄຳຮ້ອງເລື່ອນເວລາ" — ເກັບແຍກຕ່າງຫາກຈາກ rejectionReason ເພື່ອບໍ່ໃຫ້ສັບສົນ
+  // ກັບການປະຕິເສດການຈອງທັງໝົດ (booking ຍັງຄົງອະນຸມັດຢູ່ເວລາເດີມ ເມື່ອຖືກປະຕິເສດຄຳຮ້ອງເລື່ອນເວລາ)
+  @Prop()
+  rescheduleRejectionReason?: string;
 
-    // ເຫດຜົນທີ່ຜູ້ອະນຸມັດບໍ່ອະນຸມັດ "ຄຳຮ້ອງເລື່ອນເວລາ" — ເກັບແຍກຕ່າງຫາກຈາກ rejectionReason ເພື່ອບໍ່ໃຫ້ສັບສົນ
-    // ກັບການປະຕິເສດການຈອງທັງໝົດ (booking ຍັງຄົງອະນຸມັດຢູ່ເວລາເດີມ ເມື່ອຖືກປະຕິເສດຄຳຮ້ອງເລື່ອນເວລາ)
-    @Prop()
-    rescheduleRejectionReason?: string;
+  // ບັນທຶກເວລາເຂົ້າ/ອອກຫ້ອງແທ້ໆ (ບໍ່ແມ່ນແຄ່ເວລາທີ່ຈອງໄວ້) — ໃຊ້ຢືນຢັນວ່າກຳລັງໃຊ້ຫ້ອງແທ້ໆ ແລະ ກວດ no-show
+  @Prop()
+  checkedInAt?: Date;
 
-    // ບັນທຶກເວລາເຂົ້າ/ອອກຫ້ອງແທ້ໆ (ບໍ່ແມ່ນແຄ່ເວລາທີ່ຈອງໄວ້) — ໃຊ້ຢືນຢັນວ່າກຳລັງໃຊ້ຫ້ອງແທ້ໆ ແລະ ກວດ no-show
-    @Prop()
-    checkedInAt?: Date;
+  @Prop()
+  checkedOutAt?: Date;
 
-    @Prop()
-    checkedOutAt?: Date;
+  // ລາຍຊື່ຄົນເຂົ້າຮ່ວມປະຊຸມ (ຊື່ຄົນ, ບໍ່ຈຳກັດວ່າຕ້ອງເປັນຜູ້ໃຊ້ໃນລະບົບ — ອາດມີແຂກພາຍນອກ)
+  @Prop({ type: [String], default: [] })
+  attendees!: string[];
 
-    // ລາຍຊື່ຄົນເຂົ້າຮ່ວມປະຊຸມ (ຊື່ຄົນ, ບໍ່ຈຳກັດວ່າຕ້ອງເປັນຜູ້ໃຊ້ໃນລະບົບ — ອາດມີແຂກພາຍນອກ)
-    @Prop({ type: [String], default: [] })
-    attendees!: string[];
+  // ===== ເຊີນຄົນເຂົ້າຫ້ອງດ້ວຍ QR =====
+  // undefined = ຍັງບໍ່ເປີດການເຊີນ
+  @Prop({ enum: InviteMode })
+  inviteMode?: InviteMode;
 
-    // ===== ເຊີນຄົນເຂົ້າຫ້ອງດ້ວຍ QR =====
-    // undefined = ຍັງບໍ່ເປີດການເຊີນ
-    @Prop({ enum: InviteMode })
-    inviteMode?: InviteMode;
+  // token ຂອງ QR ກາງ (ປະຕູຫ້ອງ) — ໃຊ້ໃນໂໝດ PUBLIC (ໃຜກໍສະແກນໄດ້) ແລະ ໂໝດ PRIVATE (ຕ້ອງກວດຊື່ກັບລາຍຊື່)
+  // select:false ກັນບໍ່ໃຫ້ token ຫຼຸດອອກໄປກັບ list API ອື່ນໆ (ຕາຕະລາງ/ການຈອງຂອງຂ້ອຍ/ລໍຖ້າອະນຸມັດ) — ຕ້ອງ select('+...') ຊັດເຈນ
+  @Prop({ select: false })
+  inviteToken?: string;
 
-    // token ຂອງ QR ກາງ (ປະຕູຫ້ອງ) — ໃຊ້ໃນໂໝດ PUBLIC (ໃຜກໍສະແກນໄດ້) ແລະ ໂໝດ PRIVATE (ຕ້ອງກວດຊື່ກັບລາຍຊື່)
-    // select:false ກັນບໍ່ໃຫ້ token ຫຼຸດອອກໄປກັບ list API ອື່ນໆ (ຕາຕະລາງ/ການຈອງຂອງຂ້ອຍ/ລໍຖ້າອະນຸມັດ) — ຕ້ອງ select('+...') ຊັດເຈນ
-    @Prop({ select: false })
-    inviteToken?: string;
+  @Prop({ type: [BookingInviteeSchema], default: [], select: false })
+  invitees!: BookingInvitee[];
 
-    @Prop({ type: [BookingInviteeSchema], default: [], select: false })
-    invitees!: BookingInvitee[];
+  @Prop({ type: [BookingCheckIn], default: [], select: false })
+  checkIns!: BookingCheckIn[];
 
-    @Prop({ type: [BookingCheckIn], default: [], select: false })
-    checkIns!: BookingCheckIn[];
-
-    // ປະຫວັດການປ່ຽນແປງທັງໝົດຂອງການຈອງນີ້ (ເບິ່ງໄດ້ໃນ popup ລາຍລະອຽດ)
-    @Prop({ type: [RoomBookingHistoryEntry], default: [] })
-    history!: RoomBookingHistoryEntry[];
+  // ປະຫວັດການປ່ຽນແປງທັງໝົດຂອງການຈອງນີ້ (ເບິ່ງໄດ້ໃນ popup ລາຍລະອຽດ)
+  @Prop({ type: [RoomBookingHistoryEntry], default: [] })
+  history!: RoomBookingHistoryEntry[];
 }
 
 export const RoomBookingSchema = SchemaFactory.createForClass(RoomBooking);
