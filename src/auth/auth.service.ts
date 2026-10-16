@@ -8,6 +8,7 @@ import { UsersService } from '../users/users.service';
 import { SessionsService, DeviceInfoInput } from '../sessions/sessions.service';
 import { MfaAttemptsService } from '../mfa-attempts/mfa-attempts.service';
 import { MailService } from '../mail/mail.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { ALL_MFA_METHODS, MfaMethod, getEnabledMethods, verifiersFor } from '../common/utils/mfa-methods.util';
 
 const MFA_CHALLENGE_TTL_SECONDS = 5 * 60;
@@ -17,6 +18,10 @@ const MFA_STEPUP_LOCKOUT_TTL_SECONDS = 15 * 60;
 const MFA_EMAIL_CODE_TTL_SECONDS = 10 * 60;
 const MFA_SETUP_REQUIRED_TTL = '15m';
 const PASSWORD_RESET_LOCKOUT_TTL_SECONDS = 15 * 60;
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+const ANONYMOUS_ACTOR_ID = '000000000000000000000000';
+const DUMMY_PASSWORD_HASH = '$2b$10$a5nY6bYAKZgCKV7w/LWFJeDEnsM34MzXGyyUzBwKkTNykFMz7IXFS';
 
 // PIN ທີ່ຜູ້ໃຊ້ຕັ້ງເອງ: ຕົວເລກ 6–8 ຫຼັກ (ປ່ຽນໄດ້ທີ່ນີ້ + regex ໃນ setup-mfa.dto.ts)
 const PIN_PATTERN = /^\d{6,8}$/;
@@ -47,6 +52,7 @@ export class AuthService {
         private sessionsService: SessionsService,
         private mfaAttemptsService: MfaAttemptsService,
         private mailService: MailService,
+        private auditLogsService: AuditLogsService,
     ) { }
 
     private generateEmailCode(): string {
@@ -96,12 +102,65 @@ export class AuthService {
 
     async login(email: string, password: string, deviceInfo: DeviceInfoInput) {
         const user = await this.usersService.findByEmail(email);
-        if (!user) throw new UnauthorizedException('Invalid credentials');
+        if (!user) {
+            await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+            await this.auditLogsService.log(
+                ANONYMOUS_ACTOR_ID,
+                'LOGIN_FAILED',
+                'User',
+                email,
+                undefined,
+                { email, reason: 'unknown_email' },
+                deviceInfo.ip,
+            );
+            throw new UnauthorizedException('Invalid credentials');
+        }
+
+        if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+            await this.auditLogsService.log(
+                String(user._id),
+                'LOGIN_BLOCKED',
+                'User',
+                String(user._id),
+                undefined,
+                { email: user.email, reason: 'locked' },
+                deviceInfo.ip,
+            );
+            throw new UnauthorizedException('ບັນຊີຖືກລັອກຊົ່ວຄາວ ເນື່ອງຈາກໃສ່ລະຫັດຜ່ານຜິດຫຼາຍເທື່ອ — ກະລຸນາລອງໃໝ່ພາຍຫຼັງ');
+        }
 
         const passwordMatches = await bcrypt.compare(password, user.passwordHash);
-        if (!passwordMatches) throw new UnauthorizedException('Invalid credentials');
+        if (!passwordMatches) {
+            const { locked } = await this.usersService.recordLoginFailure(
+                String(user._id),
+                MAX_LOGIN_ATTEMPTS,
+                LOGIN_LOCKOUT_MS,
+            );
+            await this.auditLogsService.log(
+                String(user._id),
+                locked ? 'LOGIN_LOCKED' : 'LOGIN_FAILED',
+                'User',
+                String(user._id),
+                undefined,
+                { email: user.email, reason: 'bad_password' },
+                deviceInfo.ip,
+            );
+            if (locked) {
+                throw new UnauthorizedException('ໃສ່ລະຫັດຜິດຫຼາຍເທື່ອ — ບັນຊີຖືກລັອກຊົ່ວຄາວ 15 ນາທີ');
+            }
+            throw new UnauthorizedException('Invalid credentials');
+        }
 
         if (!user.isActive) {
+            await this.auditLogsService.log(
+                String(user._id),
+                'LOGIN_FAILED',
+                'User',
+                String(user._id),
+                undefined,
+                { email: user.email, reason: 'inactive' },
+                deviceInfo.ip,
+            );
             throw new UnauthorizedException('This account has been deactivated');
         }
 
@@ -134,9 +193,17 @@ export class AuthService {
                 { sub: user._id, purpose: 'mfa_setup_required' },
                 { expiresIn: MFA_SETUP_REQUIRED_TTL },
             );
+            await this.auditLogsService.log(
+                String(user._id),
+                'MFA_SETUP_REQUIRED',
+                'User',
+                String(user._id),
+                undefined,
+                { email: user.email, reason: 'role_requires_mfa' },
+                deviceInfo.ip,
+            );
             return { mfaSetupRequired: true, setupToken };
         }
-
         return this.completeLogin(user, deviceInfo);
     }
 
@@ -154,6 +221,16 @@ export class AuthService {
             sessionId: String(session._id),
         };
         const token = this.jwtService.sign(payload);
+        await this.usersService.recordLoginSuccess(String(user._id));
+        await this.auditLogsService.log(
+            String(user._id),
+            'LOGIN_SUCCESS',
+            'User',
+            String(user._id),
+            undefined,
+            { email: user.email, sessionId: String(session._id) },
+            deviceInfo.ip,
+        );
 
         return { accessToken: token };
     }
@@ -217,8 +294,13 @@ export class AuthService {
         confirmPin?: string,
         verifyMethod?: MfaMethod,
         verifyCode?: string,
+        forcedSetup = false,
     ) {
         const user = await this.usersService.findOneRaw(userId);
+
+        if (forcedSetup && method !== 'email') {
+            throw new BadRequestException('ການຕັ້ງຄ່າ MFA ຄັ້ງທຳອິດຕ້ອງຢືນຢັນດ້ວຍອີເມວກ່ອນ — ຕັ້ງຄ່າອີເມວໃຫ້ສຳເລັດ ແລ້ວຄ່ອຍເພີ່ມ PIN ຫຼືແອັບ Authenticator ໃນໜ້າຕັ້ງຄ່າ');
+        }
 
         if (method === 'email' && getEnabledMethods(user.mfa).includes('email')) {
             throw new BadRequestException('Email MFA is already enabled');
@@ -308,6 +390,16 @@ export class AuthService {
         const updated = await this.usersService.confirmMfaEnabled(userId);
         const methods = getEnabledMethods(updated.mfa);
 
+        await this.auditLogsService.log(
+            String(userId),
+            'MFA_ENABLED',
+            'User',
+            String(userId),
+            undefined,
+            { method: pendingMethod, methods },
+            deviceInfo?.ip,
+        );
+
         if (deviceInfo) {
             const fullUser = await this.usersService.findOne(userId);
             const loginResult = await this.completeLogin(fullUser, deviceInfo);
@@ -330,7 +422,17 @@ export class AuthService {
         await this.assertStepUp(userId, method, verifyMethod, verifyCode);
 
         const updated = await this.usersService.removeMfaMethod(userId, method);
-        return { disabled: true, methods: getEnabledMethods(updated.mfa) };
+        const remaining = getEnabledMethods(updated.mfa);
+        await this.auditLogsService.log(
+            String(userId),
+            'MFA_DISABLED',
+            'User',
+            String(userId),
+            { method },
+            { methods: remaining },
+            undefined,
+        );
+        return { disabled: true, methods: remaining };
     }
 
     // ---- MFA at login ---------------------------------------------------------------
@@ -467,6 +569,16 @@ export class AuthService {
         await this.mfaAttemptsService.reset(lockoutKey);
         // ອອກຈາກລະບົບທຸກອຸປະກອນ — ຖ້າມີຄົນອື່ນຮູ້ລະຫັດເກົ່າຢູ່ ຈະຖືກເຕະອອກ
         await this.sessionsService.revokeAllForUser(String(user._id));
+
+        await this.auditLogsService.log(
+            String(user._id),
+            'PASSWORD_RESET',
+            'User',
+            String(user._id),
+            undefined,
+            { email: user.email },
+            undefined,
+        );
 
         return { reset: true };
     }

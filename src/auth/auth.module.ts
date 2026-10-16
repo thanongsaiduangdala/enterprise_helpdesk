@@ -6,6 +6,7 @@ import { UsersModule } from '../users/users.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { MfaAttemptsModule } from '../mfa-attempts/mfa-attempts.module';
 import { MailModule } from '../mail/mail.module';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
@@ -16,8 +17,9 @@ import { MfaSetupGuard } from './mfa-setup.guard';
     UsersModule,
     SessionsModule,
     MfaAttemptsModule,
-    MailModule,
-    PassportModule,
+        MailModule,
+        AuditLogsModule,
+        PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

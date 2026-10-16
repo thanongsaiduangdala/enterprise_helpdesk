@@ -4,8 +4,10 @@ import { RoomInvitesService } from './room-invites.service';
 import { JoinDto } from './dto/invite.dto';
 import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 
+const JOIN_RATE_LIMIT = Number(process.env.JOIN_RATE_LIMIT) || 120;
+
 @Controller('join')
-@Throttle({ default: { limit: 30, ttl: 60000 } })
+@Throttle({ default: { limit: JOIN_RATE_LIMIT, ttl: 60000 } })
 @UseGuards(OptionalJwtAuthGuard)
 export class RoomJoinController {
     constructor(private invites: RoomInvitesService) { }

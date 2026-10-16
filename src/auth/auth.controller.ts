@@ -92,6 +92,7 @@ export class AuthController {
             dto.confirmPin,
             dto.verifyMethod,
             dto.verifyCode,
+            req.user.purpose === 'mfa_setup_required',
         );
     }
 

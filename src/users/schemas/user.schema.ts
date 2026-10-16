@@ -100,6 +100,12 @@ export class User {
     @Prop()
     lastLoginAt?: Date;
 
+    @Prop({ default: 0 })
+    failedLoginAttempts?: number;
+
+    @Prop()
+    lockedUntil?: Date;
+
     @Prop()
     deactivatedAt?: Date;
 }

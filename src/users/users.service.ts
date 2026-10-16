@@ -148,6 +148,7 @@ export class UsersService {
         const u = await this.findByEmployeeCode(employeeCode);
         if (!u) throw new NotFoundException(`Employee code "${employeeCode}" not found`);
         return {
+            _id: String(u._id),
             employeeCode: u.employeeCode,
             firstName: u.firstName,
             lastName: u.lastName,
@@ -383,6 +384,30 @@ export class UsersService {
     async setPasswordHash(id: string, passwordHash: string) {
         const updated = await this.userModel.findByIdAndUpdate(id, { $set: { passwordHash } }).exec();
         if (!updated) throw new NotFoundException('User not found');
+    }
+
+    async recordLoginFailure(id: string, maxAttempts: number, lockMs: number) {
+        const user = await this.userModel.findById(id).exec();
+        if (!user) return { locked: false, attempts: 0 };
+        const attempts = (user.failedLoginAttempts ?? 0) + 1;
+        const locked = attempts >= maxAttempts;
+        await this.userModel
+            .findByIdAndUpdate(id, {
+                $set: locked
+                    ? { failedLoginAttempts: 0, lockedUntil: new Date(Date.now() + lockMs) }
+                    : { failedLoginAttempts: attempts },
+            })
+            .exec();
+        return { locked, attempts };
+    }
+
+    async recordLoginSuccess(id: string) {
+        await this.userModel
+            .findByIdAndUpdate(id, {
+                $set: { lastLoginAt: new Date(), failedLoginAttempts: 0 },
+                $unset: { lockedUntil: '' },
+            })
+            .exec();
     }
 
     async findOneRaw(id: string) {

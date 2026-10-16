@@ -44,9 +44,11 @@ export class PoprService {
             payload.procurement = { ...p };
         }
         if (dto.receiving) {
-            const { receivedDate, ...rest } = dto.receiving;
+            const { receivedDate, receivedByUserId, assetId, ...rest } = dto.receiving;
             payload.receiving = {
                 ...rest,
+                ...(assetId ? { assetId } : {}),
+                ...(receivedByUserId ? { receivedByUserId: new Types.ObjectId(receivedByUserId) } : {}),
                 ...(receivedDate ? { receivedDate: new Date(receivedDate) } : {}),
             };
         }
@@ -54,9 +56,11 @@ export class PoprService {
             payload.preparation = { ...dto.preparation };
         }
         if (dto.release) {
-            const { deliveryDate, ...rest } = dto.release;
+            const { deliveryDate, deliveredToUserId, assignedUserId, ...rest } = dto.release;
             payload.release = {
                 ...rest,
+                ...(deliveredToUserId ? { deliveredToUserId: new Types.ObjectId(deliveredToUserId) } : {}),
+                ...(assignedUserId ? { assignedUserId: new Types.ObjectId(assignedUserId) } : {}),
                 ...(deliveryDate ? { deliveryDate: new Date(deliveryDate) } : {}),
             };
         }
@@ -139,6 +143,10 @@ export class PoprService {
             .find(query)
             .sort({ createdAt: -1 })
             .populate('createdBy', 'firstName lastName email employeeCode')
+            .populate('receiving.receivedByUserId', 'firstName lastName employeeCode')
+            .populate('release.deliveredToUserId', 'firstName lastName employeeCode')
+            .populate('release.assignedUserId', 'firstName lastName employeeCode')
+            .populate('receiving.assetId', 'assetTag type status')
             .exec();
     }
 
@@ -146,6 +154,10 @@ export class PoprService {
         const record = await this.poprModel
             .findById(id)
             .populate('createdBy', 'firstName lastName email employeeCode')
+            .populate('receiving.receivedByUserId', 'firstName lastName employeeCode')
+            .populate('release.deliveredToUserId', 'firstName lastName employeeCode')
+            .populate('release.assignedUserId', 'firstName lastName employeeCode')
+            .populate('receiving.assetId', 'assetTag type status')
             .exec();
         if (!record) throw new NotFoundException('POPR record not found');
         return record;
@@ -155,8 +167,13 @@ export class PoprService {
         const record = await this.poprModel.findById(id).exec();
         if (!record) throw new NotFoundException('POPR record not found');
 
+        if (record.status === PoprStatus.COMPLETED) {
+            throw new BadRequestException('POPR ທີ່ປິດສຳເລັດແລ້ວ ບໍ່ສາມາດແກ້ໄຂໄດ້');
+        }
+
         const payload = this.buildPayload(dto);
         Object.assign(record, payload);
+        this.clearUnlinkedRefs(record, dto);
 
         if (dto.status === PoprStatus.COMPLETED) {
             this.assertCompletable(record);
@@ -164,6 +181,19 @@ export class PoprService {
             if (!record.completedAt) record.completedAt = new Date();
         }
         return record.save();
+    }
+
+    private clearUnlinkedRefs(record: PoprRecordDocument, dto: CreatePoprRecordDto | UpdatePoprRecordDto) {
+        const rec = dto.receiving;
+        if (rec) {
+            if ('assetId' in rec && !rec.assetId) record.set('receiving.assetId', undefined);
+            if ('receivedByUserId' in rec && !rec.receivedByUserId) record.set('receiving.receivedByUserId', undefined);
+        }
+        const rel = dto.release;
+        if (rel) {
+            if ('deliveredToUserId' in rel && !rel.deliveredToUserId) record.set('release.deliveredToUserId', undefined);
+            if ('assignedUserId' in rel && !rel.assignedUserId) record.set('release.assignedUserId', undefined);
+        }
     }
 
     async complete(id: string) {

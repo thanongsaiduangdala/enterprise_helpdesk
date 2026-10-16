@@ -200,6 +200,18 @@ export class AssetsService {
         return this.assetModel.findOne({ assetTag: new RegExp(`^${escaped}$`, 'i') }).session(session ?? null).exec();
     }
 
+    async lookupByTagOrId(identifier: string) {
+        const asset = await this.findByTagOrId(identifier);
+        if (!asset) throw new NotFoundException(`Asset "${identifier}" not found`);
+        return {
+            _id: String(asset._id),
+            assetTag: asset.assetTag,
+            type: asset.type,
+            status: asset.status,
+            catalogItemId: asset.catalogItemId,
+        };
+    }
+
 
     async update(id: string, dto: UpdateAssetDto) {
         const asset = await this.assetModel.findByIdAndUpdate(id, dto, { new: true }).exec();

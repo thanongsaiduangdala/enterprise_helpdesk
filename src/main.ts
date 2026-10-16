@@ -1,4 +1,5 @@
 import { NestFactory } from "@nestjs/core";
+import { NestExpressApplication } from "@nestjs/platform-express";
 import { ValidationPipe } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
@@ -8,8 +9,17 @@ import { HttpExceptionFilter } from "./common/filters/http-exception/http-except
 
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.setGlobalPrefix('api');
+
+  const trustProxy = process.env.TRUST_PROXY;
+  if (trustProxy) {
+    const numeric = Number(trustProxy);
+    app.set(
+      'trust proxy',
+      Number.isNaN(numeric) ? (trustProxy === 'true' ? 1 : trustProxy) : numeric,
+    );
+  }
 
   const allowedOrigins = (process.env.FRONTEND_URLS || 'http://localhost:5173').split(',');
   app.enableCors({

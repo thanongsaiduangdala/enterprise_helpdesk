@@ -105,11 +105,17 @@ export class ReceivingDetails {
     @Prop()
     assetTag?: string;
 
+    @Prop({ type: String, ref: 'Asset' })
+    assetId?: string;
+
     @Prop({ default: false })
     assetRegistered!: boolean;
 
     @Prop()
     receivedBy?: string;
+
+    @Prop({ type: Types.ObjectId, ref: 'User' })
+    receivedByUserId?: Types.ObjectId;
 
     @Prop()
     custodian?: string;
@@ -165,8 +171,14 @@ export class ReleaseDetails {
     @Prop()
     deliveredTo?: string;
 
+    @Prop({ type: Types.ObjectId, ref: 'User' })
+    deliveredToUserId?: Types.ObjectId;
+
     @Prop()
     assignedUser?: string;
+
+    @Prop({ type: Types.ObjectId, ref: 'User' })
+    assignedUserId?: Types.ObjectId;
 
     @Prop()
     deliveryDate?: Date;

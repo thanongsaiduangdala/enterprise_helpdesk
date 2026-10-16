@@ -4,6 +4,7 @@ import {
     IsDateString,
     IsEnum,
     IsInt,
+    IsMongoId,
     IsNumber,
     IsOptional,
     IsString,
@@ -121,6 +122,11 @@ export class ReceivingDto {
     @IsString()
     assetTag?: string;
 
+    @ApiPropertyOptional({ example: 'AS001', description: 'Asset._id from the asset registry (links POPR to a real asset)' })
+    @IsOptional()
+    @IsString()
+    assetId?: string;
+
     @ApiPropertyOptional({ example: true })
     @IsOptional()
     @IsBoolean()
@@ -130,6 +136,11 @@ export class ReceivingDto {
     @IsOptional()
     @IsString()
     receivedBy?: string;
+
+    @ApiPropertyOptional({ example: '65f1a2b3c4d5e6f708192a3b', description: 'User._id of the operator who received the item' })
+    @IsOptional()
+    @IsMongoId()
+    receivedByUserId?: string;
 
     @ApiPropertyOptional({ example: 'IT Department' })
     @IsOptional()
@@ -212,10 +223,20 @@ export class ReleaseDto {
     @IsString()
     deliveredTo?: string;
 
+    @ApiPropertyOptional({ example: '65f1a2b3c4d5e6f708192a3b', description: 'User._id of the recipient when delivered to a person' })
+    @IsOptional()
+    @IsMongoId()
+    deliveredToUserId?: string;
+
     @ApiPropertyOptional({ example: 'Somchai S.' })
     @IsOptional()
     @IsString()
     assignedUser?: string;
+
+    @ApiPropertyOptional({ example: '65f1a2b3c4d5e6f708192a3b', description: 'User._id of the user the equipment was assigned to' })
+    @IsOptional()
+    @IsMongoId()
+    assignedUserId?: string;
 
     @ApiPropertyOptional({ example: '2026-10-20' })
     @IsOptional()
