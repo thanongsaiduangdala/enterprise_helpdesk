@@ -2,12 +2,14 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { ResponseInterceptor } from './common/interceptors/response/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.use(helmet());
   app.setGlobalPrefix('api');
 
   const trustProxy = process.env.TRUST_PROXY;

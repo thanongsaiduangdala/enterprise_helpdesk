@@ -14,7 +14,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { randomBytes } from 'crypto';
-import { extname, join } from 'path';
+import { basename, extname, join } from 'path';
 import { existsSync, unlinkSync } from 'fs';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -29,6 +29,15 @@ const ALLOWED_MIME_TYPES = [
   'image/webp',
 ];
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+const UPLOAD_FILENAME_PATTERN = /^[a-f0-9]{32}(\.[a-z0-9]+)?$/i;
+
+function resolveUploadPath(filename: string): string {
+  const safe = basename(filename);
+  if (safe !== filename || !UPLOAD_FILENAME_PATTERN.test(safe)) {
+    throw new NotFoundException('File not found');
+  }
+  return join(UPLOAD_DIR, safe);
+}
 
 @Controller('uploads')
 export class UploadsController {
@@ -67,8 +76,7 @@ export class UploadsController {
 
   @Get(':filename')
   serve(@Param('filename') filename: string, @Res() res: Response) {
-    // filename is generated server-side (hex + extname), safe to join directly
-    const filePath = join(UPLOAD_DIR, filename);
+    const filePath = resolveUploadPath(filename);
     if (!existsSync(filePath)) {
       throw new NotFoundException('File not found');
     }
@@ -79,7 +87,7 @@ export class UploadsController {
   @Delete(':filename')
   @UseGuards(JwtAuthGuard)
   remove(@Param('filename') filename: string) {
-    const filePath = join(UPLOAD_DIR, filename);
+    const filePath = resolveUploadPath(filename);
     if (!existsSync(filePath)) {
       throw new NotFoundException('File not found');
     }
