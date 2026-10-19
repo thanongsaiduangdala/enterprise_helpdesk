@@ -33,6 +33,20 @@ const NO_SHOW_GRACE_MINUTES = 15;
 // ອະນຸຍາດ check-in ລ່ວງໜ້າກ່ອນເວລານັດໄດ້ຈັກນາທີ (ຄົນມາຮອດໄວກວ່ານັດ)
 const EARLY_CHECKIN_GRACE_MINUTES = 5;
 
+// ເງື່ອນໄຂ Mongo: booking "ຍັງຄອບຄຸມເວລາຫຼັງຈຸດ `from`" ຢູ່ບໍ່ —
+//  - ຍັງບໍ່ check-out → ໃຊ້ endAt ຕາມເດີມ
+//  - check-out ແລ້ວ  → ຖືວ່າສິ້ນສຸດທີ່ເວລາ check-out (ປ່ອຍເວລາທີ່ເຫຼືອໃຫ້ຄົນອື່ນຈອງໄດ້ທັນທີ)
+// (checkedOutAt ທີ່ຢູ່ກ່ອນ startAt ໝາຍຄວາມວ່າບໍ່ໄດ້ໃຊ້ເວລາໃດເລີຍ → ບໍ່ຄອບຄຸມຫຍັງ)
+const spanStillCovers = (from: Date) => ({
+  $or: [
+    { checkedOutAt: null, endAt: { $gt: from } },
+    {
+      checkedOutAt: { $gt: from },
+      $expr: { $gt: ['$checkedOutAt', '$startAt'] },
+    },
+  ],
+});
+
 // ຂໍ້ມູນສະເພາະຕິດທີ່ເຮັດໃຫ້ຜູ້ອະນຸມັດກວດຊົ່ວກັນໄດ້ ເວລາຢູ່ໃນຫ້ອງເດີວກັນ
 export interface BookingConflictRef {
   _id: string;
@@ -105,7 +119,7 @@ export class RoomBookingsService {
       roomId,
       status: BookingStatus.CONFIRMED,
       startAt: { $lt: endAt },
-      endAt: { $gt: startAt },
+      ...spanStillCovers(startAt),
     };
     if (excludeBookingId) {
       filter._id = { $ne: excludeBookingId };
@@ -344,16 +358,29 @@ export class RoomBookingsService {
     const filter: any = {
       status: BookingStatus.CONFIRMED,
       startAt: { $lt: to },
-      endAt: { $gt: from },
+      // check-out ແລ້ວ → ຄອບຄຸມເວລາແຕ່ startAt ຮອດເວລາ check-out ເທົ່ານັ້ນ (ເວລາທີ່ເຫຼືອຖືກປ່ອຍໃຫ້ຄົນອື່ນຈອງໄດ້)
+      ...spanStillCovers(from),
     };
     if (roomId) filter.roomId = roomId;
 
-    const bookings = await this.bookingModel
+    const found = await this.bookingModel
       .find(filter)
       .select('-history') // ຕາຕະລາງບໍ່ຕ້ອງການປະຫວັດ — ຫຼຸດຂະໜາດຄຳຕອບ ແລະ ບໍ່ຮົ່ວຂໍ້ມູນຜູ້ອື່ນ
       .populate('bookedBy', 'firstName lastName email') // ຕ້ອງການຊື່ຜູ້ຈອງໃສ່ note hover ຂອງກ່ອງການຈອງ (ຈະຖືກ redact ຂ້າງລຸ່ມ ຖ້າຜູ້ເບິ່ງບໍ່ມີສິດ)
       .sort({ startAt: 1 })
       .exec();
+
+    // ຕັດ endAt ໃຫ້ເທົ່າກັບເວລາ check-out (ຖ້າ check-out ກ່ອນເວລາຈອງສິ້ນສຸດ) ເພື່ອໃຫ້ຕາຕະລາງສະແດງສະເພາະເວລາທີ່ໃຊ້ຫ້ອງຈິງ
+    const bookings: Record<string, any>[] = found.map((booking) => {
+      const plain: Record<string, any> = booking.toObject();
+      if (
+        plain.checkedOutAt &&
+        new Date(plain.checkedOutAt).getTime() < new Date(plain.endAt).getTime()
+      ) {
+        plain.endAt = plain.checkedOutAt;
+      }
+      return plain;
+    });
 
     if (!viewerId) return bookings;
 
@@ -364,7 +391,7 @@ export class RoomBookingsService {
           ? String(bookedBy._id ?? '')
           : String(bookedBy ?? '');
       if (ownerId === viewerId) return booking;
-      const redacted: Record<string, any> = booking.toObject();
+      const redacted: Record<string, any> = { ...booking };
       redacted.bookedBy = null;
       redacted.reviewedBy = null;
       redacted.attendees = [];
@@ -718,6 +745,12 @@ export class RoomBookingsService {
         'This booking is no longer active and cannot be rescheduled',
       );
     }
+    // check-out ແລ້ວ = ປະຊຸມຈົບແລ້ວ ແລະ ເວລາທີ່ເຫຼືອຖືກປ່ອຍໃຫ້ຄົນອື່ນ — ຕ້ອງຈອງໃໝ່ ບໍ່ສາມາດເລື່ອນເວລາໄດ້
+    if (booking.checkedOutAt) {
+      throw new BadRequestException(
+        'This meeting has already been checked out — please make a new booking',
+      );
+    }
     // ຖ້າເວລາສິ້ນສຸດຂອງປະຊຸມຜ່ານໄປແລ້ວ (ປະຊຸມຈົບແລ້ວ) ກໍບໍ່ອະນຸຍາດໃຫ້ເລື່ອນເວລາ
     if (booking.endAt.getTime() <= Date.now()) {
       throw new BadRequestException(
@@ -794,6 +827,11 @@ export class RoomBookingsService {
     const booking = await this.findOne(id);
     if (booking.bookedBy.toString() !== requesterId) {
       throw new BadRequestException('You can only cancel your own bookings');
+    }
+    if (booking.checkedOutAt) {
+      throw new BadRequestException(
+        'This meeting has already been checked out and cannot be cancelled',
+      );
     }
     // ປະຊຸມທີ່ເວລາສິ້ນສຸດຜ່ານໄປແລ້ວ ຍົກເລີກບໍ່ໄດ້ (ເຂົ້າຫ້ອງກໍບໍ່ໄດ້ແລ້ວ ຈຶ່ງບໍ່ມີຄວາມໝາຍທີ່ຈະຍົກເລີກ)
     if (booking.endAt.getTime() <= Date.now()) {
@@ -1037,7 +1075,7 @@ export class RoomBookingsService {
         roomId: { $in: roomIds },
         status: BookingStatus.CONFIRMED,
         startAt: { $lt: to },
-        endAt: { $gt: from },
+        ...spanStillCovers(from),
       })
       .select('roomId')
       .exec();
@@ -1050,14 +1088,25 @@ export class RoomBookingsService {
         $match: {
           status: BookingStatus.CONFIRMED,
           startAt: { $lt: to },
-          endAt: { $gt: from },
+          ...spanStillCovers(from),
         },
       },
       {
         $group: {
           _id: '$roomId',
+          // check-out ກ່ອນເວລາ → ນັບສະເພາະນາທີທີ່ໃຊ້ຫ້ອງຈິງ (startAt → checkedOutAt)
           bookedMinutes: {
-            $sum: { $divide: [{ $subtract: ['$endAt', '$startAt'] }, 60000] },
+            $sum: {
+              $divide: [
+                {
+                  $subtract: [
+                    { $min: ['$endAt', { $ifNull: ['$checkedOutAt', '$endAt'] }] },
+                    '$startAt',
+                  ],
+                },
+                60000,
+              ],
+            },
           },
           bookingCount: { $sum: 1 },
         },

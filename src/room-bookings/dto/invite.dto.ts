@@ -73,6 +73,38 @@ export class BulkInviteDto {
   userIds!: string[];
 }
 
+export class BulkRemoveInviteesDto {
+  @ApiProperty({
+    type: [String],
+    description: 'Invitee _ids on the guest list to remove (max 300)',
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(300)
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  inviteeIds!: string[];
+}
+
+export class SelectedQrPdfDto {
+  @ApiProperty({
+    type: [String],
+    description: 'Invitee _ids to print passes for (max 300)',
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(300)
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  inviteeIds!: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  baseUrl?: string;
+}
+
 export class JoinDto {
   @IsOptional()
   @IsString()
