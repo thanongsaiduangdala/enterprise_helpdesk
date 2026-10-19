@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { ReportsService, ReportScope } from './reports.service';
 import { RolesService } from '../roles/roles.service';
 import { UsersService } from '../users/users.service';

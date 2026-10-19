@@ -44,7 +44,7 @@ export class NotificationsGateway
       }
 
       client.data.userId = userId;
-      client.join(`user:${userId}`);
+      await client.join(`user:${userId}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Socket auth failed: ${message}`);
@@ -52,7 +52,7 @@ export class NotificationsGateway
     }
   }
 
-  handleDisconnect(client: Socket) {
+  handleDisconnect() {
     // socket.io ຈະລຶບ client ອອກຈາກ room ໃຫ້ອັດຕະໂນມັດ, ບໍ່ຈຳເປັນຕ້ອງເຮັດຫຍັງເພີ່ມ
   }
 

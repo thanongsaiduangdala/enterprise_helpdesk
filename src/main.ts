@@ -37,15 +37,22 @@ async function bootstrap() {
   app.useGlobalInterceptors(new ResponseInterceptor());
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  const config = new DocumentBuilder()
-    .setTitle('Enterprise Helpdesk API')
-    .setDescription('API documentation for the helpdesk system')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api-docs', app, document);
+  // Swagger ເປີດສະເພາະ non-production — ຫຼີກລ້ຽງການເປີດເຜີຍ API surface ໃນ production
+  // (helmet ຕັ້ງ CSP ໄວ້ນຳ ຈຶ່ງເປີດໄດ້ສະບາຍໃນ dev ແຕ່ບໍ່ຄວນເປີດໃນ prod)
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('Enterprise Helpdesk API')
+      .setDescription('API documentation for the helpdesk system')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api-docs', app, document);
+  }
 
   await app.listen(3000);
 }
-bootstrap();
+bootstrap().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

@@ -31,6 +31,8 @@ import {
 import { sodEnforced } from '../common/utils/sod.util';
 import { matchAssetToItem } from '../common/utils/supply-match.util';
 import { UsersService } from '../users/users.service';
+import { bumpCounterTo, nextSequence } from '../common/utils/counter.util';
+import { Counter, CounterDocument } from '../roles/schemas/counter.schema';
 
 @Injectable()
 export class AssetsService {
@@ -42,19 +44,20 @@ export class AssetsService {
     @InjectModel(SupplyRequest.name)
     private supplyRequestModel: Model<SupplyRequestDocument>,
     private usersService: UsersService,
+    @InjectModel(Counter.name) private counterModel: Model<CounterDocument>,
     @InjectConnection() private connection: Connection,
   ) {}
 
-  private async generateId(): Promise<string> {
-    const assets = await this.assetModel
-      .find({ _id: /^AS\d{3}$/ }, { _id: 1 })
-      .sort({ _id: 1 })
+  private async generateId(session?: ClientSession): Promise<string> {
+    // seed ຈາກເລກສູງສຸດທີ່ມີຢູ່ ແລ້ວອອກເລກແບບ monotonic (ບໍ່ໃຊ້ເລກທີ່ຖືກປົດຄືນ)
+    const last = await this.assetModel
+      .findOne({ _id: /^AS\d{3}$/ }, { _id: 1 })
+      .sort({ _id: -1 })
+      .session(session ?? null)
       .exec();
-    const usedNumbers = new Set(
-      assets.map((a) => parseInt(a._id.slice(2), 10)),
-    );
-    let seq = 1;
-    while (usedNumbers.has(seq)) seq++;
+    const maxSeq = last ? parseInt(last._id.slice(2), 10) : 0;
+    await bumpCounterTo(this.counterModel, 'asset', maxSeq, session);
+    const seq = await nextSequence(this.counterModel, 'asset', session);
     return `AS${String(seq).padStart(3, '0')}`;
   }
 
@@ -74,29 +77,31 @@ export class AssetsService {
     return saved;
   }
 
-  private async createInternal(dto: CreateAssetDto) {
+  private async createInternal(dto: CreateAssetDto, session?: ClientSession) {
     const { assetTag, catalogItemId, ...rest } = dto;
 
     // ຜູກກັບລາຍການ catalog (ຕ້ອງມີຈິງ)
     if (catalogItemId) {
-      await this.catalogService.findOne(catalogItemId);
+      await this.catalogService.findOne(catalogItemId, session);
     }
 
     // ຖ້າຜູ້ໃຊ້ກຣອກ Asset Tag ເອງ → ໃຊ້ຕາມນັ້ນ (ຊ້ຳ = ແຈ້ງ error ປົກກະຕິ)
     if (assetTag) {
-      const existing = await this.assetModel.findOne({ assetTag });
+      const existing = await this.assetModel
+        .findOne({ assetTag })
+        .session(session ?? null);
       if (existing) {
         throw new ConflictException(
           `Asset tag "${assetTag}" is already in use`,
         );
       }
-      const _id = await this.generateId();
+      const _id = await this.generateId(session);
       return new this.assetModel({
         _id,
         assetTag,
         catalogItemId,
         ...rest,
-      }).save();
+      }).save({ session: session ?? undefined });
     }
 
     // ບໍ່ມີ tag → ຕ້ອງເລືອກ catalog ເພື່ອສ້າງອັດຕະໂນມັດ (SC002-001)
@@ -109,15 +114,77 @@ export class AssetsService {
     // ສ້າງອັດຕະໂນມັດ + retry ເມື່ອຊົນກັນ (create ພ້ອມກັນຈະໄດ້ seq ດຽວກັນ)
     const maxAttempts = 5;
     for (let attempt = 1; ; attempt++) {
-      const tag = await this.generateCatalogAssetTag(catalogItemId);
-      const _id = await this.generateId();
+      const tag = await this.generateCatalogAssetTag(catalogItemId, session);
+      const _id = await this.generateId(session);
       try {
         return await new this.assetModel({
           _id,
           assetTag: tag,
           catalogItemId,
           ...rest,
-        }).save();
+        }).save({ session });
+      } catch (err: any) {
+        const isDuplicate = err?.code === 11000;
+        if (!isDuplicate) throw err;
+        if (attempt >= maxAttempts) {
+          throw new ConflictException(`Asset tag "${tag}" is already in use`);
+        }
+      }
+    }
+  }
+
+  /**
+   * ສ້າງຊັບສິນພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ ຕອນປິດ POPR) ແລະ
+   * ມອບໃຫ້ຜູ້ໃຊ້ໃນທັນທີ — ບໍ່ເອີ້ນ performAssign/syncStock ເພື່ອບໍ່ໃຫ້ນັບສະຕ໊ອກສອງເທື່ອ
+   * (POPR ຈະບວກສະຕ໊ອກຄັ້ງດຽວຕອນປິດ).
+   */
+  async createAssignedAssetInTx(
+    input: {
+      type: string;
+      catalogItemId: string;
+      branchId: string;
+      assigneeId: string;
+      note?: string;
+      purchaseDate?: string;
+      warrantyExpiry?: string;
+    },
+    ctx: TxCtx,
+    actorId: string,
+    ip?: string,
+  ): Promise<AssetDocument> {
+    const maxAttempts = 5;
+    for (let attempt = 1; ; attempt++) {
+      const tag = await this.generateCatalogAssetTag(
+        input.catalogItemId,
+        ctx.session,
+      );
+      const _id = await this.generateId(ctx.session);
+      const now = new Date();
+      try {
+        const saved = await new this.assetModel({
+          _id,
+          assetTag: tag,
+          catalogItemId: input.catalogItemId,
+          type: input.type,
+          branchId: input.branchId,
+          purchaseDate: input.purchaseDate,
+          warrantyExpiry: input.warrantyExpiry,
+          status: AssetStatus.ASSIGNED,
+          currentAssigneeId: input.assigneeId,
+          assignmentHistory: [
+            { assigneeId: input.assigneeId, assignedAt: now, note: input.note },
+          ],
+        }).save({ session: ctx.session });
+        ctx.audits.push({
+          actorId,
+          action: 'ASSET_CREATED',
+          entityType: 'Asset',
+          entityId: String(saved._id),
+          before: undefined,
+          after: saved.toObject(),
+          ip,
+        });
+        return saved;
       } catch (err: any) {
         const isDuplicate = err?.code === 11000;
         if (!isDuplicate) throw err;
@@ -130,6 +197,7 @@ export class AssetsService {
 
   private async generateCatalogAssetTag(
     catalogItemId: string,
+    session?: ClientSession,
   ): Promise<string> {
     const escapedPrefix = catalogItemId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const prefix = `${catalogItemId}-`;
@@ -138,15 +206,15 @@ export class AssetsService {
         { assetTag: new RegExp(`^${escapedPrefix}-\\d+$`, 'i') },
         { assetTag: 1 },
       )
-      .sort({ assetTag: 1 })
+      .session(session ?? null)
       .exec();
-    const usedNumbers = new Set(
-      assets
-        .map((a) => parseInt(a.assetTag.slice(prefix.length), 10))
-        .filter((n) => Number.isFinite(n)),
-    );
-    let seq = 1;
-    while (usedNumbers.has(seq)) seq++;
+    const maxSeq = assets.reduce((m, a) => {
+      const n = parseInt(a.assetTag.slice(prefix.length), 10);
+      return Number.isFinite(n) && n > m ? n : m;
+    }, 0);
+    const key = `assetTag:${catalogItemId}`;
+    await bumpCounterTo(this.counterModel, key, maxSeq, session);
+    const seq = await nextSequence(this.counterModel, key, session);
     return `${catalogItemId}-${String(seq).padStart(3, '0')}`;
   }
 
@@ -771,6 +839,38 @@ export class AssetsService {
       });
       return { deleted: true };
     });
+  }
+
+  /**
+   * ລຶບຊັບສິນພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ ຍ້ອນກັບຕອນເປີດ POPR ໃໝ່).
+   * ຊັບສິນເຫຼົ່ານີ້ຢູ່ສະຖານະ ASSIGNED (ບໍ່ນັບເຂົ້າສະຕ໊ອກ) ຈຶ່ງບໍ່ຕ້ອງ syncStock.
+   */
+  async deleteAssetsInTx(
+    ids: string[],
+    ctx: TxCtx,
+    actorId: string,
+    ip?: string,
+  ): Promise<number> {
+    if (!ids || ids.length === 0) return 0;
+    const assets = await this.assetModel
+      .find({ _id: { $in: ids } })
+      .session(ctx.session ?? null)
+      .exec();
+    for (const asset of assets) {
+      await this.assetModel
+        .deleteOne({ _id: asset._id }, { session: ctx.session })
+        .exec();
+      ctx.audits.push({
+        actorId,
+        action: 'ASSET_DELETED',
+        entityType: 'Asset',
+        entityId: String(asset._id),
+        before: asset.toObject(),
+        after: undefined,
+        ip,
+      });
+    }
+    return assets.length;
   }
 
   async findOverdueReturns() {

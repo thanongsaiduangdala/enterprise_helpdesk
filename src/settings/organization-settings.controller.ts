@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { UpdateOrganizationSettingsDto } from './dto/update-organization-settings.dto';
@@ -20,7 +20,7 @@ export class OrganizationSettingsController {
 
   @Patch()
   @RequirePermission('settings', 'update')
-  updateSettings(@Body() dto: UpdateOrganizationSettingsDto, @Req() req: any) {
+  updateSettings(@Body() dto: UpdateOrganizationSettingsDto) {
     return this.settingsService.update(dto);
   }
 }

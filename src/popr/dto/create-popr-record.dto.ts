@@ -45,6 +45,32 @@ export class ProcurementDto {
   @Min(1)
   quantity?: number;
 
+  @ApiPropertyOptional({
+    example: 'Computer',
+    description:
+      'Category used to auto-create the catalog item on close if it is missing',
+  })
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @ApiPropertyOptional({
+    example: 'pcs',
+    description: 'Unit used when auto-creating the catalog item',
+  })
+  @IsOptional()
+  @IsString()
+  unit?: string;
+
+  @ApiPropertyOptional({
+    example: 5,
+    description: 'Low-stock threshold for the auto-created catalog item',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  lowStockThreshold?: number;
+
   @ApiPropertyOptional({ example: 'CPU i5, RAM 16GB, SSD 512GB' })
   @IsOptional()
   @IsString()
@@ -123,6 +149,16 @@ export class ReceivingDto {
   @IsOptional()
   @IsBoolean()
   snMatch?: boolean;
+
+  @ApiPropertyOptional({
+    example: 100,
+    description:
+      'Received quantity for CONSUMABLE items (added to catalog stock on close)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  receivedQuantity?: number;
 
   @ApiPropertyOptional({ example: 'SC002-001' })
   @IsOptional()

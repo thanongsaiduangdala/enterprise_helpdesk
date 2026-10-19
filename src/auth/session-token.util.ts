@@ -12,7 +12,7 @@ export async function validateSessionPayload(
   if (!valid) {
     throw new UnauthorizedException('Session has been revoked or expired');
   }
-  sessionsService.touch(payload.sessionId);
+  void sessionsService.touch(payload.sessionId);
 
   return {
     userId: payload.sub,

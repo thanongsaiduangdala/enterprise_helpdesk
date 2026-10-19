@@ -51,13 +51,14 @@ export class AuthController {
   }
 
   @Post('reset-password')
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
-  resetPassword(@Body() dto: ResetPasswordDto) {
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
+  resetPassword(@Body() dto: ResetPasswordDto, @Req() req: any) {
     return this.authService.resetPassword(
       dto.email,
       dto.code,
       dto.newPassword,
       dto.mfaCode,
+      req.ip,
     );
   }
 
@@ -113,6 +114,7 @@ export class AuthController {
       dto.method,
       dto.verifyMethod,
       dto.verifyCode,
+      req.ip,
     );
   }
 

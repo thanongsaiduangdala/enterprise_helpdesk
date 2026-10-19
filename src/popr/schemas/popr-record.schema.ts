@@ -13,6 +13,7 @@ export enum PoprStatus {
 export enum PoprItemType {
   ELECTRONIC = 'ELECTRONIC',
   GENERAL = 'GENERAL',
+  CONSUMABLE = 'CONSUMABLE',
 }
 
 /** ສະພາບກ່ອງ/ອຸປະກອນ — ຄ່າກົງກັບ frontend (good / damaged / partial) */
@@ -54,6 +55,16 @@ export class ProcurementDetails {
 
   @Prop({ min: 1 })
   quantity?: number;
+
+  /** ໃຊ້ສ້າງລາຍການ catalog ອັດຕະໂນມັດຕອນປິດ POPR (ຖ້າຍັງບໍ່ມີໃນຄາຕາລັອກ) */
+  @Prop()
+  category?: string;
+
+  @Prop()
+  unit?: string;
+
+  @Prop({ min: 0 })
+  lowStockThreshold?: number;
 
   @Prop()
   spec?: string;
@@ -101,6 +112,10 @@ export class ReceivingDetails {
 
   @Prop({ default: false })
   snMatch!: boolean;
+
+  /** ຈຳນວນທີ່ຮັບເຂົ້າຈິງ — ໃຊ້ກັບວັດສະດຸສິ້ນເປືອງ (CONSUMABLE). ຖ້າບໍ່ໃສ່ ໃຊ້ procurement.quantity */
+  @Prop({ min: 0 })
+  receivedQuantity?: number;
 
   @Prop()
   assetTag?: string;
@@ -225,9 +240,35 @@ export class PoprRecord {
 
   @Prop()
   completedAt?: Date;
+
+  /** ຊັບສິນທີ່ລະບົບສ້າງຕອນປິດ POPR — ເກັບໄວ້ເພື່ອຍ້ອນກັບເມື່ອເປີດໃໝ່ */
+  @Prop({ type: [String], default: [] })
+  appliedAssetIds!: string[];
+
+  /** ຈຳນວນສະຕ໊ອກທີ່ບວກເຂົ້າ catalog ຕອນປິດ POPR — ເກັບໄວ້ເພື່ອຍ້ອນກັບ */
+  @Prop({ default: 0 })
+  appliedStockDelta!: number;
+
+  @Prop()
+  reopenedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  reopenedBy?: Types.ObjectId;
+
+  @Prop()
+  reopenReason?: string;
 }
 
 export const PoprRecordSchema = SchemaFactory.createForClass(PoprRecord);
 PoprRecordSchema.index({ status: 1 });
 PoprRecordSchema.index({ createdBy: 1 });
 PoprRecordSchema.index({ 'procurement.catalogItemId': 1 });
+PoprRecordSchema.index(
+  { 'procurement.poNumber': 1 },
+  { unique: true, sparse: true },
+);
+PoprRecordSchema.index(
+  { 'receiving.serialNumber': 1 },
+  { unique: true, sparse: true },
+);
+PoprRecordSchema.index({ 'receiving.assetId': 1 });

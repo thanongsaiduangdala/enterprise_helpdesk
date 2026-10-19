@@ -7,11 +7,15 @@ import {
 import { SupplyCatalogService } from './supply-catalog.service';
 import { SupplyCatalogController } from './supply-catalog.controller';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
+import { Counter, CounterSchema } from '../roles/schemas/counter.schema';
+import { Asset, AssetSchema } from '../assets/schemas/asset.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: SupplyCatalogItem.name, schema: SupplyCatalogItemSchema },
+      { name: Counter.name, schema: CounterSchema },
+      { name: Asset.name, schema: AssetSchema },
     ]),
     AuditLogsModule,
   ],

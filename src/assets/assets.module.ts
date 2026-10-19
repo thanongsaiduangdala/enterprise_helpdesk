@@ -11,11 +11,13 @@ import {
   SupplyRequestSchema,
 } from '../supply-requests/schemas/supply-request.schema';
 import { UsersModule } from '../users/users.module';
+import { Counter, CounterSchema } from '../roles/schemas/counter.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Asset.name, schema: AssetSchema },
+      { name: Counter.name, schema: CounterSchema },
       // ໃຊ້ອ່ານໃບຂໍທີ່ອະນຸມັດແລ້ວ ເພື່ອກວດສິດ claim (schema ເທົ່ານັ້ນ ບໍ່ import SupplyRequestsModule ເພື່ອບໍ່ໃຫ້ວົງກົມ)
       { name: SupplyRequest.name, schema: SupplyRequestSchema },
     ]),

@@ -69,6 +69,12 @@ export class UsersController {
     );
   }
 
+  @Post(':id/unlock')
+  @RequirePermission('users', 'update')
+  unlock(@Param('id') id: string, @Req() req: any) {
+    return this.usersService.unlock(id, req.user.userId, req.ip);
+  }
+
   @Get()
   @RequirePermission('users', 'read')
   @ApiQuery({ name: 'branchId', required: false })

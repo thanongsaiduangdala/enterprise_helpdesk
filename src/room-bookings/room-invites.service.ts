@@ -98,8 +98,10 @@ type Who = {
 const newToken = () => randomBytes(18).toString('base64url');
 
 const cleanName = (v?: string) =>
-  (v ?? '')
-    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+  Array.from(v ?? '', (ch) =>
+    ch.charCodeAt(0) <= 0x1f || ch.charCodeAt(0) === 0x7f ? ' ' : ch,
+  )
+    .join('')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 80);
@@ -723,7 +725,7 @@ export class RoomInvitesService {
     return buildQrPdf(pages);
   }
 
-  private async attendanceRows(b: RoomBookingDocument) {
+  private attendanceRows(b: RoomBookingDocument) {
     const rows: (AttendanceRow & { method: string })[] = [];
     const joinedEntries = b.checkIns.filter((c) => c.result === 'ADMITTED');
     const via = (c?: BookingCheckIn) =>
@@ -779,7 +781,7 @@ export class RoomInvitesService {
     const b = await this.load(id);
     this.assertHost(b, user);
     const info = await this.bookingInfo(b);
-    const rows = await this.attendanceRows(b);
+    const rows = this.attendanceRows(b);
 
     const header = [
       'Booking ID',
@@ -815,7 +817,7 @@ export class RoomInvitesService {
     const b = await this.load(id);
     this.assertHost(b, user);
     const info = await this.bookingInfo(b);
-    const rows = await this.attendanceRows(b);
+    const rows = this.attendanceRows(b);
     const count = (s: string) => rows.filter((r) => r.status === s).length;
     const pdfRows = rows.map(({ method, note, ...r }) => ({
       ...r,

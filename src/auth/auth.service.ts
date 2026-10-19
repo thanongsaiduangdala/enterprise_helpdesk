@@ -9,7 +9,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { generateSecret, generate, verify, generateURI } from 'otplib';
+import { generateSecret, verify, generateURI } from 'otplib';
 import * as qrcode from 'qrcode';
 import { UsersService } from '../users/users.service';
 import { SessionsService, DeviceInfoInput } from '../sessions/sessions.service';
@@ -140,13 +140,14 @@ export class AuthService {
     const user = await this.usersService.findByEmail(email);
     if (!user) {
       await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+      // ບໍ່ບັນທຶກອີເມວດິບຂອງຜູ້ທີ່ບໍ່ມີໃນລະບົບ (ຫຼີກລ້ຽງ PII ໃນ audit)
       await this.auditLogsService.log(
         ANONYMOUS_ACTOR_ID,
         'LOGIN_FAILED',
         'User',
-        email,
+        'unknown',
         undefined,
-        { email, reason: 'unknown_email' },
+        { reason: 'unknown_email' },
         deviceInfo.ip,
       );
       throw new UnauthorizedException('Invalid credentials');
@@ -201,12 +202,15 @@ export class AuthService {
         { email: user.email, reason: 'inactive' },
         deviceInfo.ip,
       );
-      throw new UnauthorizedException('This account has been deactivated');
+      // ຕອບຂໍ້ຄວາມດຽວກັນກັບລະຫັດຜິດ — ບໍ່ໃຫ້ເດົາໄດ້ວ່າອີເມວນີ້ມີບັນຊີຫຼືບໍ່
+      throw new UnauthorizedException('Invalid credentials');
     }
 
     const methods = getEnabledMethods(user.mfa);
     if (methods.length > 0) {
-      await this.mfaAttemptsService.assertNotLockedOut(`login:${user._id}`);
+      await this.mfaAttemptsService.assertNotLockedOut(
+        `login:${String(user._id)}`,
+      );
 
       const mfaToken = this.jwtService.sign(
         { sub: user._id, purpose: 'mfa_challenge' },
@@ -221,7 +225,7 @@ export class AuthService {
       if (methods.length === 1) {
         if (methods[0] === 'email') {
           await this.issueAndSendEmailCode(
-            `email-code:login:${user._id}`,
+            `email-code:login:${String(user._id)}`,
             user.email,
             user.firstName,
           );
@@ -495,6 +499,15 @@ export class AuthService {
         key,
         MFA_ENABLE_LOCKOUT_TTL_SECONDS,
       );
+      await this.auditLogsService.log(
+        String(userId),
+        'MFA_ENABLE_FAILED',
+        'User',
+        String(userId),
+        undefined,
+        { method: pendingMethod, reason: 'invalid_code' },
+        deviceInfo?.ip,
+      );
       throw new BadRequestException('Invalid MFA code');
     }
 
@@ -527,6 +540,7 @@ export class AuthService {
     method: MfaMethod,
     verifyMethod?: MfaMethod,
     verifyCode?: string,
+    ip?: string,
   ) {
     const user = await this.usersService.findOne(userId);
     const methods = getEnabledMethods(user.mfa);
@@ -550,7 +564,7 @@ export class AuthService {
       String(userId),
       { method },
       { methods: remaining },
-      undefined,
+      ip,
     );
     return { disabled: true, methods: remaining };
   }
@@ -589,7 +603,7 @@ export class AuthService {
 
     if (method === 'email') {
       await this.issueAndSendEmailCode(
-        `email-code:login:${user._id}`,
+        `email-code:login:${String(user._id)}`,
         user.email,
         user.firstName,
       );
@@ -629,13 +643,22 @@ export class AuthService {
       user,
       chosen,
       code,
-      `email-code:login:${user._id}`,
+      `email-code:login:${String(user._id)}`,
     );
 
     if (!valid) {
       await this.mfaAttemptsService.recordFailure(
         lockoutKey,
         MFA_LOGIN_LOCKOUT_TTL_SECONDS,
+      );
+      await this.auditLogsService.log(
+        String(payload.sub),
+        'MFA_VERIFY_FAILED',
+        'User',
+        String(payload.sub),
+        undefined,
+        { method: chosen, reason: 'invalid_code' },
+        deviceInfo.ip,
       );
       throw new UnauthorizedException('Invalid MFA code');
     }
@@ -660,7 +683,7 @@ export class AuthService {
     }
 
     await this.issueAndSendEmailCode(
-      `email-code:login:${user._id}`,
+      `email-code:login:${String(user._id)}`,
       user.email,
       user.firstName,
     );
@@ -674,7 +697,7 @@ export class AuthService {
     const user = await this.usersService.findByEmail(email);
     if (user && user.isActive) {
       await this.issueAndSendEmailCode(
-        `email-code:reset:${user._id}`,
+        `email-code:reset:${String(user._id)}`,
         user.email,
         user.firstName,
       );
@@ -687,6 +710,7 @@ export class AuthService {
     code: string,
     newPassword: string,
     mfaCode?: string,
+    ip?: string,
   ) {
     const email = rawEmail.trim().toLowerCase();
     const lockoutKey = `reset:${this.mfaAttemptsService.hashKey(email)}`;
@@ -703,7 +727,7 @@ export class AuthService {
     const user = await this.usersService.findByEmail(email);
     if (!user || !user.isActive) return invalid();
 
-    const codeKey = `email-code:reset:${user._id}`;
+    const codeKey = `email-code:reset:${String(user._id)}`;
     const emailOk = await this.mfaAttemptsService.verifyCode(
       codeKey,
       this.hashCode(code),
@@ -742,7 +766,7 @@ export class AuthService {
       String(user._id),
       undefined,
       { email: user.email },
-      undefined,
+      ip,
     );
 
     return { reset: true };

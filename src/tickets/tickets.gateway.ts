@@ -58,8 +58,8 @@ export class TicketsGateway
       }
 
       client.data.userId = userId;
-      client.join(`user:${userId}`);
-      client.join('tickets');
+      await client.join(`user:${userId}`);
+      await client.join('tickets');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Socket auth failed: ${message}`);
@@ -67,7 +67,7 @@ export class TicketsGateway
     }
   }
 
-  handleDisconnect(client: Socket) {
+  handleDisconnect() {
     // socket.io removes the client from its rooms automatically
   }
 

@@ -224,7 +224,7 @@ export class TicketsService {
       );
     } catch (error) {
       this.logger.error(
-        `Failed to notify department managers for ticket ${ticket._id}: ${(error as Error).message}`,
+        `Failed to notify department managers for ticket ${String(ticket._id)}: ${(error as Error).message}`,
       );
     }
   }
