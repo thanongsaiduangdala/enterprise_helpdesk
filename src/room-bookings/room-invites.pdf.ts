@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import * as fs from 'fs';
+import type { MeetingSummary } from './meeting-summary.util';
 
 // pdfkit ມາພ້ອມຟອນ Helvetica ເທົ່ານັ້ນ — ບໍ່ຮອງຮັບ ພາສາລາວ. ຖ້າຕ້ອງການໃຫ້ຊື່ພາສາລາວສະແດງໃນ PDF ໃຫ້ຕັ້ງ
 // PDF_FONT_PATH=/path/to/NotoSansLao-Regular.ttf (ຫຼືຟອນ Unicode ອື່ນທີ່ມີ glyph ລາວ) ໃນ .env
@@ -163,6 +164,7 @@ export interface AttendanceRow {
   contact: string;
   status: string;
   time: string;
+  arrival: string;
   note: string;
 }
 
@@ -170,13 +172,7 @@ export interface AttendanceReportInput {
   bookingId: string;
   bookingTitle: string;
   roomName: string;
-  mode: string;
-  startAt: Date;
-  endAt: Date;
-  invited: number;
-  joined: number;
-  notJoined: number;
-  denied: number;
+  summary: MeetingSummary;
   rows: AttendanceRow[];
 }
 
@@ -186,42 +182,101 @@ const STATUS_COLOR: Record<string, string> = {
   DENIED: '#b91c1c',
 };
 
+const STATUS_LABEL: Record<string, string> = {
+  JOINED: 'Came',
+  NOT_JOINED: 'Did not come',
+  DENIED: 'Denied',
+};
+
+// ລາຍງານສະຫຼຸບການປະຊຸມ (PDF) — ສະຫຼຸບ → timeline → ຕາຕະລາງລາຍຊື່ຄົນມາ/ບໍ່ມາ
 export async function buildAttendancePdf(
   r: AttendanceReportInput,
 ): Promise<Buffer> {
   const { doc } = newDoc(40);
   const left = 40;
-  const cols = [
-    { key: 'name', label: 'Name', w: 120 },
-    { key: 'accountId', label: 'Account ID', w: 65 },
-    { key: 'contact', label: 'Contact', w: 120 },
-    { key: 'status', label: 'Status', w: 65 },
-    { key: 'time', label: 'Time', w: 85 },
-    { key: 'note', label: 'Note', w: 60 },
-  ] as const;
+  const fullW = 515;
   const bottom = doc.page.height - 50;
 
-  doc
-    .fillColor('#111827')
-    .fontSize(17)
-    .text('Meeting Attendance Report', left, 40);
-  doc.moveDown(0.4);
-  doc.fontSize(11).fillColor('#374151');
-  doc.text(`${r.bookingTitle}  (${r.bookingId})`);
-  doc.text(`Room: ${r.roomName}   |   Mode: ${r.mode}`);
-  doc.text(`${fmtDateTime(r.startAt)}  →  ${fmtDateTime(r.endAt)}`);
-  doc.moveDown(0.5);
-  const summary =
-    r.mode === 'PRIVATE'
-      ? `Invited: ${r.invited}   Joined: ${r.joined}   Not joined: ${r.notJoined}   Denied attempts: ${r.denied}`
-      : `Joined: ${r.joined}   Denied attempts: ${r.denied}`;
-  doc.fontSize(11).fillColor('#111827').text(summary);
+  const ensureSpace = (h: number) => {
+    if (doc.y + h > bottom) {
+      doc.addPage();
+      doc.y = 40;
+    }
+  };
+
+  doc.fillColor('#111827').fontSize(18).text('Meeting Summary Report', left, 40);
   doc.moveDown(0.3);
+  doc.fontSize(12).fillColor('#374151').text(`${r.bookingTitle}`);
   doc
-    .fontSize(8)
+    .fontSize(9)
     .fillColor('#9ca3af')
-    .text(`Generated ${fmtDateTime(new Date())}`);
+    .text(`${r.roomName}  |  ${r.bookingId}  |  Generated ${fmtDateTime(new Date())}`);
   doc.moveDown(0.8);
+
+  // ----- ສ່ວນສະຫຼຸບ (label : value) -----
+  const labelW = 150;
+  for (const section of r.summary.sections) {
+    ensureSpace(40);
+    doc.fontSize(11).fillColor('#b45309').text(section.title.toUpperCase(), left, doc.y);
+    doc
+      .moveTo(left, doc.y + 1)
+      .lineTo(left + fullW, doc.y + 1)
+      .strokeColor('#e5e7eb')
+      .stroke();
+    doc.y += 6;
+    for (const item of section.items) {
+      doc.fontSize(9.5);
+      const h = Math.max(
+        doc.heightOfString(item.label, { width: labelW - 8 }),
+        doc.heightOfString(item.value, { width: fullW - labelW }),
+        12,
+      );
+      ensureSpace(h + 4);
+      const y = doc.y;
+      doc.fillColor('#6b7280').text(item.label, left, y, { width: labelW - 8 });
+      doc.fillColor('#111827').text(item.value, left + labelW, y, { width: fullW - labelW });
+      doc.y = y + h + 3;
+    }
+    doc.moveDown(0.6);
+  }
+
+  // ----- timeline -----
+  if (r.summary.timeline.length) {
+    ensureSpace(50);
+    doc.fontSize(11).fillColor('#b45309').text('TIMELINE', left, doc.y);
+    doc
+      .moveTo(left, doc.y + 1)
+      .lineTo(left + fullW, doc.y + 1)
+      .strokeColor('#e5e7eb')
+      .stroke();
+    doc.y += 6;
+    for (const t of r.summary.timeline) {
+      doc.fontSize(9);
+      const h = Math.max(
+        doc.heightOfString(t.event, { width: 150 }),
+        doc.heightOfString(t.detail, { width: fullW - 280 }),
+        12,
+      );
+      ensureSpace(h + 4);
+      const y = doc.y;
+      doc.fillColor('#6b7280').text(t.at, left, y, { width: 115 });
+      doc.fillColor('#111827').text(t.event, left + 120, y, { width: 150 });
+      doc.fillColor('#374151').text(t.detail, left + 275, y, { width: fullW - 275 });
+      doc.y = y + h + 3;
+    }
+    doc.moveDown(0.6);
+  }
+
+  // ----- ຕາຕະລາງຜູ້ເຂົ້າຮ່ວມ -----
+  const cols = [
+    { key: 'name', label: 'Name', w: 115 },
+    { key: 'accountId', label: 'Account ID', w: 60 },
+    { key: 'contact', label: 'Contact', w: 105 },
+    { key: 'status', label: 'Status', w: 60 },
+    { key: 'time', label: 'Arrived', w: 80 },
+    { key: 'arrival', label: 'vs start', w: 55 },
+    { key: 'note', label: 'Note', w: 40 },
+  ] as const;
 
   const drawHeader = () => {
     const y = doc.y;
@@ -233,11 +288,15 @@ export async function buildAttendancePdf(
     }
     doc
       .moveTo(left, y + 14)
-      .lineTo(left + 515, y + 14)
+      .lineTo(left + fullW, y + 14)
       .strokeColor('#d1d5db')
       .stroke();
     doc.y = y + 20;
   };
+
+  ensureSpace(70);
+  doc.fontSize(11).fillColor('#b45309').text('ATTENDEES', left, doc.y);
+  doc.y += 8;
   drawHeader();
 
   if (!r.rows.length) {
@@ -246,8 +305,12 @@ export async function buildAttendancePdf(
 
   for (const row of r.rows) {
     doc.fontSize(9);
+    const cell = (key: string) =>
+      key === 'status'
+        ? STATUS_LABEL[row.status] ?? row.status
+        : String((row as any)[key] ?? '');
     const heights = cols.map((c) =>
-      doc.heightOfString(String((row as any)[c.key] ?? ''), { width: c.w - 6 }),
+      doc.heightOfString(cell(c.key), { width: c.w - 6 }),
     );
     const h = Math.max(...heights, 12);
     if (doc.y + h > bottom) {
@@ -258,14 +321,13 @@ export async function buildAttendancePdf(
     const y = doc.y;
     let x = left;
     for (const c of cols) {
-      const val = String((row as any)[c.key] ?? '');
       doc
         .fillColor(
           c.key === 'status'
             ? STATUS_COLOR[row.status] || '#111827'
             : '#111827',
         )
-        .text(val, x, y, { width: c.w - 6 });
+        .text(cell(c.key), x, y, { width: c.w - 6 });
       x += c.w;
     }
     doc.y = y + h + 5;

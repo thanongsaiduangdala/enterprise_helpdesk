@@ -23,6 +23,7 @@ import {
 import {
   AddInviteeDto,
   BulkInviteDto,
+  BulkRemoveInviteesDto,
   JoinDto,
   SetInviteModeDto,
 } from './dto/invite.dto';
@@ -39,7 +40,11 @@ import {
   hasAnyPermission,
   PermissionUser,
 } from '../common/utils/permission.util';
-import { toCsv } from '../reports/csv.util';
+import {
+  arrivalText,
+  buildMeetingSummary,
+  MeetingSummary,
+} from './meeting-summary.util';
 import {
   AttendanceRow,
   buildAttendancePdf,
@@ -453,6 +458,73 @@ export class RoomInvitesService {
     };
   }
 
+  // ສາຂາ / ພະແນກ / ສິດ ຂອງຄົນທີ່ເປັນບັນຊີໃນລະບົບ — ເພື່ອໃຫ້ລາຍຊື່ຜູ້ຖືກເຊີນກອງໄດ້ (ແຂກພາຍນອກບໍ່ມີຂໍ້ມູນນີ້)
+  private async inviteeOrgs(active: { userId?: string }[]) {
+    type Org = {
+      branchId: string | null;
+      branch: string | null;
+      departmentId: string | null;
+      department: string | null;
+      roleId: string | null;
+      role: string | null;
+    };
+    const out = new Map<string, Org>();
+    const ids = [
+      ...new Set(
+        active
+          .map((i) => i.userId)
+          .filter((x): x is string => !!x && Types.ObjectId.isValid(x)),
+      ),
+    ];
+    if (ids.length === 0) return out;
+
+    const users: any[] = await this.userModel
+      .find({ _id: { $in: ids } })
+      .select('branchId departmentId role')
+      .lean()
+      .exec();
+    const uniq = (arr: any[]) => [
+      ...new Set(arr.filter(Boolean).map((x) => String(x))),
+    ];
+    const [branches, departments, roles] = await Promise.all([
+      this.branchModel
+        .find({ _id: { $in: uniq(users.map((u) => u.branchId)) } })
+        .select('name')
+        .lean()
+        .exec(),
+      this.departmentModel
+        .find({ _id: { $in: uniq(users.map((u) => u.departmentId)) } })
+        .select('name')
+        .lean()
+        .exec(),
+      this.roleModel
+        .find({ _id: { $in: uniq(users.map((u) => u.role)) } })
+        .select('name')
+        .lean()
+        .exec(),
+    ]);
+    const nameOf = (list: any[]) =>
+      new Map(list.map((x) => [String(x._id), x.name as string]));
+    const branchName = nameOf(branches);
+    const deptName = nameOf(departments);
+    const roleName = nameOf(roles);
+
+    for (const u of users) {
+      const bId = u.branchId ? String(u.branchId) : null;
+      const dId = u.departmentId ? String(u.departmentId) : null;
+      const rId = u.role ? String(u.role) : null;
+      out.set(String(u._id), {
+        branchId: bId,
+        branch: bId ? (branchName.get(bId) ?? null) : null,
+        departmentId: dId,
+        department: dId ? (deptName.get(dId) ?? null) : null,
+        roleId: rId,
+        role: rId ? (roleName.get(rId) ?? null) : null,
+      });
+    }
+    return out;
+  }
+
   async getInvite(id: string, user: HostUser) {
     const b = await this.load(id);
     this.assertHost(b, user);
@@ -460,6 +532,8 @@ export class RoomInvitesService {
     const active = b.invitees.filter((i) => !i.revokedAt);
     const admitted = b.checkIns.filter((c) => c.result === 'ADMITTED');
     const denied = b.checkIns.filter((c) => c.result === 'DENIED');
+    const orgs = await this.inviteeOrgs(active);
+    const room = await this.roomInfo(String(b.roomId)); // ຄວາມຈຸຫ້ອງ — ໃຊ້ເຕືອນ (ບໍ່ບັງຄັບ) ເມື່ອເຊີນເກີນ
 
     return {
       bookingId: b._id,
@@ -468,16 +542,27 @@ export class RoomInvitesService {
       startAt: b.startAt,
       endAt: b.endAt,
       inviteMode: b.inviteMode ?? null,
-      invitees: active.map((i) => ({
-        _id: String(i._id),
-        name: i.name,
-        email: i.email ?? null,
-        phone: i.phone ?? null,
-        employeeCode: i.employeeCode ?? null,
-        isAccount: !!i.userId,
-        addedAt: i.addedAt,
-        joinedAt: i.joinedAt ?? null,
-      })),
+      roomName: room.name,
+      capacity: room.capacity && room.capacity > 0 ? room.capacity : null,
+      invitees: active.map((i) => {
+        const o = i.userId ? orgs.get(String(i.userId)) : undefined;
+        return {
+          _id: String(i._id),
+          name: i.name,
+          email: i.email ?? null,
+          phone: i.phone ?? null,
+          employeeCode: i.employeeCode ?? null,
+          isAccount: !!i.userId,
+          branchId: o?.branchId ?? null,
+          branch: o?.branch ?? null,
+          departmentId: o?.departmentId ?? null,
+          department: o?.department ?? null,
+          roleId: o?.roleId ?? null,
+          role: o?.role ?? null,
+          addedAt: i.addedAt,
+          joinedAt: i.joinedAt ?? null,
+        };
+      }),
       stats: {
         invited: active.length,
         joined: admitted.length,
@@ -677,10 +762,49 @@ export class RoomInvitesService {
     return { removed: true };
   }
 
+  // ລຶບຫຼາຍຄົນພ້ອມກັນ — ໃຊ້ revokedAt ຄືກັບລຶບທີລະຄົນ (QR ຂອງຄົນເຫຼົ່ານັ້ນຈະໃຊ້ບໍ່ໄດ້ອີກ)
+  async removeInviteesBulk(
+    id: string,
+    user: HostUser,
+    dto: BulkRemoveInviteesDto,
+  ) {
+    const b = await this.load(id);
+    this.assertHost(b, user);
+    const ids = [...new Set(dto.inviteeIds)].filter((x) =>
+      Types.ObjectId.isValid(x),
+    );
+    if (ids.length === 0) throw new BadRequestException('No invitees selected');
+
+    const wanted = new Set(ids);
+    const removed = b.invitees.filter(
+      (i) => !i.revokedAt && wanted.has(String(i._id)),
+    ).length;
+    if (removed > 0) {
+      await this.bookingModel.updateOne(
+        { _id: b._id },
+        { $set: { 'invitees.$[el].revokedAt': new Date() } },
+        {
+          arrayFilters: [
+            {
+              'el._id': { $in: ids.map((x) => new Types.ObjectId(x)) },
+              'el.revokedAt': { $exists: false },
+            },
+          ],
+        },
+      );
+    }
+    return { removed, notFound: ids.length - removed };
+  }
+
   async buildQrPdf(
     id: string,
     user: HostUser,
-    opts: { inviteeId?: string; target?: string; baseUrl?: string },
+    opts: {
+      inviteeId?: string;
+      inviteeIds?: string[];
+      target?: string;
+      baseUrl?: string;
+    },
   ) {
     const b = await this.load(id);
     this.assertHost(b, user);
@@ -708,6 +832,11 @@ export class RoomInvitesService {
         list = list.filter((i) => String(i._id) === opts.inviteeId);
         if (!list.length) throw new NotFoundException('Invitee not found');
       }
+      if (opts.inviteeIds?.length) {
+        const wanted = new Set(opts.inviteeIds);
+        list = list.filter((i) => wanted.has(String(i._id)));
+        if (!list.length) throw new NotFoundException('Invitee not found');
+      }
       if (!list.length)
         throw new BadRequestException(
           'Add at least one guest before printing passes',
@@ -724,7 +853,8 @@ export class RoomInvitesService {
   }
 
   private async attendanceRows(b: RoomBookingDocument) {
-    const rows: (AttendanceRow & { method: string })[] = [];
+    type Row = AttendanceRow & { method: string; at: Date | null };
+    const rows: Row[] = [];
     const joinedEntries = b.checkIns.filter((c) => c.result === 'ADMITTED');
     const via = (c?: BookingCheckIn) =>
       c ? (c.via === 'PERSONAL_QR' ? 'Personal QR' : 'Door QR') : '';
@@ -739,6 +869,8 @@ export class RoomInvitesService {
           contact: [i.email, i.phone].filter(Boolean).join(' / '),
           status: i.joinedAt ? 'JOINED' : 'NOT_JOINED',
           time: i.joinedAt ? fmtDateTime(i.joinedAt) : '',
+          arrival: i.joinedAt ? arrivalText(i.joinedAt, b.startAt) : '',
+          at: i.joinedAt ?? null,
           method: i.joinedAt ? via(entry) : '',
           note: i.revokedAt ? 'Removed from list after joining' : '',
         });
@@ -751,7 +883,27 @@ export class RoomInvitesService {
         contact: c.contact ?? '',
         status: 'JOINED',
         time: fmtDateTime(c.at),
+        arrival: arrivalText(c.at, b.startAt),
+        at: c.at,
         method: via(c),
+        note: '',
+      });
+    }
+    // ຊື່ທີ່ເຈົ້າຂອງການຈອງບັນທຶກເອງ (ບໍ່ໄດ້ສະແກນ QR) — ນັບວ່າມາປະຊຸມ ຖ້າຍັງບໍ່ມີໃນລາຍຊື່ຂ້າງເທິງ
+    const known = new Set(rows.map((r) => normName(r.name)));
+    for (const name of b.attendees ?? []) {
+      const key = normName(name);
+      if (!key || known.has(key)) continue;
+      known.add(key);
+      rows.push({
+        name: cleanName(name),
+        accountId: '',
+        contact: '',
+        status: 'JOINED',
+        time: '',
+        arrival: '',
+        at: null,
+        method: 'Recorded by host',
         note: '',
       });
     }
@@ -762,6 +914,8 @@ export class RoomInvitesService {
         contact: c.contact ?? '',
         status: 'DENIED',
         time: fmtDateTime(c.at),
+        arrival: '',
+        at: null,
         method: via(c),
         note: REASON_TEXT[c.reason as JoinReason] ?? c.reason ?? '',
       });
@@ -775,40 +929,104 @@ export class RoomInvitesService {
     return rows;
   }
 
+  // ສະຫຼຸບການປະຊຸມ (ເວລາ, ໄລຍະເວລາຈິງ, ການຕໍ່ເວລາ, ຄົນມາ/ບໍ່ມາ, timeline) — ໃຊ້ທັງ CSV ແລະ PDF
+  private async meetingSummary(
+    b: RoomBookingDocument,
+    info: JoinBookingInfo & { capacity?: number },
+    rows: { status: string; at: Date | null }[],
+  ): Promise<MeetingSummary> {
+    let bookedByName = '';
+    try {
+      const u: any = await this.userModel
+        .findById(b.bookedBy)
+        .select('firstName lastName email')
+        .lean()
+        .exec();
+      bookedByName = u
+        ? [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || ''
+        : '';
+    } catch {
+      /* ignore — ສະແດງເປັນຫວ່າງ */
+    }
+    return buildMeetingSummary({
+      bookingId: String(b._id),
+      title: info.title,
+      roomName: info.roomName,
+      roomCapacity: info.capacity,
+      bookedByName: bookedByName || String(b.bookedBy),
+      inviteMode: b.inviteMode,
+      startAt: b.startAt,
+      endAt: b.endAt,
+      checkedInAt: b.checkedInAt,
+      checkedOutAt: b.checkedOutAt,
+      history: (b.history ?? []) as any,
+      invited: b.invitees.filter((i) => !i.revokedAt).length,
+      rows,
+    });
+  }
+
   async buildCsv(id: string, user: HostUser) {
     const b = await this.load(id);
     this.assertHost(b, user);
     const info = await this.bookingInfo(b);
     const rows = await this.attendanceRows(b);
+    const summary = await this.meetingSummary(b, info, rows);
 
-    const header = [
-      'Booking ID',
-      'Title',
-      'Room',
-      'Mode',
-      'Name',
-      'Account ID',
-      'Contact',
-      'Status',
-      'Time',
-      'Method',
-      'Note',
-    ];
-    const data = rows.map((r) => ({
-      'Booking ID': b._id,
-      Title: safeCell(info.title),
-      Room: safeCell(info.roomName),
-      Mode: b.inviteMode ?? '',
-      Name: safeCell(r.name),
-      'Account ID': safeCell(r.accountId),
-      Contact: safeCell(r.contact),
-      Status: r.status,
-      Time: r.time,
-      Method: r.method,
-      Note: safeCell(r.note),
-    }));
-    const csv = data.length ? toCsv(data) : header.join(',');
-    return { csv: '\uFEFF' + csv, filename: `attendance-${b._id}.csv` };
+    const esc = (v: any) =>
+      `"${safeCell(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`;
+    const line = (...cells: any[]) => cells.map(esc).join(',');
+    const lines: string[] = [];
+
+    lines.push(line('MEETING SUMMARY'));
+    for (const section of summary.sections) {
+      lines.push(line(section.title));
+      for (const item of section.items) lines.push(line(item.label, item.value));
+      lines.push('');
+    }
+
+    if (summary.timeline.length) {
+      lines.push(line('TIMELINE'));
+      lines.push(line('Time', 'Event', 'Detail'));
+      for (const t of summary.timeline) lines.push(line(t.at, t.event, t.detail));
+      lines.push('');
+    }
+
+    lines.push(line('ATTENDEES'));
+    lines.push(
+      line(
+        'Name',
+        'Account ID',
+        'Contact',
+        'Status',
+        'Arrived at',
+        'Arrival vs start',
+        'Method',
+        'Note',
+      ),
+    );
+    const statusText: Record<string, string> = {
+      JOINED: 'Came',
+      NOT_JOINED: 'Did not come',
+      DENIED: 'Denied',
+    };
+    for (const r of rows) {
+      lines.push(
+        line(
+          r.name,
+          r.accountId,
+          r.contact,
+          statusText[r.status] ?? r.status,
+          r.time,
+          r.arrival,
+          r.method,
+          r.note,
+        ),
+      );
+    }
+    return {
+      csv: '\uFEFF' + lines.join('\n'),
+      filename: `meeting-summary-${b._id}.csv`,
+    };
   }
 
   async buildReportPdf(id: string, user: HostUser) {
@@ -816,8 +1034,8 @@ export class RoomInvitesService {
     this.assertHost(b, user);
     const info = await this.bookingInfo(b);
     const rows = await this.attendanceRows(b);
-    const count = (s: string) => rows.filter((r) => r.status === s).length;
-    const pdfRows = rows.map(({ method, note, ...r }) => ({
+    const summary = await this.meetingSummary(b, info, rows);
+    const pdfRows = rows.map(({ method, note, at, ...r }) => ({
       ...r,
       note: [method, note].filter(Boolean).join(' · '),
     }));
@@ -825,16 +1043,10 @@ export class RoomInvitesService {
       bookingId: String(b._id),
       bookingTitle: info.title,
       roomName: info.roomName,
-      mode: b.inviteMode ?? 'NOT OPENED',
-      startAt: b.startAt,
-      endAt: b.endAt,
-      invited: b.invitees.filter((i) => !i.revokedAt).length,
-      joined: count('JOINED'),
-      notJoined: count('NOT_JOINED'),
-      denied: count('DENIED'),
+      summary,
       rows: pdfRows,
     });
-    return { pdf, filename: `attendance-${b._id}.pdf` };
+    return { pdf, filename: `meeting-summary-${b._id}.pdf` };
   }
 
   private async findByToken(token: string): Promise<{
@@ -1061,7 +1273,10 @@ export class RoomInvitesService {
     }
 
     if (!alreadyJoined)
-      this.gateway.emitBookingsChanged(String(booking.roomId));
+      this.gateway.emitBookingsChanged(
+        String(booking.roomId),
+        String(booking._id),
+      );
     return {
       result: 'ADMITTED',
       name: c.name,
@@ -1113,6 +1328,9 @@ export class RoomInvitesService {
         },
       },
     );
-    this.gateway.emitBookingsChanged(String(booking.roomId));
+    this.gateway.emitBookingsChanged(
+      String(booking.roomId),
+      String(booking._id),
+    );
   }
 }

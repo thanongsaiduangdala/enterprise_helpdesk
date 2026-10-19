@@ -17,6 +17,8 @@ import { RoomInvitesService } from './room-invites.service';
 import {
   AddInviteeDto,
   BulkInviteDto,
+  BulkRemoveInviteesDto,
+  SelectedQrPdfDto,
   SetInviteModeDto,
 } from './dto/invite.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -80,6 +82,17 @@ export class RoomInvitesController {
     return this.invites.addInviteesBulk(id, req.user, dto);
   }
 
+  // ລຶບຫຼາຍຄົນອອກຈາກລາຍຊື່ພ້ອມກັນ (ຕິກເລືອກໃນລາຍຊື່ຜູ້ຖືກເຊີນ)
+  @Post(':id/invitees/bulk-remove')
+  @RequirePermission('rooms', 'read')
+  removeInviteesBulk(
+    @Param('id') id: string,
+    @Body() dto: BulkRemoveInviteesDto,
+    @Req() req: any,
+  ) {
+    return this.invites.removeInviteesBulk(id, req.user, dto);
+  }
+
   @Post(':id/invitees')
   @RequirePermission('rooms', 'read')
   addInvitee(
@@ -114,6 +127,27 @@ export class RoomInvitesController {
       inviteeId,
       target,
       baseUrl,
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="invite-qr-${id}.pdf"`,
+    );
+    res.send(pdf);
+  }
+
+  // ພິມ QR ສ່ວນຕົວສະເພາະຄົນທີ່ເລືອກ ໃນ PDF ດຽວ (POST ເພື່ອບໍ່ໃຫ້ URL ຍາວເກີນເມື່ອເລືອກຫຼາຍຄົນ)
+  @Post(':id/invite/qr.pdf')
+  @RequirePermission('rooms', 'read')
+  async qrPdfSelected(
+    @Param('id') id: string,
+    @Body() dto: SelectedQrPdfDto,
+    @Req() req: any,
+    @Res() res: Response,
+  ) {
+    const pdf = await this.invites.buildQrPdf(id, req.user, {
+      inviteeIds: dto.inviteeIds,
+      baseUrl: dto.baseUrl,
     });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
