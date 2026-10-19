@@ -78,7 +78,14 @@ export class AssetsService {
   }
 
   private async createInternal(dto: CreateAssetDto, session?: ClientSession) {
-    const { assetTag, catalogItemId, ...rest } = dto;
+    const { assetTag, catalogItemId, ...restDto } = dto;
+    const rest: Record<string, any> = { ...restDto };
+    const sn =
+      typeof rest.serialNumber === 'string' ? rest.serialNumber.trim() : '';
+    if (sn) rest.serialNumber = sn;
+    else delete rest.serialNumber;
+    if (rest.serialNumber)
+      await this.assertSerialFree(rest.serialNumber, session);
 
     // ຜູກກັບລາຍການ catalog (ຕ້ອງມີຈິງ)
     if (catalogItemId) {
@@ -144,6 +151,7 @@ export class AssetsService {
       catalogItemId: string;
       branchId: string;
       assigneeId: string;
+      serialNumber?: string;
       note?: string;
       purchaseDate?: string;
       warrantyExpiry?: string;
@@ -152,6 +160,8 @@ export class AssetsService {
     actorId: string,
     ip?: string,
   ): Promise<AssetDocument> {
+    const serial = input.serialNumber?.trim();
+    if (serial) await this.assertSerialFree(serial, ctx.session);
     const maxAttempts = 5;
     for (let attempt = 1; ; attempt++) {
       const tag = await this.generateCatalogAssetTag(
@@ -166,6 +176,7 @@ export class AssetsService {
           assetTag: tag,
           catalogItemId: input.catalogItemId,
           type: input.type,
+          serialNumber: serial || undefined,
           branchId: input.branchId,
           purchaseDate: input.purchaseDate,
           warrantyExpiry: input.warrantyExpiry,
@@ -349,16 +360,59 @@ export class AssetsService {
       assetTag: asset.assetTag,
       type: asset.type,
       status: asset.status,
+      serialNumber: asset.serialNumber,
       catalogItemId: asset.catalogItemId,
     };
   }
 
   async update(id: string, dto: UpdateAssetDto) {
-    const asset = await this.assetModel
-      .findByIdAndUpdate(id, dto, { new: true })
+    const { serialNumber, ...rest } = dto;
+    const update: Record<string, any> = { $set: { ...rest } };
+    if (serialNumber !== undefined) {
+      const sn = String(serialNumber ?? '').trim();
+      if (sn) {
+        await this.assertSerialFree(sn, undefined, id);
+        update.$set.serialNumber = sn;
+      } else {
+        update.$unset = { serialNumber: 1 };
+      }
+    }
+    try {
+      const asset = await this.assetModel
+        .findByIdAndUpdate(id, update, { new: true })
+        .exec();
+      if (!asset) throw new NotFoundException('Asset not found');
+      return asset;
+    } catch (err: any) {
+      if (err?.code === 11000) {
+        throw new ConflictException(
+          `Serial number "${serialNumber}" is already in use`,
+        );
+      }
+      throw err;
+    }
+  }
+
+  /** ຫາຊັບສິນດ້ວຍ S/N (ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່) */
+  async findBySerialNumber(serial: string, session?: ClientSession) {
+    const escaped = serial.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return this.assetModel
+      .findOne({ serialNumber: new RegExp(`^${escaped}$`, 'i') })
+      .session(session ?? null)
       .exec();
-    if (!asset) throw new NotFoundException('Asset not found');
-    return asset;
+  }
+
+  private async assertSerialFree(
+    serial: string,
+    session?: ClientSession,
+    exceptAssetId?: string,
+  ) {
+    const dup = await this.findBySerialNumber(serial, session);
+    if (dup && String(dup._id) !== String(exceptAssetId)) {
+      throw new ConflictException(
+        `Serial number "${serial}" is already used by asset ${dup.assetTag}`,
+      );
+    }
   }
 
   async assign(id: string, dto: AssignAssetDto, actorId: string, ip?: string) {
@@ -842,16 +896,65 @@ export class AssetsService {
   }
 
   /**
+   * ກວດວ່າຊັບສິນທີ່ POPR ສ້າງ/ມອບ ຍັງ "ບໍ່ຖືກໃຊ້ຕໍ່" ຈຶ່ງຍ້ອນກັບໄດ້ຢ່າງປອດໄພ:
+   * ຕ້ອງຍັງ ASSIGNED ໃຫ້ຜູ້ຮັບເດີມ, ມີປະຫວັດການມອບລາຍການດຽວທີ່ຍັງເປີດຢູ່, ແລະບໍ່ມີປະຫວັດບຳລຸງຮັກສາ.
+   * ຖ້າບໍ່ຕົງ → ປະຕິເສດທັງໝົດ (ບໍ່ແກ້ໄຂຫຍັງ).
+   */
+  async assertReversibleByPopr(
+    ids: string[],
+    expectedAssigneeId: string | undefined,
+    ctx: TxCtx,
+    opts: { linked?: boolean } = {},
+  ) {
+    if (!ids || ids.length === 0) return;
+    const assets = await this.assetModel
+      .find({ _id: { $in: ids } })
+      .session(ctx.session ?? null)
+      .exec();
+    const problems: string[] = [];
+    for (const a of assets) {
+      const reasons: string[] = [];
+      if (a.status !== AssetStatus.ASSIGNED) reasons.push(`ສະຖານະ ${a.status}`);
+      if (
+        !expectedAssigneeId ||
+        String(a.currentAssigneeId ?? '') !== String(expectedAssigneeId)
+      ) {
+        reasons.push('ຜູ້ຖືປັດຈຸບັນບໍ່ແມ່ນຜູ້ຮັບເດີມ');
+      }
+      const history = a.assignmentHistory ?? [];
+      const openCount = history.filter((h) => !h.returnedAt).length;
+      if (openCount !== 1) reasons.push('ປະຫວັດການມອບບໍ່ຕົງ');
+      // ຊັບສິນທີ່ POPR ສ້າງເອງມີປະຫວັດໄດ້ແຕ່ລາຍການດຽວ; ຊັບສິນທີ່ຜູກມາຈາກທະບຽນມີປະຫວັດເກົ່າໄດ້
+      if (!opts.linked && history.length !== 1)
+        reasons.push('ມີປະຫວັດການມອບຫຼາຍຄັ້ງ');
+      const maintenance = await this.maintenanceHistoryService.findByAssetId(
+        String(a._id),
+      );
+      if (maintenance.length > 0) reasons.push('ມີປະຫວັດບຳລຸງຮັກສາ');
+      if (reasons.length > 0)
+        problems.push(`${a.assetTag}: ${reasons.join(', ')}`);
+    }
+    if (problems.length > 0) {
+      throw new BadRequestException(
+        `ຍ້ອນກັບບໍ່ໄດ້ ເພາະຊັບສິນຖືກນຳໃຊ້ແລ້ວ — ${problems.join(' | ')}`,
+      );
+    }
+  }
+
+  /**
    * ລຶບຊັບສິນພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ ຍ້ອນກັບຕອນເປີດ POPR ໃໝ່).
-   * ຊັບສິນເຫຼົ່ານີ້ຢູ່ສະຖານະ ASSIGNED (ບໍ່ນັບເຂົ້າສະຕ໊ອກ) ຈຶ່ງບໍ່ຕ້ອງ syncStock.
+   * ກວດ assertReversibleByPopr ກ່ອນລຶບສະເໝີ. ຊັບສິນເຫຼົ່ານີ້ຢູ່ສະຖານະ ASSIGNED
+   * (ບໍ່ນັບເຂົ້າສະຕ໊ອກ) ຈຶ່ງບໍ່ຕ້ອງ syncStock.
    */
   async deleteAssetsInTx(
     ids: string[],
+    expectedAssigneeId: string | undefined,
     ctx: TxCtx,
     actorId: string,
     ip?: string,
   ): Promise<number> {
     if (!ids || ids.length === 0) return 0;
+    await this.assertReversibleByPopr(ids, expectedAssigneeId, ctx);
     const assets = await this.assetModel
       .find({ _id: { $in: ids } })
       .session(ctx.session ?? null)
@@ -871,6 +974,50 @@ export class AssetsService {
       });
     }
     return assets.length;
+  }
+
+  /** ຍ້ອນກັບການມອບຊັບສິນເດີມ (ທີ່ POPR ມອບ) ກັບເປັນວ່າງ ພາຍໃນ transaction ຂອງ service ອື່ນ */
+  async unassignLinkedInTx(
+    ids: string[],
+    expectedAssigneeId: string | undefined,
+    note: string,
+    ctx: TxCtx,
+    actorId: string,
+    ip?: string,
+  ) {
+    if (!ids || ids.length === 0) return;
+    await this.assertReversibleByPopr(ids, expectedAssigneeId, ctx, {
+      linked: true,
+    });
+    for (const id of ids) {
+      const asset = await this.findOne(id, ctx.session);
+      const before = asset.toObject();
+      const open = asset.assignmentHistory.find((h) => !h.returnedAt);
+      if (open) {
+        open.returnedAt = new Date();
+        open.note = open.note ? `${open.note} · ${note}` : note;
+      }
+      asset.currentAssigneeId = undefined;
+      asset.status = AssetStatus.AVAILABLE;
+      const saved = await asset.save({ session: ctx.session });
+      await this.syncStock(
+        asset,
+        AssetStatus.ASSIGNED,
+        AssetStatus.AVAILABLE,
+        actorId,
+        ip,
+        ctx,
+      );
+      ctx.audits.push({
+        actorId,
+        action: 'ASSET_RETURNED',
+        entityType: 'Asset',
+        entityId: id,
+        before,
+        after: saved.toObject(),
+        ip,
+      });
+    }
   }
 
   async findOverdueReturns() {

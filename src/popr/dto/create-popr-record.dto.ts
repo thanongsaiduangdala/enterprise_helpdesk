@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -76,6 +77,14 @@ export class ProcurementDto {
   @IsString()
   spec?: string;
 
+  @ApiPropertyOptional({
+    example: 'Latitude-5450-i5',
+    description: 'Product number / model — stored only on the POPR record',
+  })
+  @IsOptional()
+  @IsString()
+  productNumber?: string;
+
   @ApiPropertyOptional({ example: 12000000 })
   @IsOptional()
   @IsNumber()
@@ -123,6 +132,22 @@ export class ProcurementDto {
   orderStatus?: PoprOrderStatus;
 }
 
+/** ຕໍ່ໜ່ວຍທີ່ຮັບເຂົ້າ: S/N ຂອງໜ່ວຍ ຫຼື ຜູກຊັບສິນເດີມ (ບໍ່ສ້າງຊ້ຳ) */
+export class ReceivingUnitDto {
+  @ApiPropertyOptional({ example: 'SN-8FJ2K9' })
+  @IsOptional()
+  @IsString()
+  serialNumber?: string;
+
+  @ApiPropertyOptional({
+    example: 'AS001',
+    description: 'Existing asset to link instead of creating a new one',
+  })
+  @IsOptional()
+  @IsString()
+  assetId?: string;
+}
+
 /** O — ການຮັບເຂົ້າ/ຕ້ອນຮັບ */
 export class ReceivingDto {
   @ApiPropertyOptional({ example: '2026-10-15' })
@@ -140,10 +165,24 @@ export class ReceivingDto {
   @IsEnum(PoprCondition)
   equipmentCondition?: PoprCondition;
 
-  @ApiPropertyOptional({ example: 'SN-8FJ2K9' })
+  @ApiPropertyOptional({
+    example: 'SN-8FJ2K9',
+    description: 'Legacy single-unit S/N — prefer `units`',
+  })
   @IsOptional()
   @IsString()
   serialNumber?: string;
+
+  @ApiPropertyOptional({
+    type: [ReceivingUnitDto],
+    description:
+      'Per-unit S/N or link to an existing asset. ELECTRONIC needs one entry per purchased unit.',
+  })
+  @IsOptional()
+  @ArrayMaxSize(1000)
+  @ValidateNested({ each: true })
+  @Type(() => ReceivingUnitDto)
+  units?: ReceivingUnitDto[];
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()

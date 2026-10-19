@@ -204,20 +204,28 @@ export async function buildAttendancePdf(
     }
   };
 
-  doc.fillColor('#111827').fontSize(18).text('Meeting Summary Report', left, 40);
+  doc
+    .fillColor('#111827')
+    .fontSize(18)
+    .text('Meeting Summary Report', left, 40);
   doc.moveDown(0.3);
   doc.fontSize(12).fillColor('#374151').text(`${r.bookingTitle}`);
   doc
     .fontSize(9)
     .fillColor('#9ca3af')
-    .text(`${r.roomName}  |  ${r.bookingId}  |  Generated ${fmtDateTime(new Date())}`);
+    .text(
+      `${r.roomName}  |  ${r.bookingId}  |  Generated ${fmtDateTime(new Date())}`,
+    );
   doc.moveDown(0.8);
 
   // ----- ສ່ວນສະຫຼຸບ (label : value) -----
   const labelW = 150;
   for (const section of r.summary.sections) {
     ensureSpace(40);
-    doc.fontSize(11).fillColor('#b45309').text(section.title.toUpperCase(), left, doc.y);
+    doc
+      .fontSize(11)
+      .fillColor('#b45309')
+      .text(section.title.toUpperCase(), left, doc.y);
     doc
       .moveTo(left, doc.y + 1)
       .lineTo(left + fullW, doc.y + 1)
@@ -234,7 +242,9 @@ export async function buildAttendancePdf(
       ensureSpace(h + 4);
       const y = doc.y;
       doc.fillColor('#6b7280').text(item.label, left, y, { width: labelW - 8 });
-      doc.fillColor('#111827').text(item.value, left + labelW, y, { width: fullW - labelW });
+      doc
+        .fillColor('#111827')
+        .text(item.value, left + labelW, y, { width: fullW - labelW });
       doc.y = y + h + 3;
     }
     doc.moveDown(0.6);
@@ -261,7 +271,9 @@ export async function buildAttendancePdf(
       const y = doc.y;
       doc.fillColor('#6b7280').text(t.at, left, y, { width: 115 });
       doc.fillColor('#111827').text(t.event, left + 120, y, { width: 150 });
-      doc.fillColor('#374151').text(t.detail, left + 275, y, { width: fullW - 275 });
+      doc
+        .fillColor('#374151')
+        .text(t.detail, left + 275, y, { width: fullW - 275 });
       doc.y = y + h + 3;
     }
     doc.moveDown(0.6);
@@ -307,7 +319,7 @@ export async function buildAttendancePdf(
     doc.fontSize(9);
     const cell = (key: string) =>
       key === 'status'
-        ? STATUS_LABEL[row.status] ?? row.status
+        ? (STATUS_LABEL[row.status] ?? row.status)
         : String((row as any)[key] ?? '');
     const heights = cols.map((c) =>
       doc.heightOfString(cell(c.key), { width: c.w - 6 }),

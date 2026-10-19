@@ -131,7 +131,11 @@ export function buildMeetingSummary(i: SummaryInput): MeetingSummary {
   // ---------- ເວລາທີ່ໃຊ້ຫ້ອງຈິງ ----------
   const checkedIn = i.checkedInAt ? new Date(i.checkedInAt) : null;
   const checkedOut = i.checkedOutAt ? new Date(i.checkedOutAt) : null;
-  const ended = checkedOut ? checkedOut : i.endAt.getTime() <= now.getTime() ? i.endAt : null;
+  const ended = checkedOut
+    ? checkedOut
+    : i.endAt.getTime() <= now.getTime()
+      ? i.endAt
+      : null;
   const actualMinutes =
     checkedIn && ended ? Math.max(0, minutesBetween(checkedIn, ended)) : null;
 
@@ -139,7 +143,8 @@ export function buildMeetingSummary(i: SummaryInput): MeetingSummary {
   if (checkedOut) {
     const diff = minutesBetween(checkedOut, i.endAt);
     if (diff > 1) endState = `Checked out ${fmtDuration(diff)} early`;
-    else if (diff < -1) endState = `Checked out ${fmtDuration(-diff)} after scheduled end`;
+    else if (diff < -1)
+      endState = `Checked out ${fmtDuration(-diff)} after scheduled end`;
     else endState = 'Checked out on time';
   } else if (i.endAt.getTime() <= now.getTime()) {
     endState = checkedIn
@@ -177,7 +182,10 @@ export function buildMeetingSummary(i: SummaryInput): MeetingSummary {
   if (isPrivate) {
     attendanceItems.push({ label: 'Invited', value: String(i.invited) });
   }
-  attendanceItems.push({ label: 'Came (joined)', value: String(joined.length) });
+  attendanceItems.push({
+    label: 'Came (joined)',
+    value: String(joined.length),
+  });
   if (isPrivate) {
     attendanceItems.push({ label: 'Did not come', value: String(notJoined) });
     if (i.invited > 0) {
@@ -187,7 +195,10 @@ export function buildMeetingSummary(i: SummaryInput): MeetingSummary {
       });
     }
   }
-  attendanceItems.push({ label: 'Denied entry attempts', value: String(denied) });
+  attendanceItems.push({
+    label: 'Denied entry attempts',
+    value: String(denied),
+  });
   if (arrivals.length) {
     attendanceItems.push({
       label: 'First arrival',

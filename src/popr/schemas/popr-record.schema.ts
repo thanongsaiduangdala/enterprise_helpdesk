@@ -69,6 +69,10 @@ export class ProcurementDetails {
   @Prop()
   spec?: string;
 
+  /** ເລກຜະລິດຕະພັນ/ຮຸ່ນ (Product Number / Model) — ເກັບສະເພາະໃນບັນທຶກ POPR ບໍ່ເຂົ້າ catalog */
+  @Prop()
+  productNumber?: string;
+
   @Prop({ min: 0 })
   budget?: number;
 
@@ -95,6 +99,20 @@ export class ProcurementDetails {
   orderStatus!: PoprOrderStatus;
 }
 
+/**
+ * ຕໍ່ໜ່ວຍທີ່ຮັບເຂົ້າ (ສຳລັບ ELECTRONIC/GENERAL): ແຕ່ລະໜ່ວຍມີ S/N ຂອງຕົນເອງ
+ * ແລະ/ຫຼື ຜູກກັບຊັບສິນທີ່ລົງທະບຽນໄວ້ແລ້ວ (assetId). ຖ້າຜູກ → ບໍ່ສ້າງຊັບສິນໃໝ່ຊ້ຳ.
+ * ຫຼັງປິດ POPR assetId ຈະຖືກຕື່ມໃຫ້ທຸກໜ່ວຍ (ທັງທີ່ຜູກ ແລະ ທີ່ລະບົບສ້າງ).
+ */
+@Schema({ _id: false })
+export class ReceivingUnit {
+  @Prop()
+  serialNumber?: string;
+
+  @Prop({ type: String, ref: 'Asset' })
+  assetId?: string;
+}
+
 /** O — ການຮັບເຂົ້າ/ຕ້ອນຮັບ ຢູ່ສະຖານທີ່ */
 @Schema({ _id: false })
 export class ReceivingDetails {
@@ -107,8 +125,13 @@ export class ReceivingDetails {
   @Prop({ enum: PoprCondition, default: PoprCondition.GOOD })
   equipmentCondition?: PoprCondition;
 
+  /** ເກົ່າ (ໜ່ວຍດຽວ) — ຂໍ້ມູນໃໝ່ໃຊ້ units; ຍັງອ່ານໄດ້ເພື່ອ backward compatibility */
   @Prop()
   serialNumber?: string;
+
+  /** ລາຍໜ່ວຍ: S/N ຕໍ່ໜ່ວຍ ຫຼື ຜູກຊັບສິນເດີມ */
+  @Prop({ type: [ReceivingUnit], default: [] })
+  units!: ReceivingUnit[];
 
   @Prop({ default: false })
   snMatch!: boolean;
@@ -245,6 +268,10 @@ export class PoprRecord {
   @Prop({ type: [String], default: [] })
   appliedAssetIds!: string[];
 
+  /** ຊັບສິນເດີມທີ່ POPR ຜູກ ແລະ ມອບໃຫ້ຜູ້ຮັບຕອນປິດ (ບໍ່ລຶບ ເມື່ອເປີດໃໝ່ — ແຕ່ຄືນເປັນ "ວ່າງ") */
+  @Prop({ type: [String], default: [] })
+  appliedLinkedAssetIds!: string[];
+
   /** ຈຳນວນສະຕ໊ອກທີ່ບວກເຂົ້າ catalog ຕອນປິດ POPR — ເກັບໄວ້ເພື່ອຍ້ອນກັບ */
   @Prop({ default: 0 })
   appliedStockDelta!: number;
@@ -263,12 +290,29 @@ export const PoprRecordSchema = SchemaFactory.createForClass(PoprRecord);
 PoprRecordSchema.index({ status: 1 });
 PoprRecordSchema.index({ createdBy: 1 });
 PoprRecordSchema.index({ 'procurement.catalogItemId': 1 });
+// ໃຊ້ partialFilterExpression ($gt: '') ແທນ sparse — sparse ບໍ່ຂ້າມຄ່າ '' ຈຶ່ງເຮັດໃຫ້ຮ່າງທີສອງທີ່ບໍ່ມີ PO ຊົນ (E11000)
+// ໝາຍເຫດ: index ເກົ່າຊື່ເດີມຖືກປ່ຽນ options → PoprService.onModuleInit ຈະ drop ແລ້ວສ້າງໃໝ່ໃຫ້ອັດຕະໂນມັດ
 PoprRecordSchema.index(
   { 'procurement.poNumber': 1 },
-  { unique: true, sparse: true },
+  {
+    unique: true,
+    partialFilterExpression: { 'procurement.poNumber': { $gt: '' } },
+  },
 );
 PoprRecordSchema.index(
   { 'receiving.serialNumber': 1 },
-  { unique: true, sparse: true },
+  {
+    unique: true,
+    partialFilterExpression: { 'receiving.serialNumber': { $gt: '' } },
+  },
+);
+// S/N ຕໍ່ໜ່ວຍ — ບໍ່ໃຫ້ຊ້ຳລະຫວ່າງ POPR (ຊ້ຳໃນ POPR ດຽວກັນ ກວດທີ່ service)
+PoprRecordSchema.index(
+  { 'receiving.units.serialNumber': 1 },
+  {
+    unique: true,
+    partialFilterExpression: { 'receiving.units.serialNumber': { $gt: '' } },
+  },
 );
 PoprRecordSchema.index({ 'receiving.assetId': 1 });
+PoprRecordSchema.index({ 'receiving.units.assetId': 1 });

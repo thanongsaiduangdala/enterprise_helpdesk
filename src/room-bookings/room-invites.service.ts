@@ -854,14 +854,9 @@ export class RoomInvitesService {
     return buildQrPdf(pages);
   }
 
-<<<<<<< HEAD
   private attendanceRows(b: RoomBookingDocument) {
-    const rows: (AttendanceRow & { method: string })[] = [];
-=======
-  private async attendanceRows(b: RoomBookingDocument) {
     type Row = AttendanceRow & { method: string; at: Date | null };
     const rows: Row[] = [];
->>>>>>> 6cc76b803f705646920636d779216547d44f6e41
     const joinedEntries = b.checkIns.filter((c) => c.result === 'ADMITTED');
     const via = (c?: BookingCheckIn) =>
       c ? (c.via === 'PERSONAL_QR' ? 'Personal QR' : 'Door QR') : '';
@@ -966,7 +961,7 @@ export class RoomInvitesService {
       endAt: b.endAt,
       checkedInAt: b.checkedInAt,
       checkedOutAt: b.checkedOutAt,
-      history: (b.history ?? []) as any,
+      history: b.history ?? [],
       invited: b.invitees.filter((i) => !i.revokedAt).length,
       rows,
     });
@@ -976,12 +971,8 @@ export class RoomInvitesService {
     const b = await this.load(id);
     this.assertHost(b, user);
     const info = await this.bookingInfo(b);
-<<<<<<< HEAD
     const rows = this.attendanceRows(b);
-=======
-    const rows = await this.attendanceRows(b);
     const summary = await this.meetingSummary(b, info, rows);
->>>>>>> 6cc76b803f705646920636d779216547d44f6e41
 
     const esc = (v: any) =>
       `"${safeCell(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`;
@@ -991,14 +982,16 @@ export class RoomInvitesService {
     lines.push(line('MEETING SUMMARY'));
     for (const section of summary.sections) {
       lines.push(line(section.title));
-      for (const item of section.items) lines.push(line(item.label, item.value));
+      for (const item of section.items)
+        lines.push(line(item.label, item.value));
       lines.push('');
     }
 
     if (summary.timeline.length) {
       lines.push(line('TIMELINE'));
       lines.push(line('Time', 'Event', 'Detail'));
-      for (const t of summary.timeline) lines.push(line(t.at, t.event, t.detail));
+      for (const t of summary.timeline)
+        lines.push(line(t.at, t.event, t.detail));
       lines.push('');
     }
 
@@ -1044,17 +1037,16 @@ export class RoomInvitesService {
     const b = await this.load(id);
     this.assertHost(b, user);
     const info = await this.bookingInfo(b);
-<<<<<<< HEAD
     const rows = this.attendanceRows(b);
-    const count = (s: string) => rows.filter((r) => r.status === s).length;
-    const pdfRows = rows.map(({ method, note, ...r }) => ({
-=======
-    const rows = await this.attendanceRows(b);
     const summary = await this.meetingSummary(b, info, rows);
-    const pdfRows = rows.map(({ method, note, at, ...r }) => ({
->>>>>>> 6cc76b803f705646920636d779216547d44f6e41
-      ...r,
-      note: [method, note].filter(Boolean).join(' · '),
+    const pdfRows = rows.map((r) => ({
+      name: r.name,
+      accountId: r.accountId,
+      contact: r.contact,
+      status: r.status,
+      time: r.time,
+      arrival: r.arrival,
+      note: [r.method, r.note].filter(Boolean).join(' · '),
     }));
     const pdf = await buildAttendancePdf({
       bookingId: String(b._id),

@@ -3,7 +3,9 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
@@ -21,14 +23,22 @@ import { UsersService } from '../users/users.service';
 import { sodEnforced } from '../common/utils/sod.util';
 import { bumpCounterTo, nextSequence } from '../common/utils/counter.util';
 import { Counter, CounterDocument } from '../roles/schemas/counter.schema';
+import { AssetStatus } from '../assets/schemas/asset.schema';
 import {
   AuditEvent,
   runInTransaction,
   TxCtx,
 } from '../common/utils/transaction.util';
 
+interface UnitInput {
+  serialNumber?: string;
+  assetId?: string;
+}
+
 @Injectable()
-export class PoprService {
+export class PoprService implements OnModuleInit {
+  private readonly logger = new Logger(PoprService.name);
+
   constructor(
     @InjectModel(PoprRecord.name)
     private poprModel: Model<PoprRecordDocument>,
@@ -38,6 +48,73 @@ export class PoprService {
     @InjectModel(Counter.name) private counterModel: Model<CounterDocument>,
     @InjectConnection() private connection: Connection,
   ) {}
+
+  /**
+   * ແກ້ບັນຫາ E11000 ຂອງ PO/S/N ຫວ່າງ ('') — ລ້າງຄ່າ '' ເກົ່າ, drop index ເກົ່າ (sparse) ທີ່ບໍ່ຂ້າມ '' ແລ້ວສ້າງໃໝ່
+   * ເປັນ partial index. ເຮັດຄັ້ງດຽວຕອນເລີ່ມລະບົບ (ປອດໄພທີ່ຈະຮັນຊ້ຳ).
+   */
+  async onModuleInit() {
+    try {
+      const coll = this.poprModel.collection;
+      await coll.updateMany(
+        { 'procurement.poNumber': '' },
+        { $unset: { 'procurement.poNumber': '' } },
+      );
+      await coll.updateMany(
+        { 'receiving.serialNumber': '' },
+        { $unset: { 'receiving.serialNumber': '' } },
+      );
+      const indexes: any[] = await coll.indexes();
+      for (const name of [
+        'procurement.poNumber_1',
+        'receiving.serialNumber_1',
+      ]) {
+        const idx = indexes.find((i) => i.name === name);
+        if (idx && !idx.partialFilterExpression) {
+          await coll.dropIndex(name);
+          this.logger.log(
+            `Dropped legacy index ${name} (recreated as partial)`,
+          );
+        }
+      }
+      await this.poprModel.createIndexes();
+    } catch (err: any) {
+      this.logger.warn(`POPR index migration skipped: ${err?.message ?? err}`);
+    }
+  }
+
+  /** ຕັດຊ່ອງຫວ່າງ ແລະ ເອົາ string ຫວ່າງ ('') ອອກ — ເກັບເປັນ "ບໍ່ມີຄ່າ" ແທນ */
+  private cleanStrings<T extends Record<string, any>>(obj: T): T {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === 'string') {
+        const t = v.trim();
+        if (t !== '') out[k] = t;
+      } else if (v !== undefined && v !== null) {
+        out[k] = v;
+      }
+    }
+    return out as T;
+  }
+
+  /** ໜ່ວຍທີ່ໃຊ້ຈິງ: units ຖ້າມີ, ຖ້າບໍ່ມີ (ຂໍ້ມູນເກົ່າ) ໃຊ້ serialNumber/assetId ໜ່ວຍດຽວ */
+  private effectiveUnits(record: PoprRecordDocument): UnitInput[] {
+    const o: any = record.receiving ?? {};
+    const units: UnitInput[] = (o.units ?? []).map((u: any) => ({
+      serialNumber: u.serialNumber || undefined,
+      assetId: u.assetId ? String(u.assetId) : undefined,
+    }));
+    if (units.length > 0) return units;
+    if (o.serialNumber || o.assetId) {
+      return [
+        {
+          serialNumber: o.serialNumber || undefined,
+          assetId: o.assetId ? String(o.assetId) : undefined,
+        },
+      ];
+    }
+    return [];
+  }
 
   /** ສ້າງ ID ດ້ວຍ counter (atomic $inc) ເພື່ອຫຼີກການຊ້ຳ ID ເມື່ອສ້າງພ້ອມກັນ */
   private async generateId(session?: ClientSession): Promise<string> {
@@ -64,13 +141,19 @@ export class PoprService {
     if (dto.stage !== undefined) payload.stage = dto.stage;
 
     if (dto.procurement) {
-      payload.procurement = { ...dto.procurement };
+      payload.procurement = this.cleanStrings({ ...dto.procurement });
     }
     if (dto.receiving) {
-      const { receivedDate, receivedByUserId, assetId, ...rest } =
+      const { receivedDate, receivedByUserId, assetId, units, ...rest } =
         dto.receiving;
       payload.receiving = {
-        ...rest,
+        ...this.cleanStrings(rest),
+        units: (units ?? []).map((u) =>
+          this.cleanStrings({
+            serialNumber: u.serialNumber,
+            assetId: u.assetId,
+          }),
+        ),
         ...(assetId ? { assetId } : {}),
         ...(receivedByUserId
           ? { receivedByUserId: new Types.ObjectId(receivedByUserId) }
@@ -79,13 +162,13 @@ export class PoprService {
       };
     }
     if (dto.preparation) {
-      payload.preparation = { ...dto.preparation };
+      payload.preparation = this.cleanStrings({ ...dto.preparation });
     }
     if (dto.release) {
       const { deliveryDate, deliveredToUserId, assignedUserId, ...rest } =
         dto.release;
       payload.release = {
-        ...rest,
+        ...this.cleanStrings(rest),
         ...(deliveredToUserId
           ? { deliveredToUserId: new Types.ObjectId(deliveredToUserId) }
           : {}),
@@ -102,7 +185,8 @@ export class PoprService {
    * ບັງຄັບຂໍ້ມູນຈຳເປັນກ່ອນປິດສຳເລັດ — ແຕກຕ່າງຕາມປະເພດ:
    * - ELECTRONIC: ຕ້ອງມີ S/N, snMatch, OS ແລະ ຊອບແວຄວາມປອດໄພ
    * - GENERAL: ບໍ່ຕ້ອງ S/N/OS/ຄວາມປອດໄພ
-   * - CONSUMABLE (ວັດສະດຸສິ້ນເປືອງ): ບໍ່ຕ້ອງ S/N/OS/ລາຍເຊັນ; ຕ້ອງມີຈຳນວນທີ່ຮັບ
+   * - CONSUMABLE (ວັດສະດຸສິ້ນເປືອງ): ບໍ່ຕ້ອງ S/N/OS/ລາຍເຊັນ/ຜູ້ຮັບ (ເຂົ້າຄັງ, ບໍ່ໄດ້ມອບໃຫ້ຄົນ); ຕ້ອງມີຈຳນວນທີ່ຮັບ
+   * - ELECTRONIC: ຕ້ອງມີຂໍ້ມູນຕໍ່ໜ່ວຍ (S/N ຫຼືຜູກຊັບສິນເດີມ) ຄົບຕາມຈຳນວນທີ່ຈັດຊື້
    */
   private assertCompletable(record: PoprRecordDocument) {
     const missing: string[] = [];
@@ -128,9 +212,25 @@ export class PoprService {
     if (isConsumable) {
       if (o.receivedQuantity === undefined || o.receivedQuantity === null)
         missing.push('receiving.receivedQuantity');
-    } else if (isElectronic) {
-      if (!o.serialNumber) missing.push('receiving.serialNumber');
-      if (!o.snMatch) missing.push('receiving.snMatch');
+    } else {
+      const qty = p.quantity ?? 1;
+      const units = this.effectiveUnits(record);
+      if (units.length > qty) {
+        throw new BadRequestException(
+          `ຈຳນວນໜ່ວຍທີ່ຮັບ (${units.length}) ເກີນຈຳນວນທີ່ຈັດຊື້ (${qty})`,
+        );
+      }
+      if (isElectronic) {
+        if (units.length < qty)
+          missing.push(
+            `receiving.units (ຕ້ອງ ${qty} ໜ່ວຍ, ມີ ${units.length})`,
+          );
+        units.forEach((u, i) => {
+          if (!u.serialNumber && !u.assetId)
+            missing.push(`receiving.units[${i + 1}].serialNumber`);
+        });
+        if (!o.snMatch) missing.push('receiving.snMatch');
+      }
     }
 
     if (isElectronic) {
@@ -141,9 +241,10 @@ export class PoprService {
     }
 
     const r = record.release ?? {};
-    if (!r.deliveredTo) missing.push('release.deliveredTo');
-    if (!r.assignedUser) missing.push('release.assignedUser');
+    // ຂອງສິ້ນເປືອງເຂົ້າຄັງ — ບໍ່ບັງຄັບຜູ້ຮັບ/ລາຍເຊັນ
     if (!isConsumable) {
+      if (!r.deliveredTo) missing.push('release.deliveredTo');
+      if (!r.assignedUser) missing.push('release.assignedUser');
       if (!r.signedHandover) missing.push('release.signedHandover');
       if (!r.assignedUserId) missing.push('release.assignedUserId');
     }
@@ -187,13 +288,46 @@ export class PoprService {
     }
   }
 
+  /** S/N ຕ້ອງບໍ່ຊ້ຳ ທັງໃນ POPR ອື່ນ (ທຸກໜ່ວຍ) ແລະ ໃນທະບຽນຊັບສິນ (ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່) */
   private async assertUniqueSerial(serial: string, selfId?: string) {
-    const q: Record<string, any> = { 'receiving.serialNumber': serial };
+    const escaped = serial.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(`^${escaped}$`, 'i');
+    const q: Record<string, any> = {
+      $or: [
+        { 'receiving.units.serialNumber': rx },
+        { 'receiving.serialNumber': rx },
+      ],
+    };
     if (selfId) q._id = { $ne: selfId };
     const dup = await this.poprModel.findOne(q).exec();
     if (dup) {
       throw new ConflictException(
         `Serial number "${serial}" is already used by ${dup._id}`,
+      );
+    }
+    const asset = await this.assetsService.findBySerialNumber(serial);
+    if (asset) {
+      throw new ConflictException(
+        `Serial number "${serial}" is already registered on asset ${asset.assetTag}`,
+      );
+    }
+  }
+
+  private async assertAssetLinkable(assetId: string, selfId?: string) {
+    const asset = await this.assetsService.findOne(assetId).catch(() => null);
+    if (!asset)
+      throw new BadRequestException(`receiving: asset "${assetId}" not found`);
+    const q: Record<string, any> = {
+      $or: [
+        { 'receiving.assetId': assetId },
+        { 'receiving.units.assetId': assetId },
+      ],
+    };
+    if (selfId) q._id = { $ne: selfId };
+    const dup = await this.poprModel.findOne(q).exec();
+    if (dup) {
+      throw new ConflictException(
+        `Asset "${assetId}" is already linked to ${dup._id}`,
       );
     }
   }
@@ -210,28 +344,40 @@ export class PoprService {
           o.receivedByUserId,
           'receiving.receivedByUserId',
         );
-      if (o.serialNumber) await this.assertUniqueSerial(o.serialNumber, selfId);
-      if (o.assetId) {
-        const asset = await this.assetsService
-          .findOne(o.assetId)
-          .catch(() => null);
-        if (!asset)
-          throw new BadRequestException(
-            `receiving.assetId "${o.assetId}" not found`,
-          );
-        const q: Record<string, any> = { 'receiving.assetId': o.assetId };
-        if (selfId) q._id = { $ne: selfId };
-        const dup = await this.poprModel.findOne(q).exec();
-        if (dup) {
-          throw new ConflictException(
-            `Asset "${o.assetId}" is already linked to ${dup._id}`,
-          );
+      const serial = o.serialNumber?.trim();
+      if (serial) await this.assertUniqueSerial(serial, selfId);
+      if (o.assetId) await this.assertAssetLinkable(o.assetId, selfId);
+
+      // ຕໍ່ໜ່ວຍ: ເລືອກທາງດຽວຕໍ່ໜ່ວຍ — ຜູກຊັບສິນເດີມ (assetId) ຫຼື ສ້າງໃໝ່ດ້ວຍ S/N
+      const seenSerial = new Set<string>();
+      const seenAsset = new Set<string>();
+      for (const [i, u] of (o.units ?? []).entries()) {
+        const n = i + 1;
+        if (u.assetId) {
+          if (seenAsset.has(u.assetId))
+            throw new ConflictException(
+              `ໜ່ວຍທີ ${n}: ຊັບສິນ ${u.assetId} ຖືກຜູກຊ້ຳໃນລາຍການດຽວກັນ`,
+            );
+          seenAsset.add(u.assetId);
+          await this.assertAssetLinkable(u.assetId, selfId);
+          continue; // ໜ່ວຍທີ່ຜູກຊັບສິນເດີມ ບໍ່ໃຊ້ S/N ທີ່ປ້ອນ
+        }
+        const sn = u.serialNumber?.trim();
+        if (sn) {
+          const key = sn.toLowerCase();
+          if (seenSerial.has(key))
+            throw new ConflictException(
+              `ໜ່ວຍທີ ${n}: S/N "${sn}" ຊ້ຳໃນລາຍການດຽວກັນ`,
+            );
+          seenSerial.add(key);
+          await this.assertUniqueSerial(sn, selfId);
         }
       }
     }
 
     const p = dto.procurement;
-    if (p?.poNumber) await this.assertUniquePo(p.poNumber, selfId);
+    const po = p?.poNumber?.trim();
+    if (po) await this.assertUniquePo(po, selfId);
 
     const r = dto.release;
     if (r) {
@@ -243,6 +389,55 @@ export class PoprService {
       if (r.assignedUserId)
         await this.assertActiveUser(r.assignedUserId, 'release.assignedUserId');
     }
+  }
+
+  /**
+   * ຮັບປະກັນວ່າລາຍການນີ້ມີ catalog ໃນທະບຽນແລ້ວ — ສ້າງໃຫ້ທັນທີຕອນບັນທຶກຮ່າງ/ກຳລັງດຳເນີນການ
+   * ເພື່ອໃຫ້ອຸປະກອນທີ່ພິມໃໝ່ຂຶ້ນໃນ "ລາຍການອຸປະກອນ" ທັນທີ (ບໍ່ລໍຖ້າປິດ POPR).
+   * ຖ້າຂໍ້ມູນຍັງບໍ່ພໍສ້າງ (ຂາດ category/unit) ຈະຂ້າມໄປ ແລ້ວປິດ POPR ຈຶ່ງສ້າງ.
+   */
+  private async ensureCatalogItem(
+    record: PoprRecordDocument,
+    ctx: TxCtx,
+    actorId: string,
+    ip?: string,
+  ): Promise<string | undefined> {
+    const p = record.procurement;
+    if (p.catalogItemId) {
+      await this.catalogService.findOne(p.catalogItemId, ctx.session);
+      return p.catalogItemId;
+    }
+    const name = p.itemName?.trim();
+    if (!name) return undefined;
+    const category = p.category?.trim();
+    const unit = p.unit?.trim();
+    if (!category || !unit) return undefined;
+
+    const existing = await this.catalogService.findByName(name, ctx.session);
+    if (existing) {
+      record.set('procurement.catalogItemId', existing._id);
+      return existing._id;
+    }
+    const created = await this.catalogService.createInTx(
+      {
+        name,
+        category,
+        unit,
+        lowStockThreshold: p.lowStockThreshold,
+      },
+      ctx,
+    );
+    ctx.audits.push({
+      actorId,
+      action: 'CATALOG_CREATED',
+      entityType: 'SupplyCatalogItem',
+      entityId: created._id,
+      before: undefined,
+      after: created.toObject(),
+      ip,
+    });
+    record.set('procurement.catalogItemId', created._id);
+    return created._id;
   }
 
   /** ຫາ/ສ້າງລາຍການ catalog ທີ່ POPR ນີ້ອ້າງອີງ (ສ້າງໃໝ່ຖ້າບໍ່ມີ) */
@@ -283,7 +478,10 @@ export class PoprService {
 
   /**
    * ຜົນຂ້າງຄຽງຕອນປິດສຳເລັດ (ໃນ transaction ດຽວ):
-   * - ສ້າງ/ຫາ catalog, ສ້າງ asset ຕໍ່ໜ່ວຍໃຫ້ຂອງມີແທັກ, ຫຼື ບວກສະຕ໊ອກໃຫ້ວັດສະດຸສິ້ນເປືອງ
+   * - ສ້າງ/ຫາ catalog
+   * - ELECTRONIC/GENERAL: ຕໍ່ໜ່ວຍ — ຜູກຊັບສິນເດີມແລ້ວມອບໃຫ້ຜູ້ຮັບ (ບໍ່ສ້າງຊ້ຳ) ຫຼື ສ້າງຊັບສິນໃໝ່ພ້ອມ S/N.
+   *   ຊັບສິນບໍ່ບວກສະຕ໊ອກ: ສະຕ໊ອກ = ຈຳນວນຊັບສິນ AVAILABLE ແລະ ຊັບສິນເຫຼົ່ານີ້ຖືກມອບທັນທີ (ASSIGNED).
+   * - CONSUMABLE: ບວກສະຕ໊ອກຕາມຈຳນວນທີ່ຮັບ (ບໍ່ມີຜູ້ຮັບ)
    */
   private async applyCompletion(
     record: PoprRecordDocument,
@@ -303,35 +501,83 @@ export class PoprService {
     record.set('procurement.catalogItemId', catalogItemId);
 
     const appliedAssetIds: string[] = [];
+    const appliedLinkedAssetIds: string[] = [];
     if (!isConsumable) {
       const qty = p.quantity ?? 1;
       const assigneeId = String(record.release.assignedUserId);
       const assignee = await this.usersService.findOneRaw(assigneeId);
+      const units = this.effectiveUnits(record);
+      const tags: string[] = [];
+      const resultUnits: UnitInput[] = [];
+      const allIds: string[] = [];
+      const note = `ຈາກ POPR ${record._id}`;
+
       for (let i = 0; i < qty; i++) {
-        const asset = await this.assetsService.createAssignedAssetInTx(
-          {
-            type: p.itemName!,
-            catalogItemId,
-            branchId: assignee.branchId,
-            assigneeId,
-            note: `ຈາກ POPR ${record._id}`,
-            purchaseDate: record.receiving?.receivedDate?.toISOString(),
-          },
-          ctx,
-          actorId,
-          ip,
-        );
-        appliedAssetIds.push(String(asset._id));
+        const u: UnitInput = units[i] ?? {};
+        if (u.assetId) {
+          // ຜູກຊັບສິນເດີມ — ບໍ່ສ້າງຊ້ຳ
+          const asset = await this.assetsService.findOne(
+            u.assetId,
+            ctx.session,
+          );
+          if (asset.status === AssetStatus.AVAILABLE) {
+            await this.assetsService.assignInCtx(
+              asset,
+              assigneeId,
+              note,
+              actorId,
+              ip,
+              ctx,
+            );
+            appliedLinkedAssetIds.push(String(asset._id));
+          } else if (!(
+            asset.status === AssetStatus.ASSIGNED &&
+            String(asset.currentAssigneeId) === assigneeId
+          )) {
+            throw new BadRequestException(
+              `ໜ່ວຍທີ ${i + 1}: ຊັບສິນ ${asset.assetTag} ຜູກບໍ່ໄດ້ — ສະຖານະ ${asset.status} (ຕ້ອງວ່າງ ຫຼື ມອບໃຫ້ຜູ້ຮັບນີ້ຢູ່ແລ້ວ)`,
+            );
+          }
+          tags.push(asset.assetTag);
+          allIds.push(String(asset._id));
+          resultUnits.push({
+            serialNumber: asset.serialNumber || undefined,
+            assetId: String(asset._id),
+          });
+        } else {
+          const asset = await this.assetsService.createAssignedAssetInTx(
+            {
+              type: p.itemName!,
+              catalogItemId,
+              branchId: assignee.branchId,
+              assigneeId,
+              serialNumber: u.serialNumber,
+              note,
+              purchaseDate: record.receiving?.receivedDate?.toISOString(),
+            },
+            ctx,
+            actorId,
+            ip,
+          );
+          appliedAssetIds.push(String(asset._id));
+          tags.push(asset.assetTag);
+          allIds.push(String(asset._id));
+          resultUnits.push({
+            serialNumber: u.serialNumber,
+            assetId: String(asset._id),
+          });
+        }
       }
-      if (!record.receiving.assetId && appliedAssetIds.length > 0) {
-        record.set('receiving.assetId', appliedAssetIds[0]);
-      }
+      record.set('receiving.units', resultUnits);
+      if (allIds.length > 0) record.set('receiving.assetId', allIds[0]);
+      if (tags.length > 0) record.set('receiving.assetTag', tags.join(', '));
       record.set('receiving.assetRegistered', true);
     }
 
+    // ສະຕ໊ອກ: ບວກສະເພາະ CONSUMABLE (ຊັບສິນນັບຈາກສະຖານະ AVAILABLE ຂອງຊັບສິນເອງ)
     const deltaQty = isConsumable
       ? (record.receiving.receivedQuantity ?? p.quantity ?? 0)
-      : (p.quantity ?? 1);
+      : 0;
     if (deltaQty > 0) {
       const before = await this.catalogService.findOne(
         catalogItemId,
@@ -354,6 +600,7 @@ export class PoprService {
     }
 
     record.set('appliedAssetIds', appliedAssetIds);
+    record.set('appliedLinkedAssetIds', appliedLinkedAssetIds);
     record.set('appliedStockDelta', deltaQty);
     record.status = PoprStatus.COMPLETED;
     record.stage = 4;
@@ -377,20 +624,22 @@ export class PoprService {
       stage: dto.stage ?? 1,
     });
 
-    if (status === PoprStatus.COMPLETED) {
-      const audits: AuditEvent[] = [];
-      await runInTransaction(this.connection, async (session) => {
-        audits.length = 0;
+    const audits: AuditEvent[] = [];
+    await runInTransaction(this.connection, async (session) => {
+      audits.length = 0;
+      const ctx: TxCtx = { session, audits };
+      if (status === PoprStatus.COMPLETED) {
         this.assertCompletable(record);
         this.assertSoD(record, userId);
-        await this.applyCompletion(record, { session, audits }, userId, ip);
-        await record.save({ session: session ?? undefined });
-      });
-      await this.flushAudits(audits);
-      return record;
-    }
-
-    return record.save();
+        await this.applyCompletion(record, ctx, userId, ip);
+      } else {
+        // ຮ່າງ/ກຳລັງດຳເນີນການ → ສ້າງ/ຜູກ catalog ໃຫ້ທັນທີ ໃຫ້ຂຶ້ນໃນລາຍການອຸປະກອນ
+        await this.ensureCatalogItem(record, ctx, userId, ip);
+      }
+      await record.save({ session: session ?? undefined });
+    });
+    await this.flushAudits(audits);
+    return record;
   }
 
   findAll(filters: { status?: PoprStatus; q?: string } = {}) {
@@ -407,6 +656,7 @@ export class PoprService {
         { 'procurement.vendor': rx },
         { 'procurement.poNumber': rx },
         { 'receiving.serialNumber': rx },
+        { 'receiving.units.serialNumber': rx },
         { 'receiving.assetTag': rx },
         { 'release.assignedUser': rx },
       ];
@@ -419,6 +669,7 @@ export class PoprService {
       .populate('release.deliveredToUserId', 'firstName lastName employeeCode')
       .populate('release.assignedUserId', 'firstName lastName employeeCode')
       .populate('receiving.assetId', 'assetTag type status')
+      .populate('receiving.units.assetId', 'assetTag type status serialNumber')
       .exec();
   }
 
@@ -430,6 +681,7 @@ export class PoprService {
       .populate('release.deliveredToUserId', 'firstName lastName employeeCode')
       .populate('release.assignedUserId', 'firstName lastName employeeCode')
       .populate('receiving.assetId', 'assetTag type status')
+      .populate('receiving.units.assetId', 'assetTag type status serialNumber')
       .exec();
     if (!record) throw new NotFoundException('POPR record not found');
     return record;
@@ -455,25 +707,27 @@ export class PoprService {
     Object.assign(record, payload);
     this.clearUnlinkedRefs(record, dto);
 
-    if (dto.status === PoprStatus.COMPLETED) {
-      const audits: AuditEvent[] = [];
-      await runInTransaction(this.connection, async (session) => {
-        audits.length = 0;
-        this.assertCompletable(record);
-        this.assertSoD(record, actorId ?? '');
-        await this.applyCompletion(
-          record,
-          { session, audits },
-          actorId ?? '',
-          ip,
-        );
-        await record.save({ session: session ?? undefined });
-      });
-      await this.flushAudits(audits);
-      return record;
+    // ປ່ຽນຊື່ເປັນລາຍການໃໝ່ (ບໍ່ສົ່ງ catalogItemId ມາ) → ລ້າງການຜູກເກົ່າ ເພື່ອ resolve ໃໝ່
+    if (dto.procurement && dto.procurement.catalogItemId === undefined) {
+      record.set('procurement.catalogItemId', undefined);
     }
 
-    return record.save();
+    const audits: AuditEvent[] = [];
+    await runInTransaction(this.connection, async (session) => {
+      audits.length = 0;
+      const ctx: TxCtx = { session, audits };
+      if (dto.status === PoprStatus.COMPLETED) {
+        this.assertCompletable(record);
+        this.assertSoD(record, actorId ?? '');
+        await this.applyCompletion(record, ctx, actorId ?? '', ip);
+      } else {
+        // ຮ່າງ/ກຳລັງດຳເນີນການ → ສ້າງ/ຜູກ catalog ໃຫ້ທັນທີ ໃຫ້ຂຶ້ນໃນລາຍການອຸປະກອນ
+        await this.ensureCatalogItem(record, ctx, actorId ?? '', ip);
+      }
+      await record.save({ session: session ?? undefined });
+    });
+    await this.flushAudits(audits);
+    return record;
   }
 
   private clearUnlinkedRefs(
@@ -519,9 +773,11 @@ export class PoprService {
   }
 
   /**
-   * ຍ້ອນກັບຜົນຂ້າງຄຽງຕອນປິດສຳເລັດ (ໃນ transaction ດຽວ):
-   * ລຶບ asset ທີ່ລະບົບສ້າງ ແລະ ຕັດສະຕ໊ອກ catalog ທີ່ບວກເຂົ້າ.
-   * ໃຊ້ຮ່ວມກັນລະຫວ່າງ reopen ແລະ remove ເພື່ອບໍ່ໃຫ້ເກີດ asset ກຳເຜົາ/stock ຄ້າງ.
+   * ຍ້ອນກັບຜົນຂ້າງຄຽງຕອນປິດສຳເລັດ (ໃນ transaction ດຽວ) — ໃຊ້ຮ່ວມກັນລະຫວ່າງ reopen ແລະ remove.
+   * ກວດກ່ອນ (ບໍ່ແກ້ໄຂຫຍັງຖ້າບໍ່ຜ່ານ):
+   *  - ຊັບສິນທີ່ສ້າງ/ມອບ ຕ້ອງຍັງ ASSIGNED ໃຫ້ຜູ້ຮັບເດີມ, ປະຫວັດມອບລາຍການດຽວ, ບໍ່ມີປະຫວັດບຳລຸງຮັກສາ
+   *  - ສະຕ໊ອກສິ້ນເປືອງທີ່ບວກໄປ ຕ້ອງຍັງຢູ່ຄົບ (ຖ້າຖືກເບີກໃຊ້ໄປແລ້ວ → ປະຕິເສດ)
+   * ຜ່ານແລ້ວຈຶ່ງ: ລຶບຊັບສິນທີ່ລະບົບສ້າງ, ຄືນຊັບສິນເດີມທີ່ຜູກເປັນ "ວ່າງ", ຕັດສະຕ໊ອກ.
    */
   private async reverseCompletionEffects(
     record: PoprRecordDocument,
@@ -529,24 +785,56 @@ export class PoprService {
     actorId: string,
     ip?: string,
   ): Promise<void> {
-    if (record.appliedAssetIds?.length) {
-      await this.assetsService.deleteAssetsInTx(
-        record.appliedAssetIds,
-        ctx,
-        actorId,
-        ip,
+    const assigneeId = record.release?.assignedUserId
+      ? String(record.release.assignedUserId)
+      : undefined;
+    const created = record.appliedAssetIds ?? [];
+    const linked = record.appliedLinkedAssetIds ?? [];
+    const catalogItemId = record.procurement.catalogItemId;
+    const stockDelta = record.appliedStockDelta ?? 0;
+
+    // 1) ກວດທັງໝົດກ່ອນ
+    await this.assetsService.assertReversibleByPopr(created, assigneeId, ctx);
+    await this.assetsService.assertReversibleByPopr(linked, assigneeId, ctx, {
+      linked: true,
+    });
+    if (catalogItemId && stockDelta > 0) {
+      const item = await this.catalogService.findOne(
+        catalogItemId,
+        ctx.session,
       );
+      if (item.stockQty < stockDelta) {
+        throw new BadRequestException(
+          `ຍ້ອນກັບບໍ່ໄດ້: ສະຕ໊ອກ "${item.name}" ເຫຼືອ ${item.stockQty} ຕ່ຳກວ່າຈຳນວນທີ່ POPR ນີ້ເພີ່ມ (${stockDelta}) — ມີການເບີກໃຊ້ໄປແລ້ວ`,
+        );
+      }
     }
 
-    const catalogItemId = record.procurement.catalogItemId;
-    if (catalogItemId && record.appliedStockDelta > 0) {
+    // 2) ຍ້ອນກັບ
+    await this.assetsService.deleteAssetsInTx(
+      created,
+      assigneeId,
+      ctx,
+      actorId,
+      ip,
+    );
+    await this.assetsService.unassignLinkedInTx(
+      linked,
+      assigneeId,
+      `ຍ້ອນກັບຈາກ POPR ${record._id}`,
+      ctx,
+      actorId,
+      ip,
+    );
+
+    if (catalogItemId && stockDelta > 0) {
       const before = await this.catalogService.findOne(
         catalogItemId,
         ctx.session,
       );
       const r = await this.catalogService.adjustStockTracked(
         catalogItemId,
-        -record.appliedStockDelta,
+        -stockDelta,
         ctx.session,
       );
       ctx.audits.push({
@@ -557,7 +845,7 @@ export class PoprService {
         before: { stockQty: before.stockQty },
         after: {
           stockQty: r.stockAfter,
-          delta: -record.appliedStockDelta,
+          delta: -stockDelta,
           mismatch: r.mismatch,
         },
         ip,
@@ -590,16 +878,33 @@ export class PoprService {
       await this.reverseCompletionEffects(record, ctx, actorId, ip);
 
       const before = record.toObject();
+      const generated = new Set((record.appliedAssetIds ?? []).map(String));
+      const linked = new Set((record.appliedLinkedAssetIds ?? []).map(String));
       const linkedAssetId = record.receiving.assetId
         ? String(record.receiving.assetId)
         : undefined;
-      const generatedIds: string[] = record.appliedAssetIds ?? [];
-      // ລຶບ assetId ທີ່ລະບົບສ້າງເທົ່ານັ້ນ — ຖ້າຜູ້ໃຊ້ກຳນົດ asset ດ້ວຍຕົນເອງ (ບໍ່ຢູ່ໃນ appliedAssetIds) ຄວນຮັກສາໄວ້
-      if (linkedAssetId && generatedIds.includes(linkedAssetId)) {
+      // ລຶບ assetId ທີ່ລະບົບຕື່ມ/ສ້າງເທົ່ານັ້ນ — ຖ້າຜູ້ໃຊ້ກຳນົດ asset ດ້ວຍຕົນເອງ (ບໍ່ຢູ່ໃນລາຍການທີ່ລະບົບໃຊ້) ຄວນຮັກສາໄວ້
+      if (
+        linkedAssetId &&
+        (generated.has(linkedAssetId) || linked.has(linkedAssetId))
+      ) {
         record.set('receiving.assetId', undefined);
+      }
+      // ໜ່ວຍ: ເກັບ S/N ໄວ້ແກ້ໄຂຕໍ່; ປົດ assetId ຂອງຊັບສິນທີ່ຖືກລຶບແລ້ວ (ຊັບສິນເດີມທີ່ຜູກຍັງຜູກຢູ່)
+      const units = (record.receiving.units ?? []).map((u: any) => ({
+        serialNumber: u.serialNumber || undefined,
+        assetId:
+          u.assetId && !generated.has(String(u.assetId))
+            ? String(u.assetId)
+            : undefined,
+      }));
+      record.set('receiving.units', units);
+      if (generated.size > 0 || linked.size > 0) {
+        record.set('receiving.assetTag', undefined);
       }
       record.set('receiving.assetRegistered', false);
       record.set('appliedAssetIds', []);
+      record.set('appliedLinkedAssetIds', []);
       record.set('appliedStockDelta', 0);
       record.set('completedAt', undefined);
       record.status = PoprStatus.IN_PROGRESS;

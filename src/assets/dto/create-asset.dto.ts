@@ -30,6 +30,11 @@ export class CreateAssetDto {
   @IsString()
   catalogItemId?: string;
 
+  @ApiPropertyOptional({ example: 'SN-8FJ2K9' })
+  @IsOptional()
+  @IsString()
+  serialNumber?: string;
+
   @ApiProperty({ example: 'BX001' })
   @IsString()
   @Matches(/^BX\d{3}$/, { message: 'branchId must look like BX001' })
