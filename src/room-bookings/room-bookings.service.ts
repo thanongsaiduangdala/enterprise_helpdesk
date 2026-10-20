@@ -1423,7 +1423,12 @@ export class RoomBookingsService {
               $divide: [
                 {
                   $subtract: [
-                    { $min: ['$endAt', { $ifNull: ['$checkedOutAt', '$endAt'] }] },
+                    {
+                      $min: [
+                        '$endAt',
+                        { $ifNull: ['$checkedOutAt', '$endAt'] },
+                      ],
+                    },
                     '$startAt',
                   ],
                 },

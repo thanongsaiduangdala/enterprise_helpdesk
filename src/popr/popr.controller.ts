@@ -15,6 +15,7 @@ import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { PoprService } from './popr.service';
 import { CreatePoprRecordDto } from './dto/create-popr-record.dto';
 import { UpdatePoprRecordDto } from './dto/update-popr-record.dto';
+import { ReopenPoprRecordDto } from './dto/reopen-popr-record.dto';
 import { PoprStatus } from './schemas/popr-record.schema';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -50,7 +51,7 @@ export class PoprController {
   @RequirePermission('supplies', 'manage')
   async create(@Body() dto: CreatePoprRecordDto, @Req() req: any) {
     this.assertCanComplete(req, dto.status);
-    const record = await this.poprService.create(dto, req.user.userId);
+    const record = await this.poprService.create(dto, req.user.userId, req.ip);
     await this.auditLogsService.log(
       req.user.userId,
       'POPR_CREATED',
@@ -61,6 +62,16 @@ export class PoprController {
       req.ip,
     );
     return record;
+  }
+
+  @Patch(':id/reopen')
+  @RequirePermission('supplies', 'approve')
+  async reopen(
+    @Param('id') id: string,
+    @Body() dto: ReopenPoprRecordDto,
+    @Req() req: any,
+  ) {
+    return this.poprService.reopen(id, dto.reason, req.user.userId, req.ip);
   }
 
   @Get()
@@ -102,7 +113,12 @@ export class PoprController {
   ) {
     this.assertCanComplete(req, dto.status);
     const before = await this.poprService.findOne(id);
-    const record = await this.poprService.update(id, dto);
+    const record = await this.poprService.update(
+      id,
+      dto,
+      req.user.userId,
+      req.ip,
+    );
     await this.auditLogsService.log(
       req.user.userId,
       'POPR_UPDATED',
@@ -119,7 +135,7 @@ export class PoprController {
   @RequirePermission('supplies', 'approve')
   async complete(@Param('id') id: string, @Req() req: any) {
     const before = await this.poprService.findOne(id);
-    const record = await this.poprService.complete(id);
+    const record = await this.poprService.complete(id, req.user.userId, req.ip);
     await this.auditLogsService.log(
       req.user.userId,
       'POPR_COMPLETED',
@@ -136,7 +152,7 @@ export class PoprController {
   @RequirePermission('supplies', 'delete')
   async remove(@Param('id') id: string, @Req() req: any) {
     const before = await this.poprService.findOne(id);
-    const result = await this.poprService.remove(id);
+    const result = await this.poprService.remove(id, req.user.userId, req.ip);
     await this.auditLogsService.log(
       req.user.userId,
       'POPR_DELETED',

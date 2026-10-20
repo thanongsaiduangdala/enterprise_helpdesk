@@ -13,22 +13,38 @@ import {
 } from './schemas/supply-catalog-item.schema';
 import { CreateSupplyCatalogItemDto } from './dto/create-supply-catalog-item.dto';
 import { UpdateSupplyCatalogItemDto } from './dto/update-supply-catalog-item.dto';
+import { TxCtx } from '../common/utils/transaction.util';
+import { bumpCounterTo, nextSequence } from '../common/utils/counter.util';
+import { Counter, CounterDocument } from '../roles/schemas/counter.schema';
+import {
+  Asset,
+  AssetDocument,
+  AssetStatus,
+} from '../assets/schemas/asset.schema';
 
 @Injectable()
 export class SupplyCatalogService {
   constructor(
     @InjectModel(SupplyCatalogItem.name)
     private catalogModel: Model<SupplyCatalogItemDocument>,
+    @InjectModel(Counter.name)
+    private counterModel: Model<CounterDocument>,
+    @InjectModel(Asset.name)
+    private assetModel: Model<AssetDocument>,
   ) {}
 
-  private async generateId(): Promise<string> {
-    const items = await this.catalogModel
-      .find({ _id: /^SC\d{3}$/ }, { _id: 1 })
-      .sort({ _id: 1 })
+  private async generateId(session?: ClientSession): Promise<string> {
+    // seed ຈາກເລກສູງສຸດທີ່ມີຢູ່ (ຂໍ້ມູນເກົ່າ) ແລ້ວອອກເລກແບບ monotonic
+    const last = await this.catalogModel
+      .findOne({ _id: /^SC\d{3}$/ }, { _id: 1 })
+      .sort({ _id: -1 })
+      .session(session ?? null)
       .exec();
-    const usedNumbers = new Set(items.map((i) => parseInt(i._id.slice(2), 10)));
-    let seq = 1;
-    while (usedNumbers.has(seq)) seq++;
+    const maxSeq = last ? parseInt(last._id.slice(2), 10) : 0;
+    if (Number.isFinite(maxSeq)) {
+      await bumpCounterTo(this.counterModel, 'supplyCatalog', maxSeq, session);
+    }
+    const seq = await nextSequence(this.counterModel, 'supplyCatalog', session);
     return `SC${String(seq).padStart(3, '0')}`;
   }
 
@@ -41,6 +57,37 @@ export class SupplyCatalogService {
     return new this.catalogModel({ _id, ...dto }).save();
   }
 
+  /** ຫາລາຍການ catalog ດ້ວຍຊື່ແບບ exact (ໃຊ້ຈາກ POPR ຕອນປິດເພື່ອຜູກ ຫຼື ສ້າງໃໝ່) */
+  async findByName(name: string, session?: ClientSession) {
+    return this.catalogModel
+      .findOne({ name })
+      .session(session ?? null)
+      .exec();
+  }
+
+  /**
+   * ສ້າງລາຍການ catalog ພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ POPR).
+   * ຖ້າຊື່ຊ້ຳ (race) → ຄືນລາຍການທີ່ມີຢູ່ແລ້ວ. ຜູ້ເອີ້ນເປັນຜູ້ push audit ເອງ.
+   */
+  async createInTx(dto: CreateSupplyCatalogItemDto, ctx: TxCtx) {
+    const name = dto.name.trim();
+    const _id = await this.generateId(ctx.session);
+    try {
+      return await new this.catalogModel({ _id, ...dto, name }).save({
+        session: ctx.session,
+      });
+    } catch (err: any) {
+      if (err?.code === 11000) {
+        const existing = await this.catalogModel
+          .findOne({ name })
+          .session(ctx.session ?? null)
+          .exec();
+        if (existing) return existing;
+      }
+      throw err;
+    }
+  }
+
   findAll(lowStockOnly = false) {
     if (lowStockOnly) {
       return this.catalogModel
@@ -50,8 +97,11 @@ export class SupplyCatalogService {
     return this.catalogModel.find().exec();
   }
 
-  async findOne(id: string) {
-    const item = await this.catalogModel.findById(id).exec();
+  async findOne(id: string, session?: ClientSession) {
+    const item = await this.catalogModel
+      .findById(id)
+      .session(session ?? null)
+      .exec();
     if (!item) throw new NotFoundException('Catalog item not found');
     return item;
   }
@@ -175,9 +225,26 @@ export class SupplyCatalogService {
     };
   }
 
+  /**
+   * ປິດໃຊ້ງານ (soft-disable) ແທນການລຶບຖາວອນ — ບໍ່ລຶບ ຖ້າຍັງມີຊັບສິນອ້າງອີງລາຍການນີ້
+   * (ເພື່ອປ້ອງກັນ orphan asset) ແລະ ຮັກສາ audit/ປະຫວັດໄວ້.
+   */
   async remove(id: string) {
-    const result = await this.catalogModel.findByIdAndDelete(id).exec();
-    if (!result) throw new NotFoundException('Catalog item not found');
-    return { deleted: true };
+    const item = await this.catalogModel.findById(id).exec();
+    if (!item) throw new NotFoundException('Catalog item not found');
+    const referenced = await this.assetModel
+      .exists({ catalogItemId: id, status: { $ne: AssetStatus.RETIRED } })
+      .exec();
+    if (referenced) {
+      throw new BadRequestException(
+        `Catalog item "${item.name}" has assets linked to it and cannot be removed — disable it instead`,
+      );
+    }
+    if (item.isActive) {
+      await this.catalogModel
+        .updateOne({ _id: id }, { isActive: false })
+        .exec();
+    }
+    return { deleted: false, disabled: true, _id: id };
   }
 }

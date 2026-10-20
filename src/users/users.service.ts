@@ -53,7 +53,8 @@ export class UsersService {
 
     try {
       const passwordHash = await bcrypt.hash(dto.password, 10);
-      const { password, ...rest } = dto;
+      const rest: Partial<CreateUserDto> = { ...dto };
+      delete rest.password;
       const user = new this.userModel({ ...rest, passwordHash });
       const saved = await user.save();
 
@@ -447,21 +448,57 @@ export class UsersService {
   }
 
   async recordLoginFailure(id: string, maxAttempts: number, lockMs: number) {
-    const user = await this.userModel.findById(id).exec();
-    if (!user) return { locked: false, attempts: 0 };
-    const attempts = (user.failedLoginAttempts ?? 0) + 1;
-    const locked = attempts >= maxAttempts;
-    await this.userModel
-      .findByIdAndUpdate(id, {
-        $set: locked
-          ? {
-              failedLoginAttempts: 0,
-              lockedUntil: new Date(Date.now() + lockMs),
-            }
-          : { failedLoginAttempts: attempts },
-      })
+    // $inc ແບບ atomic — ບໍ່ໃຫ້ການ login ພ້ອມກັນຂຽນທັບກັນ (read-modify-write ແບບເກົ່າສູນເສຍການນັບ)
+    const user = await this.userModel
+      .findByIdAndUpdate(
+        id,
+        { $inc: { failedLoginAttempts: 1 } },
+        { new: true },
+      )
       .exec();
-    return { locked, attempts };
+    if (!user) return { locked: false, attempts: 0 };
+    const attempts = user.failedLoginAttempts ?? 0;
+    if (attempts >= maxAttempts) {
+      await this.userModel
+        .findByIdAndUpdate(id, {
+          $set: {
+            failedLoginAttempts: 0,
+            lockedUntil: new Date(Date.now() + lockMs),
+          },
+        })
+        .exec();
+      return { locked: true, attempts };
+    }
+    return { locked: false, attempts };
+  }
+
+  /** ປົດລັອກບັນຊີດ້ວຍຜູ້ດູແລ (ລຶບການນັບຜິດ ແລະ ເວລາລັອກ) */
+  async unlock(id: string, actorId: string, ip?: string) {
+    const before = await this.userModel.findById(id).exec();
+    if (!before) throw new NotFoundException('User not found');
+
+    const updated = await this.userModel
+      .findByIdAndUpdate(
+        id,
+        { $set: { failedLoginAttempts: 0 }, $unset: { lockedUntil: '' } },
+        { new: true },
+      )
+      .exec();
+    if (!updated) throw new NotFoundException('User not found');
+
+    await this.auditLogsService.log(
+      actorId,
+      'USER_UNLOCKED',
+      'User',
+      id,
+      {
+        lockedUntil: before.lockedUntil,
+        failedLoginAttempts: before.failedLoginAttempts,
+      },
+      { lockedUntil: null, failedLoginAttempts: 0 },
+      ip,
+    );
+    return updated;
   }
 
   async recordLoginSuccess(id: string) {

@@ -1,6 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { JwtService } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { UsersService } from '../users/users.service';
+import { SessionsService } from '../sessions/sessions.service';
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -13,6 +16,18 @@ describe('AuthController', () => {
         {
           provide: AuthService,
           useValue: { login: jest.fn() },
+        },
+        {
+          provide: UsersService,
+          useValue: { lookupByEmployeeCode: jest.fn() },
+        },
+        {
+          provide: JwtService,
+          useValue: { sign: jest.fn(), verify: jest.fn() },
+        },
+        {
+          provide: SessionsService,
+          useValue: { create: jest.fn(), isValid: jest.fn(), touch: jest.fn() },
         },
       ],
     }).compile();

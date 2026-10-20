@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -45,10 +46,44 @@ export class ProcurementDto {
   @Min(1)
   quantity?: number;
 
+  @ApiPropertyOptional({
+    example: 'Computer',
+    description:
+      'Category used to auto-create the catalog item on close if it is missing',
+  })
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @ApiPropertyOptional({
+    example: 'pcs',
+    description: 'Unit used when auto-creating the catalog item',
+  })
+  @IsOptional()
+  @IsString()
+  unit?: string;
+
+  @ApiPropertyOptional({
+    example: 5,
+    description: 'Low-stock threshold for the auto-created catalog item',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  lowStockThreshold?: number;
+
   @ApiPropertyOptional({ example: 'CPU i5, RAM 16GB, SSD 512GB' })
   @IsOptional()
   @IsString()
   spec?: string;
+
+  @ApiPropertyOptional({
+    example: 'Latitude-5450-i5',
+    description: 'Product number / model — stored only on the POPR record',
+  })
+  @IsOptional()
+  @IsString()
+  productNumber?: string;
 
   @ApiPropertyOptional({ example: 12000000 })
   @IsOptional()
@@ -97,6 +132,22 @@ export class ProcurementDto {
   orderStatus?: PoprOrderStatus;
 }
 
+/** ຕໍ່ໜ່ວຍທີ່ຮັບເຂົ້າ: S/N ຂອງໜ່ວຍ ຫຼື ຜູກຊັບສິນເດີມ (ບໍ່ສ້າງຊ້ຳ) */
+export class ReceivingUnitDto {
+  @ApiPropertyOptional({ example: 'SN-8FJ2K9' })
+  @IsOptional()
+  @IsString()
+  serialNumber?: string;
+
+  @ApiPropertyOptional({
+    example: 'AS001',
+    description: 'Existing asset to link instead of creating a new one',
+  })
+  @IsOptional()
+  @IsString()
+  assetId?: string;
+}
+
 /** O — ການຮັບເຂົ້າ/ຕ້ອນຮັບ */
 export class ReceivingDto {
   @ApiPropertyOptional({ example: '2026-10-15' })
@@ -114,15 +165,39 @@ export class ReceivingDto {
   @IsEnum(PoprCondition)
   equipmentCondition?: PoprCondition;
 
-  @ApiPropertyOptional({ example: 'SN-8FJ2K9' })
+  @ApiPropertyOptional({
+    example: 'SN-8FJ2K9',
+    description: 'Legacy single-unit S/N — prefer `units`',
+  })
   @IsOptional()
   @IsString()
   serialNumber?: string;
+
+  @ApiPropertyOptional({
+    type: [ReceivingUnitDto],
+    description:
+      'Per-unit S/N or link to an existing asset. ELECTRONIC needs one entry per purchased unit.',
+  })
+  @IsOptional()
+  @ArrayMaxSize(1000)
+  @ValidateNested({ each: true })
+  @Type(() => ReceivingUnitDto)
+  units?: ReceivingUnitDto[];
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()
   @IsBoolean()
   snMatch?: boolean;
+
+  @ApiPropertyOptional({
+    example: 100,
+    description:
+      'Received quantity for CONSUMABLE items (added to catalog stock on close)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  receivedQuantity?: number;
 
   @ApiPropertyOptional({ example: 'SC002-001' })
   @IsOptional()

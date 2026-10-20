@@ -39,6 +39,10 @@ export class Asset {
   @Prop({ required: true })
   type!: string;
 
+  /** Serial Number ຂອງເຄື່ອງ (ບໍ່ບັງຄັບ; ຖ້າມີຕ້ອງບໍ່ຊ້ຳກັບຊັບສິນອື່ນ) */
+  @Prop()
+  serialNumber?: string;
+
   @Prop({ enum: AssetStatus, default: AssetStatus.AVAILABLE })
   status!: AssetStatus;
 
@@ -61,3 +65,8 @@ export class Asset {
 export const AssetSchema = SchemaFactory.createForClass(Asset);
 AssetSchema.index({ branchId: 1, status: 1 });
 AssetSchema.index({ currentAssigneeId: 1 });
+// S/N ຕ້ອງບໍ່ຊ້ຳ — ຂ້າມຄ່າຫວ່າງ/ບໍ່ມີ (ໃຊ້ $gt '' ແທນ sparse ເພາະ sparse ບໍ່ຂ້າມ '')
+AssetSchema.index(
+  { serialNumber: 1 },
+  { unique: true, partialFilterExpression: { serialNumber: { $gt: '' } } },
+);
