@@ -103,8 +103,17 @@ export class TicketsController {
 
   @Patch(':id')
   @RequirePermission('tickets', 'update')
-  update(@Param('id') id: string, @Body() dto: UpdateTicketDto) {
-    return this.ticketsService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateTicketDto,
+    @Req() req: any,
+  ) {
+    return this.ticketsService.update(
+      id,
+      dto,
+      req.user.userId,
+      req.user.permissions,
+    );
   }
 
   @Get(':id/assignable-agents')
@@ -130,7 +139,13 @@ export class TicketsController {
     @Body() dto: ChangeTicketStatusDto,
     @Req() req: any,
   ) {
-    return this.ticketsService.changeStatus(id, dto, req.user.userId, req.ip);
+    return this.ticketsService.changeStatus(
+      id,
+      dto,
+      req.user.userId,
+      req.ip,
+      req.user.permissions,
+    );
   }
 
   @Post(':id/feedback')

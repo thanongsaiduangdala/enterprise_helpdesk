@@ -101,8 +101,9 @@ export class KbArticlesController {
     return this.articlesService.suggest(q);
   }
 
+  // ສະຖິຕິບົດຄວາມ (ເບິ່ງຫຼາຍສຸດ / ມີປະໂຫຍດໜ້ອຍສຸດ) — ສະເພາະ Agent/Admin (kb:publish)
   @Get('analytics')
-  @RequirePermission('kb', 'read')
+  @RequirePermission('kb', 'publish')
   analytics() {
     return this.articlesService.analytics();
   }

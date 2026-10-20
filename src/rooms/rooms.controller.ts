@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UploadedFile,
   UseInterceptors,
   UseGuards,
@@ -18,6 +19,8 @@ import { RoomsService } from './rooms.service';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { SetRoomStatusDto } from './dto/set-room-status.dto';
+import { CreateRoomMaintenanceDto } from './dto/create-room-maintenance.dto';
+import { UpdateRoomMaintenanceDto } from './dto/update-room-maintenance.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
@@ -65,7 +68,6 @@ export class RoomsController {
     return this.roomsService.findAllWithLiveStatus(branchId);
   }
 
-  // ຄົ້ນຫາຫ້ອງທີ່ວ່າງໃນຊ່ວງເວລາທີ່ເລືອກ — ຕ້ອງຢູ່ກ່ອນ @Get(':id')
   @Get('available')
   @RequirePermission('rooms', 'read')
   @ApiQuery({ name: 'from', description: 'ISO start datetime' })
@@ -87,6 +89,70 @@ export class RoomsController {
   @RequirePermission('rooms', 'manage')
   utilization(@Query('from') from: string, @Query('to') to: string) {
     return this.roomsService.utilization(new Date(from), new Date(to));
+  }
+
+  @Get('maintenance')
+  @RequirePermission('rooms', 'read')
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  @ApiQuery({ name: 'roomId', required: false })
+  listMaintenance(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('roomId') roomId?: string,
+  ) {
+    return this.roomsService.listMaintenance(
+      from ? parseRequiredDate(from, 'from') : undefined,
+      to ? parseRequiredDate(to, 'to') : undefined,
+      roomId,
+    );
+  }
+
+  @Get('maintenance/affected')
+  @RequirePermission('rooms', 'update')
+  affectedByMaintenance() {
+    return this.roomsService.affectedByMaintenance();
+  }
+
+  @Patch('maintenance/:windowId')
+  @RequirePermission('rooms', 'update')
+  updateMaintenance(
+    @Param('windowId') windowId: string,
+    @Body() dto: UpdateRoomMaintenanceDto,
+  ) {
+    return this.roomsService.updateMaintenance(windowId, dto);
+  }
+
+  @Delete('maintenance/:windowId')
+  @RequirePermission('rooms', 'update')
+  removeMaintenance(@Param('windowId') windowId: string) {
+    return this.roomsService.removeMaintenance(windowId);
+  }
+
+  @Get(':id/maintenance-impact')
+  @RequirePermission('rooms', 'update')
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  maintenanceImpact(
+    @Param('id') id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.roomsService.maintenanceImpact(
+      id,
+      from ? parseRequiredDate(from, 'from') : new Date(),
+      to ? parseRequiredDate(to, 'to') : undefined,
+    );
+  }
+
+  @Post(':id/maintenance')
+  @RequirePermission('rooms', 'update')
+  createMaintenance(
+    @Param('id') id: string,
+    @Body() dto: CreateRoomMaintenanceDto,
+    @Req() req: any,
+  ) {
+    return this.roomsService.createMaintenance(id, dto, req.user.userId);
   }
 
   @Get(':id')
