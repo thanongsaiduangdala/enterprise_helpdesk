@@ -26,7 +26,10 @@ import { DepartmentsService } from '../departments/departments.service';
 import { BranchesService } from '../branches/branches.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
-import { assertInvolvedInTicket } from '../common/utils/ticket-access.util';
+import {
+  assertCanModifyTicket,
+  assertInvolvedInTicket,
+} from '../common/utils/ticket-access.util';
 import { UsersService } from '../users/users.service';
 import { TicketsGateway } from './tickets.gateway';
 import {
@@ -224,7 +227,7 @@ export class TicketsService {
       );
     } catch (error) {
       this.logger.error(
-        `Failed to notify department managers for ticket ${String(ticket._id)}: ${(error as Error).message}`,
+        `Failed to notify department managers for ticket ${ticket._id}: ${(error as Error).message}`,
       );
     }
   }
@@ -380,7 +383,15 @@ export class TicketsService {
     return ticket;
   }
 
-  async update(id: string, dto: UpdateTicketDto) {
+  async update(
+    id: string,
+    dto: UpdateTicketDto,
+    userId: string,
+    permissions: any[],
+  ) {
+    const existing = await this.findOne(id);
+    assertCanModifyTicket(existing, userId, permissions);
+
     const ticket = await this.ticketModel
       .findByIdAndUpdate(id, dto, { new: true })
       .exec();
@@ -524,9 +535,11 @@ export class TicketsService {
     id: string,
     dto: ChangeTicketStatusDto,
     actorId: string,
-    ip?: string,
+    ip: string | undefined,
+    permissions: any[],
   ) {
     const ticket = await this.findOne(id);
+    assertCanModifyTicket(ticket, actorId, permissions);
     const legalNext = ALLOWED_TRANSITIONS[ticket.status] ?? [];
     if (!legalNext.includes(dto.status)) {
       throw new BadRequestException(

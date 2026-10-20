@@ -35,8 +35,9 @@ export class CannedResponsesService {
     return `CR${String(seq).padStart(3, '0')}`;
   }
 
-  private async assertCanManage(
-    response: CannedResponseDocument,
+  // ຜູ້ມີສິດ assign (ຜູ້ບໍລິຫານ) ຈັດການໄດ້ທຸກພະແນກ; ຄົນອື່ນ (ເຊັ່ນ Agent) ຈັດການໄດ້ສະເພາະພະແນກຂອງຕົນເອງ
+  private async assertCanManageDepartment(
+    departmentId: string,
     userId: string,
     permissions: any[],
   ) {
@@ -45,15 +46,36 @@ export class CannedResponsesService {
     );
     if (hasElevatedAccess) return;
 
-    const user = await this.usersService.findOne(userId);
-    if (user.departmentId !== response.departmentId) {
+    // usersService.findOne() populate departmentId ເປັນ object — ຕ້ອງເອົາ _id ອອກມາປຽບທຽບ
+    const user: any = await this.usersService.findOne(userId);
+    const userDepartmentId = String(
+      user.departmentId?._id ?? user.departmentId ?? '',
+    );
+    if (userDepartmentId !== String(departmentId)) {
       throw new ForbiddenException(
         'You can only manage canned responses for your own department',
       );
     }
   }
 
-  async create(dto: CreateCannedResponseDto, createdBy: string) {
+  private assertCanManage(
+    response: CannedResponseDocument,
+    userId: string,
+    permissions: any[],
+  ) {
+    return this.assertCanManageDepartment(
+      response.departmentId,
+      userId,
+      permissions,
+    );
+  }
+
+  async create(
+    dto: CreateCannedResponseDto,
+    createdBy: string,
+    permissions: any[],
+  ) {
+    await this.assertCanManageDepartment(dto.departmentId, createdBy, permissions);
     const existing = await this.responseModel.findOne({
       departmentId: dto.departmentId,
       title: dto.title,
@@ -86,6 +108,10 @@ export class CannedResponsesService {
   ) {
     const response = await this.findOne(id);
     await this.assertCanManage(response, userId, permissions);
+    // ຫ້າມຍ້າຍແມ່ແບບໄປພະແນກອື່ນທີ່ຕົນເອງບໍ່ມີສິດ
+    if (dto.departmentId && dto.departmentId !== response.departmentId) {
+      await this.assertCanManageDepartment(dto.departmentId, userId, permissions);
+    }
 
     const updated = await this.responseModel
       .findByIdAndUpdate(id, dto, { new: true })

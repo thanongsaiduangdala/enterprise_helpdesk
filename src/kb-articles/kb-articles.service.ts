@@ -30,6 +30,11 @@ export class KbArticlesService {
     private usersService: UsersService,
   ) {}
 
+  // usersService.findOne() populate departmentId ເປັນ object — ເອົາ _id ອອກມາປຽບທຽບກັບ string
+  private userDepartmentId(user: any): string {
+    return String(user.departmentId?._id ?? user.departmentId ?? '');
+  }
+
   private hasElevatedKbAccess(permissions: any[]): boolean {
     return (permissions ?? []).some(
       (p) => p.module === 'kb' && p.actions.includes('publish'),
@@ -44,7 +49,7 @@ export class KbArticlesService {
     if (this.hasElevatedKbAccess(permissions)) return;
 
     const user = await this.usersService.findOne(userId);
-    if (user.departmentId !== article.departmentId) {
+    if (this.userDepartmentId(user) !== String(article.departmentId)) {
       throw new ForbiddenException(
         'You can only manage KB articles for your own department',
       );
@@ -67,7 +72,7 @@ export class KbArticlesService {
   async create(dto: CreateKbArticleDto, authorId: string, permissions: any[]) {
     if (!this.hasElevatedKbAccess(permissions)) {
       const user = await this.usersService.findOne(authorId);
-      if (user.departmentId !== dto.departmentId) {
+      if (this.userDepartmentId(user) !== String(dto.departmentId)) {
         throw new ForbiddenException(
           'You can only create KB articles for your own department',
         );

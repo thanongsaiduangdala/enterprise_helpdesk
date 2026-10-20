@@ -25,9 +25,13 @@ export class CannedResponsesController {
   constructor(private responsesService: CannedResponsesService) {}
 
   @Post()
-  @RequirePermission('tickets', 'create')
+  @RequirePermission('tickets', 'update')
   create(@Body() dto: CreateCannedResponseDto, @Req() req: any) {
-    return this.responsesService.create(dto, req.user.userId);
+    return this.responsesService.create(
+      dto,
+      req.user.userId,
+      req.user.permissions,
+    );
   }
 
   @Get()
@@ -59,7 +63,7 @@ export class CannedResponsesController {
   }
 
   @Delete(':id')
-  @RequirePermission('tickets', 'delete')
+  @RequirePermission('tickets', 'update')
   remove(@Param('id') id: string, @Req() req: any) {
     return this.responsesService.remove(
       id,
