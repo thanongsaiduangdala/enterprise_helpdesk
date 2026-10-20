@@ -11,6 +11,7 @@ import { RoomBookingsGateway } from './room-bookings.gateway';
 import { RoomInvitesService } from './room-invites.service';
 import { RoomInvitesController } from './room-invites.controller';
 import { RoomJoinController } from './room-join.controller';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { RoomsModule } from '../rooms/rooms.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Branch, BranchSchema } from '../branches/schemas/branch.schema';
@@ -31,6 +32,7 @@ import { Role, RoleSchema } from '../roles/schemas/role.schema';
       { name: Role.name, schema: RoleSchema },
     ]),
     forwardRef(() => RoomsModule),
+    NotificationsModule,
   ],
   controllers: [
     RoomBookingsController,

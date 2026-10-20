@@ -40,6 +40,16 @@ export class CreateRoomBookingDto {
   @IsDateString()
   endAt!: string;
 
+  @ApiPropertyOptional({
+    enum: ['TIME', 'ROOM', 'BOTH', 'NONE'],
+    default: 'BOTH',
+    description:
+      'If this request overlaps another, what the requester is willing to change: TIME, ROOM, BOTH or NONE',
+  })
+  @IsOptional()
+  @IsIn(['TIME', 'ROOM', 'BOTH', 'NONE'])
+  changeFlexibility?: 'TIME' | 'ROOM' | 'BOTH' | 'NONE';
+
   @ApiPropertyOptional({ type: RecurrenceDto })
   @IsOptional()
   @ValidateNested()

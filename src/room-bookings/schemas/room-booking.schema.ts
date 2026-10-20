@@ -25,7 +25,7 @@ class Recurrence {
 @Schema({ _id: false })
 export class RoomBookingHistoryEntry {
   @Prop({ required: true })
-  action!: string; // CREATED | APPROVED | REJECTED | RESCHEDULE_REQUESTED | REQUEST_UPDATED | RESCHEDULE_APPROVED | RESCHEDULE_REJECTED | CANCELLED | NO_SHOW | CHECKED_IN | CHECKED_OUT
+  action!: string; // CREATED | APPROVED | REJECTED | RESCHEDULE_REQUESTED | REQUEST_UPDATED | RESCHEDULE_APPROVED | RESCHEDULE_REJECTED | CHANGE_REQUESTED | CANCELLED | NO_SHOW | CHECKED_IN | CHECKED_OUT
 
   // ເວລາເດີມ (ກ່ອນປ່ຽນ) ສຳລັບເຫດການທີ່ກ່ຽວກັບເວລາ
   @Prop()
@@ -175,10 +175,51 @@ export class RoomBooking {
   @Prop()
   pendingRequestedAt?: Date;
 
+  // ຫ້ອງໃໝ່ທີ່ຂໍຍ້າຍໄປ (ພ້ອມເວລາໃໝ່) — ຖ້າບໍ່ມີ ຄືຄົງຫ້ອງເດີມ
+  @Prop({ type: String, ref: 'Room' })
+  pendingRoomId?: string;
+
   // ເຫດຜົນທີ່ຜູ້ອະນຸມັດບໍ່ອະນຸມັດ "ຄຳຮ້ອງເລື່ອນເວລາ" — ເກັບແຍກຕ່າງຫາກຈາກ rejectionReason ເພື່ອບໍ່ໃຫ້ສັບສົນ
   // ກັບການປະຕິເສດການຈອງທັງໝົດ (booking ຍັງຄົງອະນຸມັດຢູ່ເວລາເດີມ ເມື່ອຖືກປະຕິເສດຄຳຮ້ອງເລື່ອນເວລາ)
   @Prop()
   rescheduleRejectionReason?: string;
+
+  // ຄຳຂໍຈາກຜູ້ອະນຸມັດໃຫ້ຜູ້ຈອງ "ປ່ຽນເວລາ ຫຼື ປ່ຽນຫ້ອງ" ເພາະຕາຕະລາງຊົ່ວກັບການຈອງອື່ນ
+  // (TIME | ROOM | EITHER). ຖືກລຶບອອກເມື່ອຜູ້ຈອງສົ່ງເວລາໃໝ່
+  @Prop({ enum: ['TIME', 'ROOM', 'EITHER'] })
+  changeRequestType?: string;
+
+  @Prop()
+  changeRequestMessage?: string;
+
+  @Prop()
+  changeRequestedAt?: Date;
+
+  // ຫ້ອງທີ່ຜູ້ອະນຸມັດແນະນຳໃຫ້ຜູ້ຈອງຍ້າຍໄປ (ສະແດງ "ແນະນຳ" ໃນລາຍການຫ້ອງຂອງຜູ້ຈອງ)
+  @Prop()
+  changeSuggestedRoomId?: string;
+
+  // ຄຳຕອບຂອງຜູ້ຈອງຕອນຈອງ: ຖ້າເວລາຊົ່ວກັບຄຳຮ້ອງອື່ນ ຍອມປ່ຽນຫຍັງໄດ້ (TIME | ROOM | BOTH)
+  @Prop({ enum: ['TIME', 'ROOM', 'BOTH', 'NONE'], default: 'BOTH' })
+  changeFlexibility?: string;
+
+  // ເວລາທີ່ຜູ້ອະນຸມັດແນະນຳໃຫ້ຜູ້ຈອງຍ້າຍໄປ (ໄລຍະເວລາເທົ່າກັບທີ່ຜູ້ຈອງຂໍມາ)
+  @Prop()
+  changeSuggestedStartAt?: Date;
+
+  @Prop()
+  changeSuggestedEndAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  changeRequestedBy?: Types.ObjectId;
+
+  // ການຈອງທີ່ຊົ່ວກັນ ຕອນຜູ້ອະນຸມັດສົ່ງຄຳຂໍ — ເກັບໄວ້ສະແດງໃນຕາຕະລາງຂອງຜູ້ຈອງ
+  // (ຜູ້ຈອງບໍ່ເຫັນຄຳຮ້ອງ pending ຂອງຄົນອື່ນ ຈຶ່ງຕ້ອງເກັບເວລາໄວ້ນຳ)
+  @Prop({
+    type: [{ _id: false, title: String, startAt: Date, endAt: Date }],
+    default: undefined,
+  })
+  changeConflicts?: { title?: string; startAt: Date; endAt: Date }[];
 
   // ບັນທຶກເວລາເຂົ້າ/ອອກຫ້ອງແທ້ໆ (ບໍ່ແມ່ນແຄ່ເວລາທີ່ຈອງໄວ້) — ໃຊ້ຢືນຢັນວ່າກຳລັງໃຊ້ຫ້ອງແທ້ໆ ແລະ ກວດ no-show
   @Prop()

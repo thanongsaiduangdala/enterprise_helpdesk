@@ -19,6 +19,9 @@ import { RoomBookingsService } from './room-bookings.service';
 import { CreateRoomBookingDto } from './dto/create-room-booking.dto';
 import { RescheduleRoomBookingDto } from './dto/reschedule-room-booking.dto';
 import { RejectRoomBookingDto } from './dto/reject-room-booking.dto';
+import { RequestBookingChangeDto } from './dto/request-booking-change.dto';
+import { CancelForMaintenanceDto } from './dto/cancel-for-maintenance.dto';
+import { RequestMaintenanceChangeDto } from './dto/request-maintenance-change.dto';
 import { RecordAttendeesDto } from './dto/record-attendees.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -55,6 +58,32 @@ export class RoomBookingsController {
       );
     }
     return this.bookingsService.bulkImport(file.buffer, req.user.userId);
+  }
+
+  @Post('maintenance-cancel')
+  @RequirePermission('rooms', 'update')
+  cancelForMaintenance(
+    @Body() dto: CancelForMaintenanceDto,
+    @Req() req: any,
+  ) {
+    return this.bookingsService.cancelForMaintenance(
+      dto.ids,
+      req.user.userId,
+      dto.reason,
+    );
+  }
+
+  @Post('maintenance-request-change')
+  @RequirePermission('rooms', 'update')
+  requestChangeForMaintenance(
+    @Body() dto: RequestMaintenanceChangeDto,
+    @Req() req: any,
+  ) {
+    return this.bookingsService.requestChangeForMaintenance(
+      dto.ids,
+      req.user.userId,
+      dto.reason,
+    );
   }
 
   @Get('my')
@@ -96,7 +125,6 @@ export class RoomBookingsController {
     return this.bookingsService.reschedule(id, dto, req.user.userId);
   }
 
-  // ຢືນຢັນ "ເຂົ້າຫ້ອງແທ້ໆແລ້ວ" — ຄືກັບ reschedule/cancel, ຄວບຄຸມດ້ວຍ ownership (bookedBy) ພາຍໃນ service ບໍ່ແມ່ນ role
   @Patch(':id/checkin')
   @RequirePermission('rooms', 'read')
   checkIn(@Param('id') id: string, @Req() req: any) {
@@ -133,6 +161,16 @@ export class RoomBookingsController {
     @Req() req: any,
   ) {
     return this.bookingsService.reject(id, req.user.userId, dto);
+  }
+
+  @Patch(':id/request-change')
+  @RequirePermission('rooms', 'approve')
+  requestChange(
+    @Param('id') id: string,
+    @Body() dto: RequestBookingChangeDto,
+    @Req() req: any,
+  ) {
+    return this.bookingsService.requestChange(id, req.user.userId, dto);
   }
 
   @Delete(':id')
