@@ -69,13 +69,19 @@ export class ProcurementDetails {
   @Prop()
   spec?: string;
 
-  /** ເລກຜະລິດຕະພັນ/ຮຸ່ນ (Product Number / Model) — ເກັບສະເພາະໃນບັນທຶກ POPR ບໍ່ເຂົ້າ catalog */
-  @Prop()
-  productNumber?: string;
-
+  /** ງົບປະມານທັງ PO (ກີບ) */
   @Prop({ min: 0 })
   budget?: number;
 
+  /** ຈຳນວນສັ່ງທັງໝົດຕາມ PO (ທຸກງວດ). ບໍ່ໃສ່ = ໃຊ້ quantity (PO ງວດດຽວ) */
+  @Prop({ min: 1 })
+  poTotalQuantity?: number;
+
+  /** ງວດທີ (1, 2, …) ຂອງ PO ນີ້ */
+  @Prop({ min: 1 })
+  lotNo?: number;
+
+  /** ລາຄາຊື້ ຕໍ່ 1 ໜ່ວຍ (ກີບ) — ຍອດລວມງວດ = price × quantity */
   @Prop({ min: 0 })
   price?: number;
 
@@ -93,6 +99,13 @@ export class ProcurementDetails {
 
   @Prop()
   goodsReceiptNo?: string;
+
+  /** ຜູ້ສັ່ງຊື້ (ບໍ່ໃສ່ = ຜູ້ບັນທຶກ POPR) */
+  @Prop()
+  orderedBy?: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  orderedByUserId?: Types.ObjectId;
 
   /** PENDING (ຫາກໍ່ສັ່ງຊື້) → PROCESS (ກຳລັງດຳເນີນການ) */
   @Prop({ enum: PoprOrderStatus, default: PoprOrderStatus.PENDING })
@@ -224,6 +237,10 @@ export class ReleaseDetails {
   @Prop({ enum: PoprAssetStatus, default: PoprAssetStatus.IN_USE })
   assetStatus?: PoprAssetStatus;
 
+  /** true = ເຂົ້າຄັງ (ຊັບສິນ AVAILABLE, ບວກສະຕ໊ອກ, ບໍ່ຕ້ອງມີຜູ້ຮັບ); false = ມອບໃຫ້ຜູ້ໃຊ້ທັນທີ */
+  @Prop({ default: false })
+  storeInStock!: boolean;
+
   @Prop({ default: false })
   signedHandover!: boolean;
 
@@ -284,6 +301,19 @@ export class PoprRecord {
 
   @Prop()
   reopenReason?: string;
+
+  /** ປິດ PO ແບບບໍ່ຄົບ (ຕົກລົງຍົກເລີກສ່ວນທີ່ເຫຼືອ) — ບັນທຶກທີ່ງວດທີ່ກົດປິດ */
+  @Prop({ default: false })
+  poClosedShort!: boolean;
+
+  @Prop()
+  poClosedReason?: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  poClosedBy?: Types.ObjectId;
+
+  @Prop()
+  poClosedAt?: Date;
 }
 
 export const PoprRecordSchema = SchemaFactory.createForClass(PoprRecord);
@@ -292,13 +322,8 @@ PoprRecordSchema.index({ createdBy: 1 });
 PoprRecordSchema.index({ 'procurement.catalogItemId': 1 });
 // ໃຊ້ partialFilterExpression ($gt: '') ແທນ sparse — sparse ບໍ່ຂ້າມຄ່າ '' ຈຶ່ງເຮັດໃຫ້ຮ່າງທີສອງທີ່ບໍ່ມີ PO ຊົນ (E11000)
 // ໝາຍເຫດ: index ເກົ່າຊື່ເດີມຖືກປ່ຽນ options → PoprService.onModuleInit ຈະ drop ແລ້ວສ້າງໃໝ່ໃຫ້ອັດຕະໂນມັດ
-PoprRecordSchema.index(
-  { 'procurement.poNumber': 1 },
-  {
-    unique: true,
-    partialFilterExpression: { 'procurement.poNumber': { $gt: '' } },
-  },
-);
+// PO ໃຊ້ຊ້ຳໄດ້ (ຫຼາຍງວດຮັບຂອງ PO ດຽວກັນ) — ຄວາມສອດຄ່ອງກວດທີ່ service; index ນີ້ບໍ່ unique
+PoprRecordSchema.index({ 'procurement.poNumber': 1 });
 PoprRecordSchema.index(
   { 'receiving.serialNumber': 1 },
   {

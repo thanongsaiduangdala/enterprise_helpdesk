@@ -63,6 +63,10 @@ export class AssetsService {
 
   async create(dto: CreateAssetDto, actorId?: string, ip?: string) {
     const saved = await this.createInternal(dto);
+    // ສະຕ໊ອກ = ຈຳນວນຊັບສິນ AVAILABLE → ຊັບສິນໃໝ່ທີ່ວ່າງ ຕ້ອງບວກສະຕ໊ອກ +1
+    if (saved.catalogItemId && saved.status === AssetStatus.AVAILABLE) {
+      await this.catalogService.adjustStockTracked(saved.catalogItemId, 1);
+    }
     if (actorId) {
       await this.auditLogsService.log(
         actorId,
@@ -150,10 +154,12 @@ export class AssetsService {
       type: string;
       catalogItemId: string;
       branchId: string;
-      assigneeId: string;
+      /** ບໍ່ໃສ່ = ເຂົ້າຄັງ (AVAILABLE, ບວກສະຕ໊ອກ); ໃສ່ = ມອບໃຫ້ຜູ້ນີ້ທັນທີ (ASSIGNED) */
+      assigneeId?: string;
       serialNumber?: string;
       note?: string;
       purchaseDate?: string;
+      purchasePrice?: number;
       warrantyExpiry?: string;
     },
     ctx: TxCtx,
@@ -179,13 +185,32 @@ export class AssetsService {
           serialNumber: serial || undefined,
           branchId: input.branchId,
           purchaseDate: input.purchaseDate,
+          purchasePrice: input.purchasePrice,
           warrantyExpiry: input.warrantyExpiry,
-          status: AssetStatus.ASSIGNED,
+          status: input.assigneeId
+            ? AssetStatus.ASSIGNED
+            : AssetStatus.AVAILABLE,
           currentAssigneeId: input.assigneeId,
-          assignmentHistory: [
-            { assigneeId: input.assigneeId, assignedAt: now, note: input.note },
-          ],
+          assignmentHistory: input.assigneeId
+            ? [
+                {
+                  assigneeId: input.assigneeId,
+                  assignedAt: now,
+                  note: input.note,
+                },
+              ]
+            : [],
         }).save({ session: ctx.session });
+        if (!input.assigneeId) {
+          await this.syncStock(
+            saved,
+            undefined,
+            AssetStatus.AVAILABLE,
+            actorId,
+            ip,
+            ctx,
+          );
+        }
         ctx.audits.push({
           actorId,
           action: 'ASSET_CREATED',
@@ -229,7 +254,7 @@ export class AssetsService {
     return `${catalogItemId}-${String(seq).padStart(3, '0')}`;
   }
 
-  async bulkImport(fileBuffer: Buffer) {
+  async bulkImport(fileBuffer: Buffer, actorId?: string, ip?: string) {
     let rows: Record<string, string>[];
     try {
       rows = parse(fileBuffer, {
@@ -280,7 +305,7 @@ export class AssetsService {
           purchaseDate: row.purchaseDate || undefined,
           warrantyExpiry: row.warrantyExpiry || undefined,
         };
-        const created = await this.create(dto);
+        const created = await this.create(dto, actorId, ip);
         results.push({
           row: rowNumber,
           reference: created.assetTag,
@@ -491,12 +516,25 @@ export class AssetsService {
     actorId: string,
     ip: string | undefined,
     ctx: TxCtx,
+    strict = false,
   ) {
     if (!asset.catalogItemId) return;
     const contrib = (st?: AssetStatus) =>
       st === AssetStatus.AVAILABLE ? 1 : 0;
     const delta = contrib(to) - contrib(from);
     if (delta === 0) return;
+    // strict (ໃຊ້ຕອນມອບ): ສະຕ໊ອກຕັດບໍ່ໄດ້ = ບໍ່ມີຂອງໃນຄັງຕາມລະບົບ → ປະຕິເສດ ແທນການຜ່ານແລ້ວແຕ່ບັນທຶກເຕືອນ
+    if (strict && delta < 0) {
+      const item = await this.catalogService.findOne(
+        asset.catalogItemId,
+        ctx.session,
+      );
+      if (item.stockQty < -delta) {
+        throw new BadRequestException(
+          `ສະຕ໊ອກ "${item.name}" ເປັນ ${item.stockQty} — ບໍ່ມີຂອງໃນຄັງໃຫ້ມອບ. ຖ້າມີຊັບສິນວ່າງຢູ່ຈິງ ໃຫ້ຜູ້ມີສິດກົດ "ຄຳນວນສະຕ໊ອກໃໝ່" ໃນ Catalog`,
+        );
+      }
+    }
     const r = await this.catalogService.adjustStockTracked(
       asset.catalogItemId,
       delta,
@@ -712,6 +750,14 @@ export class AssetsService {
     if (asset.status === AssetStatus.RETIRED) {
       throw new BadRequestException('Cannot assign a retired asset');
     }
+    // ມອບໄດ້ສະເພາະຊັບສິນ "ວ່າງ" — ຫ້າມມອບຊ້ຳໃຫ້ຄົນອື່ນ ຫຼື ມອບຕອນກຳລັງສ້ອມ
+    if (asset.status !== AssetStatus.AVAILABLE) {
+      throw new BadRequestException(
+        asset.status === AssetStatus.ASSIGNED
+          ? `ຊັບສິນ ${asset.assetTag} ຖືກມອບໃຫ້ຜູ້ອື່ນຢູ່ແລ້ວ — ຕ້ອງກົດ "ຄືນເຄື່ອງ" ກ່ອນຈຶ່ງມອບໃໝ່ໄດ້`
+          : `ຊັບສິນ ${asset.assetTag} ບໍ່ວ່າງ (ສະຖານະ ${asset.status}) — ມອບບໍ່ໄດ້`,
+      );
+    }
     const before = asset.toObject();
     const previousStatus = asset.status;
     const wasAssigned = !!asset.currentAssigneeId;
@@ -738,6 +784,7 @@ export class AssetsService {
       actorId,
       ip,
       ctx,
+      true,
     );
     ctx.audits.push({
       actorId,
@@ -904,7 +951,7 @@ export class AssetsService {
     ids: string[],
     expectedAssigneeId: string | undefined,
     ctx: TxCtx,
-    opts: { linked?: boolean } = {},
+    opts: { linked?: boolean; stocked?: boolean } = {},
   ) {
     if (!ids || ids.length === 0) return;
     const assets = await this.assetModel
@@ -914,19 +961,27 @@ export class AssetsService {
     const problems: string[] = [];
     for (const a of assets) {
       const reasons: string[] = [];
-      if (a.status !== AssetStatus.ASSIGNED) reasons.push(`ສະຖານະ ${a.status}`);
-      if (
-        !expectedAssigneeId ||
-        String(a.currentAssigneeId ?? '') !== String(expectedAssigneeId)
-      ) {
-        reasons.push('ຜູ້ຖືປັດຈຸບັນບໍ່ແມ່ນຜູ້ຮັບເດີມ');
-      }
       const history = a.assignmentHistory ?? [];
-      const openCount = history.filter((h) => !h.returnedAt).length;
-      if (openCount !== 1) reasons.push('ປະຫວັດການມອບບໍ່ຕົງ');
-      // ຊັບສິນທີ່ POPR ສ້າງເອງມີປະຫວັດໄດ້ແຕ່ລາຍການດຽວ; ຊັບສິນທີ່ຜູກມາຈາກທະບຽນມີປະຫວັດເກົ່າໄດ້
-      if (!opts.linked && history.length !== 1)
-        reasons.push('ມີປະຫວັດການມອບຫຼາຍຄັ້ງ');
+      if (opts.stocked) {
+        // ເຂົ້າຄັງແລ້ວ ຍັງບໍ່ມີໃຜເບີກ: ຕ້ອງຍັງ AVAILABLE ແລະ ບໍ່ເຄີຍຖືກມອບ
+        if (a.status !== AssetStatus.AVAILABLE)
+          reasons.push(`ສະຖານະ ${a.status}`);
+        if (history.length > 0) reasons.push('ເຄີຍຖືກມອບແລ້ວ');
+      } else {
+        if (a.status !== AssetStatus.ASSIGNED)
+          reasons.push(`ສະຖານະ ${a.status}`);
+        if (
+          !expectedAssigneeId ||
+          String(a.currentAssigneeId ?? '') !== String(expectedAssigneeId)
+        ) {
+          reasons.push('ຜູ້ຖືປັດຈຸບັນບໍ່ແມ່ນຜູ້ຮັບເດີມ');
+        }
+        const openCount = history.filter((h) => !h.returnedAt).length;
+        if (openCount !== 1) reasons.push('ປະຫວັດການມອບບໍ່ຕົງ');
+        // ຊັບສິນທີ່ POPR ສ້າງເອງມີປະຫວັດໄດ້ແຕ່ລາຍການດຽວ; ຊັບສິນທີ່ຜູກມາຈາກທະບຽນມີປະຫວັດເກົ່າໄດ້
+        if (!opts.linked && history.length !== 1)
+          reasons.push('ມີປະຫວັດການມອບຫຼາຍຄັ້ງ');
+      }
       const maintenance = await this.maintenanceHistoryService.findByAssetId(
         String(a._id),
       );
@@ -952,9 +1007,10 @@ export class AssetsService {
     ctx: TxCtx,
     actorId: string,
     ip?: string,
+    opts: { stocked?: boolean } = {},
   ): Promise<number> {
     if (!ids || ids.length === 0) return 0;
-    await this.assertReversibleByPopr(ids, expectedAssigneeId, ctx);
+    await this.assertReversibleByPopr(ids, expectedAssigneeId, ctx, opts);
     const assets = await this.assetModel
       .find({ _id: { $in: ids } })
       .session(ctx.session ?? null)
@@ -963,6 +1019,9 @@ export class AssetsService {
       await this.assetModel
         .deleteOne({ _id: asset._id }, { session: ctx.session })
         .exec();
+      if (opts.stocked) {
+        await this.syncStock(asset, asset.status, undefined, actorId, ip, ctx);
+      }
       ctx.audits.push({
         actorId,
         action: 'ASSET_DELETED',

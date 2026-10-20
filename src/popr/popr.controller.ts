@@ -74,6 +74,21 @@ export class PoprController {
     return this.poprService.reopen(id, dto.reason, req.user.userId, req.ip);
   }
 
+  @Patch(':id/close-po-short')
+  @RequirePermission('supplies', 'approve')
+  async closePoShort(
+    @Param('id') id: string,
+    @Body() dto: ReopenPoprRecordDto,
+    @Req() req: any,
+  ) {
+    return this.poprService.closePoShort(
+      id,
+      dto.reason,
+      req.user.userId,
+      req.ip,
+    );
+  }
+
   @Get()
   @RequirePermission('supplies', 'manage')
   @ApiQuery({ name: 'status', required: false, enum: PoprStatus })

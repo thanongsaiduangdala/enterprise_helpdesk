@@ -10,6 +10,7 @@ import { parse } from 'csv-parse/sync';
 import {
   SupplyCatalogItem,
   SupplyCatalogItemDocument,
+  CatalogItemType,
 } from './schemas/supply-catalog-item.schema';
 import { CreateSupplyCatalogItemDto } from './dto/create-supply-catalog-item.dto';
 import { UpdateSupplyCatalogItemDto } from './dto/update-supply-catalog-item.dto';
@@ -48,21 +49,89 @@ export class SupplyCatalogService {
     return `SC${String(seq).padStart(3, '0')}`;
   }
 
-  async create(dto: CreateSupplyCatalogItemDto) {
-    const existing = await this.catalogModel.findOne({ name: dto.name });
-    if (existing) {
-      throw new ConflictException(`Catalog item "${dto.name}" already exists`);
-    }
-    const _id = await this.generateId();
-    return new this.catalogModel({ _id, ...dto }).save();
+  /** regex ຈັບຊື່ແບບ exact ແຕ່ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່ ("Mouse" = "mouse") */
+  private nameRegex(name: string) {
+    const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^${escaped}$`, 'i');
   }
 
-  /** ຫາລາຍການ catalog ດ້ວຍຊື່ແບບ exact (ໃຊ້ຈາກ POPR ຕອນປິດເພື່ອຜູກ ຫຼື ສ້າງໃໝ່) */
+  private async assertNameFree(name: string, exceptId?: string) {
+    const existing = await this.catalogModel
+      .findOne({ name: this.nameRegex(name) })
+      .exec();
+    if (existing && existing._id !== exceptId) {
+      throw new ConflictException(
+        `Catalog item "${existing.name}" already exists (${existing._id})`,
+      );
+    }
+  }
+
+  async create(dto: CreateSupplyCatalogItemDto) {
+    const name = dto.name.trim();
+    await this.assertNameFree(name);
+    const _id = await this.generateId();
+    // ຊັບສິນ (ASSET): ສະຕ໊ອກນັບຈາກຈຳນວນຊັບສິນວ່າງ — ບໍ່ຮັບຄ່າຈາກຜູ້ໃຊ້
+    const payload = {
+      ...dto,
+      name,
+      ...(dto.itemType === CatalogItemType.ASSET ? { stockQty: 0 } : {}),
+    };
+    try {
+      return await new this.catalogModel({ _id, ...payload }).save();
+    } catch (err: any) {
+      if (err?.code === 11000) {
+        throw new ConflictException(`Catalog item "${name}" already exists`);
+      }
+      throw err;
+    }
+  }
+
+  /** ຫາລາຍການ catalog ດ້ວຍຊື່ (ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່) — ໃຊ້ຈາກ POPR ຕອນປິດເພື່ອຜູກ ຫຼື ສ້າງໃໝ່ */
   async findByName(name: string, session?: ClientSession) {
     return this.catalogModel
-      .findOne({ name })
+      .findOne({ name: this.nameRegex(name) })
       .session(session ?? null)
       .exec();
+  }
+
+  /**
+   * ຮັບປະກັນວ່າລາຍການ catalog ກົງກັບປະເພດ (itemType) ຂອງການເຄື່ອນໄຫວ POPR —
+   * - ຖ້າຍັງບໍ່ເຄີຍກຳນົດ (ຂໍ້ມູນເກົ່າ / ນຳເຂົ້າ CSV ໂດຍບໍ່ລະບາຍ itemType): ຕື່ມໃຫ້ທັນທີ (backfill),
+   *   ແຕ່ຈະປະຕິເສດຖ້າມີຫຼັກຖານວ່າລາຍການນັ້ນກຳລັງນັບແບບອື່ນຢູ່ແລ້ວ
+   *   (ມີ asset ລວກກັນ / ມີຕົວເລກ stockQty ຄ້າງຢູ່).
+   * - ຖ້າກຳນົດແລ້ວແຕ່ຕ່າງກັນ → ປະຕິເສດ ເພາະ "ນັບເປັນລາຍການ (asset)" ແລະ "ນັບເປັນຈຳນວນ (consumable)"
+   *   ບໍ່ສາມາດປົນກັນໄດ້ — ສະຕ໊ອກຈະຜິດ (drift) ທັນທີທີ່ອີກຝ່າຍໜຶ່ງເພີ່ມ/ຫຼຸດສະຕ໊ອກ.
+   */
+  async reconcileItemType(
+    item: SupplyCatalogItemDocument,
+    itemType: CatalogItemType,
+    session?: ClientSession,
+  ): Promise<SupplyCatalogItemDocument> {
+    if (item.itemType === itemType) return item;
+    if (item.itemType) {
+      throw new BadRequestException(
+        `ລາຍການ catalog "${item.name}" (${item._id}) ກຳນົດເປັນ ${item.itemType} ແລ້ວ ແຕ່ການເຄື່ອນໄຫວນີ້ເປັນ ${itemType} — ສະຕ໊ອກນັບສະເໜີກັນບໍ່ໄດ້. ກະລຸນາປ່ຽນຊື່ລາຍການ ຫຼື ປ່ຽນ itemType ໃນ Catalog ໃຫ້ກົງກັນກ່ອນ`,
+      );
+    }
+    if (itemType === CatalogItemType.CONSUMABLE) {
+      const assetCount = await this.assetModel
+        .countDocuments({ catalogItemId: item._id })
+        .session(session ?? null);
+      if (assetCount > 0) {
+        throw new BadRequestException(
+          `ລາຍການ catalog "${item.name}" (${item._id}) ມີອຸປະກອນລວກກັນ ${assetCount} ລາຍການ (asset-tracked) ແລ້ວ ບໍ່ສາມາດໃຊ້ເປັນ CONSUMABLE ໄດ້ — ກະລຸນາປ່ຽນຊື່ລາຍການ POPR ຫຼື ປ່ຽນ itemType ໃນ Catalog`,
+        );
+      }
+    }
+    if (itemType === CatalogItemType.ASSET && item.stockQty !== 0) {
+      throw new BadRequestException(
+        `ລາຍການ catalog "${item.name}" (${item._id}) ມີ stockQty=${item.stockQty} (ນັບເປັນຈຳນວນ) ຢູ່ແລ້ວ ບໍ່ສາມາດປ່ຽນເປັນ ASSET ໄດ້ — ກະລຸນາກຳຈັບຕົວເລກສະຕ໊ອກກ່ອນ (adjust-stock) ຫຼື ປ່ຽນຊື່ລາຍການ`,
+      );
+    }
+    item.itemType = itemType;
+    if (session) await item.save({ session });
+    else await item.save();
+    return item;
   }
 
   /**
@@ -79,7 +148,7 @@ export class SupplyCatalogService {
     } catch (err: any) {
       if (err?.code === 11000) {
         const existing = await this.catalogModel
-          .findOne({ name })
+          .findOne({ name: this.nameRegex(name) })
           .session(ctx.session ?? null)
           .exec();
         if (existing) return existing;
@@ -107,11 +176,25 @@ export class SupplyCatalogService {
   }
 
   async update(id: string, dto: UpdateSupplyCatalogItemDto) {
-    const item = await this.catalogModel
-      .findByIdAndUpdate(id, dto, { new: true })
-      .exec();
-    if (!item) throw new NotFoundException('Catalog item not found');
-    return item;
+    const patch = { ...dto };
+    if (patch.name !== undefined) {
+      patch.name = patch.name.trim();
+      await this.assertNameFree(patch.name, id);
+    }
+    try {
+      const item = await this.catalogModel
+        .findByIdAndUpdate(id, patch, { new: true })
+        .exec();
+      if (!item) throw new NotFoundException('Catalog item not found');
+      return item;
+    } catch (err: any) {
+      if (err?.code === 11000) {
+        throw new ConflictException(
+          `Catalog item "${patch.name}" already exists`,
+        );
+      }
+      throw err;
+    }
   }
 
   async bulkImport(fileBuffer: Buffer) {
@@ -143,10 +226,21 @@ export class SupplyCatalogService {
             'Missing one or more required fields (name, category, unit)',
           );
         }
+        let itemType: CatalogItemType | undefined;
+        if (row.itemType !== undefined && row.itemType !== '') {
+          const v = String(row.itemType).trim().toUpperCase();
+          if (v !== 'ASSET' && v !== 'CONSUMABLE') {
+            throw new Error(
+              `Invalid itemType "${row.itemType}" (ຕ້ອງເປັນ ASSET ຫຼື CONSUMABLE)`,
+            );
+          }
+          itemType = v as CatalogItemType;
+        }
         const dto: CreateSupplyCatalogItemDto = {
           name: row.name,
           category: row.category,
           unit: row.unit,
+          ...(itemType ? { itemType } : {}),
           stockQty:
             row.stockQty !== undefined && row.stockQty !== ''
               ? parseInt(row.stockQty, 10)
@@ -223,6 +317,42 @@ export class SupplyCatalogService {
       stockBefore: item.stockQty,
       stockAfter: item.stockQty + applied,
     };
+  }
+
+  /**
+   * ຄຳນວນສະຕ໊ອກໃໝ່ຂອງລາຍການທີ່ມີຊັບສິນ: ສະຕ໊ອກ = ຈຳນວນຊັບສິນ AVAILABLE.
+   * ແກ້ຕົວເລກທີ່ເພີ້ຍ (ເຊັ່ນ ລົງທະບຽນຊັບສິນວ່າງແຕ່ສະຕ໊ອກບໍ່ຂຶ້ນ).
+   * ຄືນສະເພາະລາຍການທີ່ຕົວເລກປ່ຽນ.
+   */
+  async recalculateAssetStock() {
+    const ids: string[] = (
+      await this.assetModel.distinct('catalogItemId')
+    ).filter(Boolean);
+    const changes: {
+      _id: string;
+      name: string;
+      before: number;
+      after: number;
+    }[] = [];
+    for (const id of ids) {
+      const item = await this.catalogModel.findById(id).exec();
+      if (!item) continue;
+      const available = await this.assetModel
+        .countDocuments({ catalogItemId: id, status: AssetStatus.AVAILABLE })
+        .exec();
+      if (item.stockQty !== available) {
+        await this.catalogModel
+          .updateOne({ _id: id }, { $set: { stockQty: available } })
+          .exec();
+        changes.push({
+          _id: id,
+          name: item.name,
+          before: item.stockQty,
+          after: available,
+        });
+      }
+    }
+    return { checked: ids.length, changed: changes.length, changes };
   }
 
   /**

@@ -19,6 +19,7 @@ import { CreatePoprRecordDto } from './dto/create-popr-record.dto';
 import { UpdatePoprRecordDto } from './dto/update-popr-record.dto';
 import { AssetsService } from '../assets/assets.service';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
+import { CatalogItemType } from '../supply-catalog/schemas/supply-catalog-item.schema';
 import { UsersService } from '../users/users.service';
 import { sodEnforced } from '../common/utils/sod.util';
 import { bumpCounterTo, nextSequence } from '../common/utils/counter.util';
@@ -65,17 +66,17 @@ export class PoprService implements OnModuleInit {
         { $unset: { 'receiving.serialNumber': '' } },
       );
       const indexes: any[] = await coll.indexes();
-      for (const name of [
-        'procurement.poNumber_1',
-        'receiving.serialNumber_1',
-      ]) {
-        const idx = indexes.find((i) => i.name === name);
-        if (idx && !idx.partialFilterExpression) {
-          await coll.dropIndex(name);
-          this.logger.log(
-            `Dropped legacy index ${name} (recreated as partial)`,
-          );
-        }
+      // PO: ປ່ຽນຈາກ unique → ທຳມະດາ (ໃຫ້ໃຊ້ເລກ PO ຊ້ຳໄດ້). ຖ້າ index ເກົ່າ unique → drop
+      const poIdx = indexes.find((i) => i.name === 'procurement.poNumber_1');
+      if (poIdx && poIdx.unique) {
+        await coll.dropIndex('procurement.poNumber_1');
+        this.logger.log('Dropped legacy unique PO index');
+      }
+      // S/N: ຕ້ອງເປັນ partial index (ຂ້າມຄ່າ '') — ຖ້າເກົ່າບໍ່ມີ partialFilterExpression → drop
+      const snIdx = indexes.find((i) => i.name === 'receiving.serialNumber_1');
+      if (snIdx && !snIdx.partialFilterExpression) {
+        await coll.dropIndex('receiving.serialNumber_1');
+        this.logger.log('Dropped legacy non-partial S/N index');
       }
       await this.poprModel.createIndexes();
     } catch (err: any) {
@@ -141,7 +142,13 @@ export class PoprService implements OnModuleInit {
     if (dto.stage !== undefined) payload.stage = dto.stage;
 
     if (dto.procurement) {
-      payload.procurement = this.cleanStrings({ ...dto.procurement });
+      const { orderedByUserId, ...rest } = dto.procurement;
+      payload.procurement = {
+        ...this.cleanStrings(rest),
+        ...(orderedByUserId
+          ? { orderedByUserId: new Types.ObjectId(orderedByUserId) }
+          : {}),
+      };
     }
     if (dto.receiving) {
       const { receivedDate, receivedByUserId, assetId, units, ...rest } =
@@ -241,8 +248,8 @@ export class PoprService implements OnModuleInit {
     }
 
     const r = record.release ?? {};
-    // ຂອງສິ້ນເປືອງເຂົ້າຄັງ — ບໍ່ບັງຄັບຜູ້ຮັບ/ລາຍເຊັນ
-    if (!isConsumable) {
+    // ຂອງສິ້ນເປືອງ ຫຼື ໂໝດ "ເຂົ້າຄັງ" — ບໍ່ບັງຄັບຜູ້ຮັບ/ລາຍເຊັນ
+    if (!isConsumable && !r.storeInStock) {
       if (!r.deliveredTo) missing.push('release.deliveredTo');
       if (!r.assignedUser) missing.push('release.assignedUser');
       if (!r.signedHandover) missing.push('release.signedHandover');
@@ -277,15 +284,151 @@ export class PoprService implements OnModuleInit {
     }
   }
 
-  private async assertUniquePo(poNumber: string, selfId?: string) {
-    const q: Record<string, any> = { 'procurement.poNumber': poNumber };
+  /**
+   * PO ໃຊ້ຊ້ຳໄດ້ (ຫຼາຍງວດຮັບຂອງ PO ດຽວກັນ) — ແຕ່ຂໍ້ມູນຫຼັກຕ້ອງກົງກັນທຸກງວດ:
+   * ຜູ້ຂາຍ (vendor), ລາຍການ (itemName), ຈຳນວນສັ່ງທັງ PO (poTotalQuantity) ແລະ ງົບ (budget).
+   * ຖ້າບໍ່ກົງ ຈະປະຕິເສດ — ກັນພິມເລກ PO ຊ້ຳໂດຍບໍ່ຕັ້ງໃຈ.
+   * ຂໍ້ມູນທີ່ຍັງບໍ່ມີຄ່າ (ຮ່າງ/patch ທີ່ບໍ່ກຽມຄົບ) ຈະຂ້າມການທຽບ ບໍ່ນຳມາເຮັດໃຫ້ປະຕິເສດຜິດໆ.
+   */
+  private async validatePoConsistency(
+    dto: { poNumber?: string } & Record<string, any>,
+    selfId?: string,
+  ) {
+    const po = dto.poNumber?.trim();
+    if (!po) return;
+    const q: Record<string, any> = { 'procurement.poNumber': po };
     if (selfId) q._id = { $ne: selfId };
-    const dup = await this.poprModel.findOne(q).exec();
-    if (dup) {
-      throw new ConflictException(
-        `PO number "${poNumber}" is already used by ${dup._id}`,
+    const siblings = await this.poprModel.find(q).exec();
+    if (siblings.length === 0) return;
+
+    // PO ທີ່ຖືກປິດແບບບໍ່ຄົບແລ້ວ → ບໍ່ໃຫ້ສ້າງ/ເພີ່ມງວດໃດໆຂອງ PO ນີ້ຕໍ່ (ຢຸດການຮັບຕໍ່ຕາມແຜນ)
+    const closed = siblings.find((s) => s.poClosedShort);
+    if (closed) {
+      throw new BadRequestException(
+        `ເລກ PO "${po}" ຖືກປິດແບບບໍ່ຄົບແລ້ວ (ບັນທຶກ ${closed._id}) — ບໍ່ສາມາດສ້າງ/ແກ້ໄຂງວດຂອງ PO ນີ້ຕໍ່ໄດ້`,
       );
     }
+
+    const norm = (v: string | undefined | null): string | undefined => {
+      if (typeof v !== 'string') return undefined;
+      const t = v.trim();
+      return t === '' ? undefined : t;
+    };
+    const totalOf = (p: any) => p.poTotalQuantity ?? p.quantity;
+
+    const mine = {
+      vendor: norm(dto.vendor),
+      itemName: norm(dto.itemName),
+      total: totalOf(dto),
+      budget: dto.budget ?? undefined,
+    };
+
+    for (const s of siblings) {
+      const sp: any = s.procurement ?? {};
+      const ref = {
+        vendor: norm(sp.vendor),
+        itemName: norm(sp.itemName),
+        total: totalOf(sp),
+        budget: sp.budget ?? undefined,
+      };
+      const mismatches: string[] = [];
+      // ທຽບສະເພາະຄ່າທີ່ທັງສອງຝ່າຍມີ — ຝ່າຍໃດຝ່າຍໜຶ່ງຍັງວ່າງ = ບໍ່ສາມາດກຳນົດວ່າບໍ່ກົງ
+      const differs = (a: unknown, b: unknown) =>
+        a !== undefined && b !== undefined && a !== b;
+      if (differs(mine.vendor, ref.vendor)) mismatches.push('vendor');
+      if (differs(mine.itemName, ref.itemName)) mismatches.push('itemName');
+      if (differs(mine.total, ref.total)) mismatches.push('poTotalQuantity');
+      if (differs(mine.budget, ref.budget)) mismatches.push('budget');
+      if (mismatches.length > 0) {
+        throw new ConflictException(
+          `ເລກ PO "${po}" ມີຢູ່ແລ້ວໃນບັນທຶກ ${s._id} ແຕ່ຂໍ້ມູນບໍ່ກົງກັນ (${mismatches.join(', ')}) — PO ດຽວກັນຕ້ອງມີຜູ້ຂາຍ/ລາຍການ/ຈຳນວນສັ່ງ/ງົບ ດຽວກັນ`,
+        );
+      }
+    }
+  }
+
+  /** ຈຳນວນທີ່ "ຮັບ" ຂອງງວດ: ສິ້ນເປືອງ = ຈຳນວນຮັບຈິງ, ອື່ນໆ = ຈຳນວນສັ່ງຂອງງວດ */
+  private lotReceivedQty(record: PoprRecordDocument): number {
+    const p = record.procurement ?? {};
+    if (record.itemType === PoprItemType.CONSUMABLE) {
+      return Number(record.receiving?.receivedQuantity ?? p.quantity ?? 0) || 0;
+    }
+    return Number(p.quantity ?? 0) || 0;
+  }
+
+  /**
+   * ຄຳເຕືອນລະດັບ PO (ບໍ່ຫ້າມ ບັນທຶກໄດ້ ແຕ່ບັນທຶກ audit):
+   *  - ຮັບເກີນຈຳນວນສັ່ງທັງ PO → POPR_PO_OVER_RECEIVED
+   *  - ຍອດຊື້ສະສົມເກີນງົບ → POPR_BUDGET_EXCEEDED
+   * ນັບສະເພາະງວດອື່ນທີ່ປິດສຳເລັດແລ້ວ + ງວດນີ້.
+   */
+  private async collectPoWarnings(
+    record: PoprRecordDocument,
+    actorId: string,
+    ip?: string,
+  ): Promise<AuditEvent[]> {
+    const p: any = record.procurement ?? {};
+    const po = p.poNumber?.trim();
+    if (!po) return [];
+    const siblings = await this.poprModel
+      .find({
+        'procurement.poNumber': po,
+        _id: { $ne: record._id },
+        status: PoprStatus.COMPLETED,
+      })
+      .exec();
+
+    const total = Number(p.poTotalQuantity ?? p.quantity ?? 0) || 0;
+    const budget = p.budget ?? undefined;
+    const price = Number(p.price ?? 0) || 0;
+
+    const receivedSoFar = siblings.reduce(
+      (sum, s) => sum + this.lotReceivedQty(s),
+      0,
+    );
+    const thisQty = this.lotReceivedQty(record);
+    const receivedTotal = receivedSoFar + thisQty;
+
+    const costSoFar = siblings.reduce((sum, s) => {
+      const sp: any = s.procurement ?? {};
+      return sum + (Number(sp.price ?? 0) || 0) * this.lotReceivedQty(s);
+    }, 0);
+    const costTotal = costSoFar + price * thisQty;
+
+    const events: AuditEvent[] = [];
+    if (total > 0 && receivedTotal > total) {
+      events.push({
+        actorId,
+        action: 'POPR_PO_OVER_RECEIVED',
+        entityType: 'PoprRecord',
+        entityId: record._id,
+        before: undefined,
+        after: {
+          poNumber: po,
+          poTotalQuantity: total,
+          receivedTotal,
+          overBy: receivedTotal - total,
+        },
+        ip,
+      });
+    }
+    if (budget !== undefined && budget !== null && costTotal > budget) {
+      events.push({
+        actorId,
+        action: 'POPR_BUDGET_EXCEEDED',
+        entityType: 'PoprRecord',
+        entityId: record._id,
+        before: undefined,
+        after: {
+          poNumber: po,
+          budget,
+          spentTotal: costTotal,
+          overBy: costTotal - budget,
+        },
+        ip,
+      });
+    }
+    return events;
   }
 
   /** S/N ຕ້ອງບໍ່ຊ້ຳ ທັງໃນ POPR ອື່ນ (ທຸກໜ່ວຍ) ແລະ ໃນທະບຽນຊັບສິນ (ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່) */
@@ -377,7 +520,7 @@ export class PoprService implements OnModuleInit {
 
     const p = dto.procurement;
     const po = p?.poNumber?.trim();
-    if (po) await this.assertUniquePo(po, selfId);
+    if (po) await this.validatePoConsistency(p!, selfId);
 
     const r = dto.release;
     if (r) {
@@ -389,6 +532,13 @@ export class PoprService implements OnModuleInit {
       if (r.assignedUserId)
         await this.assertActiveUser(r.assignedUserId, 'release.assignedUserId');
     }
+  }
+
+  /** ຈັດປະເພດ catalog ຕາມປະເພດ POPR: ສິ້ນເປືອງ → CONSUMABLE, ອື່ນໆ → ASSET */
+  private catalogItemTypeFor(record: PoprRecordDocument): CatalogItemType {
+    return record.itemType === PoprItemType.CONSUMABLE
+      ? CatalogItemType.CONSUMABLE
+      : CatalogItemType.ASSET;
   }
 
   /**
@@ -404,7 +554,15 @@ export class PoprService implements OnModuleInit {
   ): Promise<string | undefined> {
     const p = record.procurement;
     if (p.catalogItemId) {
-      await this.catalogService.findOne(p.catalogItemId, ctx.session);
+      const linked = await this.catalogService.findOne(
+        p.catalogItemId,
+        ctx.session,
+      );
+      await this.catalogService.reconcileItemType(
+        linked,
+        this.catalogItemTypeFor(record),
+        ctx.session,
+      );
       return p.catalogItemId;
     }
     const name = p.itemName?.trim();
@@ -415,6 +573,11 @@ export class PoprService implements OnModuleInit {
 
     const existing = await this.catalogService.findByName(name, ctx.session);
     if (existing) {
+      await this.catalogService.reconcileItemType(
+        existing,
+        this.catalogItemTypeFor(record),
+        ctx.session,
+      );
       record.set('procurement.catalogItemId', existing._id);
       return existing._id;
     }
@@ -424,6 +587,7 @@ export class PoprService implements OnModuleInit {
         category,
         unit,
         lowStockThreshold: p.lowStockThreshold,
+        itemType: this.catalogItemTypeFor(record),
       },
       ctx,
     );
@@ -449,18 +613,34 @@ export class PoprService implements OnModuleInit {
   ): Promise<string> {
     const p = record.procurement;
     if (p.catalogItemId) {
-      await this.catalogService.findOne(p.catalogItemId, ctx.session);
+      const linked = await this.catalogService.findOne(
+        p.catalogItemId,
+        ctx.session,
+      );
+      await this.catalogService.reconcileItemType(
+        linked,
+        this.catalogItemTypeFor(record),
+        ctx.session,
+      );
       return p.catalogItemId;
     }
     const name = p.itemName!.trim();
     const existing = await this.catalogService.findByName(name, ctx.session);
-    if (existing) return existing._id;
+    if (existing) {
+      await this.catalogService.reconcileItemType(
+        existing,
+        this.catalogItemTypeFor(record),
+        ctx.session,
+      );
+      return existing._id;
+    }
     const created = await this.catalogService.createInTx(
       {
         name,
         category: p.category!,
         unit: p.unit!,
         lowStockThreshold: p.lowStockThreshold,
+        itemType: this.catalogItemTypeFor(record),
       },
       ctx,
     );
@@ -504,8 +684,20 @@ export class PoprService implements OnModuleInit {
     const appliedLinkedAssetIds: string[] = [];
     if (!isConsumable) {
       const qty = p.quantity ?? 1;
-      const assigneeId = String(record.release.assignedUserId);
-      const assignee = await this.usersService.findOneRaw(assigneeId);
+      const storeInStock = !!record.release.storeInStock;
+      const purchasePrice =
+        p.price !== undefined && p.price !== null ? Number(p.price) : undefined;
+      const assigneeId = record.release.assignedUserId
+        ? String(record.release.assignedUserId)
+        : undefined;
+      // ໂໝດເຂົ້າຄັງ: ບໍ່ມີຜູ້ຮັບ → ໃຊ້ສາຂາຂອງຜູ້ຮັບເຂົ້າ ຫຼື ຜູ້ສ້າງ
+      const branchId = assigneeId
+        ? (await this.usersService.findOneRaw(assigneeId)).branchId
+        : (
+            await this.usersService.findOneRaw(
+              String(record.receiving?.receivedByUserId ?? record.createdBy),
+            )
+          ).branchId;
       const units = this.effectiveUnits(record);
       const tags: string[] = [];
       const resultUnits: UnitInput[] = [];
@@ -520,10 +712,17 @@ export class PoprService implements OnModuleInit {
             u.assetId,
             ctx.session,
           );
-          if (asset.status === AssetStatus.AVAILABLE) {
+          if (storeInStock) {
+            // ເຂົ້າຄັງ: ຕ້ອງຍັງວ່າງຢູ່ (AVAILABLE) ແລ້ວປ່ອຍໃຫ້ຢູ່ຄັງຕໍ່
+            if (asset.status !== AssetStatus.AVAILABLE) {
+              throw new BadRequestException(
+                `ໜ່ວຍທີ ${i + 1}: ຊັບສິນ ${asset.assetTag} ຜູກບໍ່ໄດ້ — ສະຖານະ ${asset.status} (ໂໝດເຂົ້າຄັງຕ້ອງການຊັບສິນວ່າງ)`,
+              );
+            }
+          } else if (asset.status === AssetStatus.AVAILABLE) {
             await this.assetsService.assignInCtx(
               asset,
-              assigneeId,
+              assigneeId!,
               note,
               actorId,
               ip,
@@ -549,11 +748,12 @@ export class PoprService implements OnModuleInit {
             {
               type: p.itemName!,
               catalogItemId,
-              branchId: assignee.branchId,
+              branchId,
               assigneeId,
               serialNumber: u.serialNumber,
               note,
               purchaseDate: record.receiving?.receivedDate?.toISOString(),
+              purchasePrice,
             },
             ctx,
             actorId,
@@ -631,6 +831,7 @@ export class PoprService implements OnModuleInit {
       if (status === PoprStatus.COMPLETED) {
         this.assertCompletable(record);
         this.assertSoD(record, userId);
+        audits.push(...(await this.collectPoWarnings(record, userId, ip)));
         await this.applyCompletion(record, ctx, userId, ip);
       } else {
         // ຮ່າງ/ກຳລັງດຳເນີນການ → ສ້າງ/ຜູກ catalog ໃຫ້ທັນທີ ໃຫ້ຂຶ້ນໃນລາຍການອຸປະກອນ
@@ -665,6 +866,10 @@ export class PoprService implements OnModuleInit {
       .find(query)
       .sort({ _id: -1 })
       .populate('createdBy', 'firstName lastName email employeeCode')
+      .populate(
+        'procurement.orderedByUserId',
+        'firstName lastName employeeCode',
+      )
       .populate('receiving.receivedByUserId', 'firstName lastName employeeCode')
       .populate('release.deliveredToUserId', 'firstName lastName employeeCode')
       .populate('release.assignedUserId', 'firstName lastName employeeCode')
@@ -677,6 +882,10 @@ export class PoprService implements OnModuleInit {
     const record = await this.poprModel
       .findById(id)
       .populate('createdBy', 'firstName lastName email employeeCode')
+      .populate(
+        'procurement.orderedByUserId',
+        'firstName lastName employeeCode',
+      )
       .populate('receiving.receivedByUserId', 'firstName lastName employeeCode')
       .populate('release.deliveredToUserId', 'firstName lastName employeeCode')
       .populate('release.assignedUserId', 'firstName lastName employeeCode')
@@ -685,6 +894,37 @@ export class PoprService implements OnModuleInit {
       .exec();
     if (!record) throw new NotFoundException('POPR record not found');
     return record;
+  }
+
+  /**
+   * ແກ້ໄຂແບບ partial (patch): field ທີ່ບໍ່ສົ່ງມາ → ຄ່າເດີມຄົງຢູ່ (ບໍ່ຖືກລຶບອອກຈາກ subdocument).
+   * field ທີ່ສົ່ງມາ (ລວມທີ່ສົ່ງ undefined/'' ) → ຄ່າໃໝ່/ລ້າງ ຕາມພຶດຕິກຳເດີມ.
+   * catalogItemId: ບໍ່ສົ່ງມາ = ລ້າງການຜູກເກຶ່ອ (ເພື່ອ resolve ໃໝ່ຕາມຊື່) — ຄືພຶດຕິກຳເດີມ.
+   */
+  private mergeWithRecord(
+    record: PoprRecordDocument,
+    dto: UpdatePoprRecordDto,
+  ): UpdatePoprRecordDto {
+    const out: Record<string, any> = { ...dto };
+    for (const key of [
+      'procurement',
+      'receiving',
+      'preparation',
+      'release',
+    ] as const) {
+      const incoming: any = dto[key];
+      if (!incoming) continue;
+      const current: any = (record as any)[key];
+      const existing: Record<string, any> = current?.toObject?.() ?? {
+        ...current,
+      };
+      const merged: Record<string, any> = { ...existing, ...incoming };
+      if (key === 'procurement' && !('catalogItemId' in incoming)) {
+        delete merged.catalogItemId;
+      }
+      out[key] = merged;
+    }
+    return out as UpdatePoprRecordDto;
   }
 
   async update(
@@ -702,13 +942,17 @@ export class PoprService implements OnModuleInit {
       );
     }
 
-    await this.validateLinkage(dto, id);
-    const payload = this.buildPayload(dto);
+    // patch ແບບ partial → ຕ້ອງ merge ກັບຄ່າເດີມກ່ອນ validate/buildPayload
+    // (ບໍ່ດັ່ງນັ້ນ: field ທີ່ບໍ່ສົ່ງມາຈະຖືກລຶບ + validatePoConsistency ທຽບຄ່າ undefined ຜິດໆ)
+    const merged = this.mergeWithRecord(record, dto);
+
+    await this.validateLinkage(merged, id);
+    const payload = this.buildPayload(merged);
     Object.assign(record, payload);
-    this.clearUnlinkedRefs(record, dto);
+    this.clearUnlinkedRefs(record, merged);
 
     // ປ່ຽນຊື່ເປັນລາຍການໃໝ່ (ບໍ່ສົ່ງ catalogItemId ມາ) → ລ້າງການຜູກເກົ່າ ເພື່ອ resolve ໃໝ່
-    if (dto.procurement && dto.procurement.catalogItemId === undefined) {
+    if (merged.procurement && merged.procurement.catalogItemId === undefined) {
       record.set('procurement.catalogItemId', undefined);
     }
 
@@ -719,6 +963,9 @@ export class PoprService implements OnModuleInit {
       if (dto.status === PoprStatus.COMPLETED) {
         this.assertCompletable(record);
         this.assertSoD(record, actorId ?? '');
+        audits.push(
+          ...(await this.collectPoWarnings(record, actorId ?? '', ip)),
+        );
         await this.applyCompletion(record, ctx, actorId ?? '', ip);
       } else {
         // ຮ່າງ/ກຳລັງດຳເນີນການ → ສ້າງ/ຜູກ catalog ໃຫ້ທັນທີ ໃຫ້ຂຶ້ນໃນລາຍການອຸປະກອນ
@@ -764,6 +1011,7 @@ export class PoprService implements OnModuleInit {
       }
       this.assertCompletable(record);
       this.assertSoD(record, actorId);
+      audits.push(...(await this.collectPoWarnings(record, actorId, ip)));
       await this.applyCompletion(record, { session, audits }, actorId, ip);
       await record.save({ session: session ?? undefined });
       return record;
@@ -788,13 +1036,16 @@ export class PoprService implements OnModuleInit {
     const assigneeId = record.release?.assignedUserId
       ? String(record.release.assignedUserId)
       : undefined;
+    const storeInStock = !!record.release?.storeInStock;
     const created = record.appliedAssetIds ?? [];
     const linked = record.appliedLinkedAssetIds ?? [];
     const catalogItemId = record.procurement.catalogItemId;
     const stockDelta = record.appliedStockDelta ?? 0;
 
     // 1) ກວດທັງໝົດກ່ອນ
-    await this.assetsService.assertReversibleByPopr(created, assigneeId, ctx);
+    await this.assetsService.assertReversibleByPopr(created, assigneeId, ctx, {
+      stocked: storeInStock,
+    });
     await this.assetsService.assertReversibleByPopr(linked, assigneeId, ctx, {
       linked: true,
     });
@@ -817,6 +1068,7 @@ export class PoprService implements OnModuleInit {
       ctx,
       actorId,
       ip,
+      { stocked: storeInStock },
     );
     await this.assetsService.unassignLinkedInTx(
       linked,
@@ -922,6 +1174,100 @@ export class PoprService implements OnModuleInit {
         entityId: id,
         before,
         after: savedRecord.toObject(),
+        ip,
+      });
+      return savedRecord;
+    });
+    await this.flushAudits(audits);
+    return saved;
+  }
+
+  /** ສະຫຼຸບ PO: ຈຳນວນສັ່ງທັງ PO, ຮັບແລ້ວ (ສະເພາະງວດປິດສຳເລັດ), ຈຳນວນງວດ, ງົບ, ຍອດໃຊ້ຈ່າຍ */
+  private async poSummary(po: string, excludeId?: string) {
+    const q: Record<string, any> = { 'procurement.poNumber': po };
+    if (excludeId) q._id = { $ne: excludeId };
+    const lots = await this.poprModel.find(q).exec();
+    const done = lots.filter((l) => l.status === PoprStatus.COMPLETED);
+    const totals = lots
+      .map((l) =>
+        Number(
+          (l.procurement as any)?.poTotalQuantity ??
+            (l.procurement as any)?.quantity ??
+            0,
+        ),
+      )
+      .filter((n) => n > 0);
+    // ເອົາງົບຈາກງວດໃດກໍ່ໄດ້ທີ່ກ່ຽວຂ້ອງ (ທຸກງວດຂອງ PO ດຽວກັນຕ້ອງມີງົບດຽວກັນຢູ່ແລ້ວ)
+    const budget = lots
+      .map((l) => (l.procurement as any)?.budget as number | undefined)
+      .find((b) => b !== undefined && b !== null);
+    return {
+      lots: lots.length,
+      total: totals.length ? Math.max(...totals) : 0,
+      received: done.reduce((sum, l) => sum + this.lotReceivedQty(l), 0),
+      cost: done.reduce((sum, l) => {
+        const lp: any = l.procurement ?? {};
+        return sum + (Number(lp.price ?? 0) || 0) * this.lotReceivedQty(l);
+      }, 0),
+      budget,
+      closedShort: lots.some((l) => l.poClosedShort),
+    };
+  }
+
+  /**
+   * ປິດ PO ແບບບໍ່ຄົບ (ຕົກລົງຍົກເລີກຈຳນວນທີ່ຍັງບໍ່ຮັບ) — ໝາຍທີ່ງວດນີ້ ແລະ ບັນທຶກເຫດຜົນ.
+   * ບໍ່ຍ້ອນກັບ asset/stock ຂອງງວດນີ້ (ສະເພາະຢຸດການຮັບຕໍ່). ຕ້ອງມີເລກ PO ແລະ ຕ້ອງບໍ່ຖືກປິດແລ້ວ.
+   */
+  async closePoShort(id: string, reason: string, actorId: string, ip?: string) {
+    const audits: AuditEvent[] = [];
+    const saved = await runInTransaction(this.connection, async (session) => {
+      audits.length = 0;
+      const record = await this.poprModel
+        .findById(id)
+        .session(session ?? null)
+        .exec();
+      if (!record) throw new NotFoundException('POPR record not found');
+      const po = record.procurement?.poNumber?.trim();
+      if (!po) {
+        throw new BadRequestException(
+          'ບັນທຶກນີ້ບໍ່ມີເລກ PO ຈຶ່ງປິດ PO ບໍ່ຄົບບໍ່ໄດ້',
+        );
+      }
+      if (record.poClosedShort) {
+        throw new BadRequestException('PO ນີ້ຖືກປິດແບບບໍ່ຄົບແລ້ວ');
+      }
+      if (record.status === PoprStatus.COMPLETED) {
+        throw new BadRequestException(
+          'POPR ນີ້ປິດສຳເລັດແລ້ວ — ປິດ PO ແບບບໍ່ຄົບໄດ້ສະເພາະງວດທີ່ຍັງດຳເນີນການເທົ່ານັ້ນ',
+        );
+      }
+      // ດຽວກັນກັບການປິດສຳເລັດທົ່ວໄປ: ຜູ້ສ້າງບໍ່ປິດງວດຕົນເອງ (ເມື່ອ SoD ບັງຄັບ)
+      this.assertSoD(record, actorId);
+
+      const summary = await this.poSummary(po, id);
+      const before = record.toObject();
+      record.poClosedShort = true;
+      record.poClosedReason = reason;
+      record.poClosedBy = new Types.ObjectId(actorId);
+      record.poClosedAt = new Date();
+      record.status = PoprStatus.COMPLETED;
+      record.stage = 4;
+      if (!record.completedAt) record.completedAt = new Date();
+      const savedRecord = await record.save({ session: session ?? undefined });
+
+      audits.push({
+        actorId,
+        action: 'POPR_PO_CLOSED_SHORT',
+        entityType: 'PoprRecord',
+        entityId: id,
+        before,
+        after: {
+          ...savedRecord.toObject(),
+          poSummary: {
+            ...summary,
+            remaining: Math.max(summary.total - summary.received, 0),
+          },
+        },
         ip,
       });
       return savedRecord;

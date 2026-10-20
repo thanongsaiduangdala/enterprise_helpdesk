@@ -62,6 +62,8 @@ export class SupplyRequestsService {
         await this.catalogService.findOne(item.catalogItemId);
       }
     }
+    // ຜູກກັບ catalog ຕາມຊື່ໃຫ້ທັນທີ — ກັນໃບຄົງຈະ REQUESTED ແບບຜູກບໍ່ໄດ້ (approve ປະຕິເສດລາຍການບໍ່ຜູກ)
+    await this.autoLinkCatalog(dto.items);
     const _id = await this.generateId();
     const saved = await new this.requestModel({
       _id,
@@ -84,7 +86,22 @@ export class SupplyRequestsService {
     return this.requestModel
       .find({ requestedBy: userId })
       .sort({ createdAt: -1 })
+      .populate('requestedBy', 'firstName lastName email employeeCode')
       .exec();
+  }
+
+  /**
+   * ລາຍການທີ່ບໍ່ຜູກ catalog → ພະຍາຍາມຜູກຕາມຊື່ (case-insensitive) ໃຫ້ທັນທີ.
+   * ຖ້າບໍ່ພົບລາຍການໃນ catalog ຈຶ່ງຄົງໄວ້ເດີມ (approve ຈະແຈ້ງ error ໃຫ້ຜູ້ດູແລສາງແກ້ກ່ອນອະນຸມັດ).
+   */
+  private async autoLinkCatalog(
+    items: Array<{ name: string; catalogItemId?: string }>,
+  ) {
+    for (const item of items) {
+      if (item.catalogItemId) continue;
+      const matched = await this.catalogService.findByName(item.name);
+      if (matched) item.catalogItemId = String(matched._id);
+    }
   }
 
   /**
@@ -95,7 +112,11 @@ export class SupplyRequestsService {
     const filter: Record<string, unknown> = {};
     if (status) filter.status = status;
     if (requestedBy) filter.requestedBy = requestedBy;
-    return this.requestModel.find(filter).sort({ createdAt: -1 }).exec();
+    return this.requestModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .populate('requestedBy', 'firstName lastName email employeeCode')
+      .exec();
   }
 
   async findOne(id: string, requestedBy?: string) {
@@ -125,6 +146,15 @@ export class SupplyRequestsService {
     if (sodEnforced() && request.requestedBy.toString() === approverId) {
       throw new ForbiddenException(
         'Segregation of duties: you cannot approve your own request',
+      );
+    }
+    // ລາຍການທີ່ບໍ່ໄດ້ຜູກກັບ Catalog ກວດ/ຕັດສະຕ໊ອກບໍ່ໄດ້ → ຕ້ອງຜູກກ່ອນອະນຸມັດ
+    // (ລອງຜູກຕາມຊື່ກ່ອນ — ຖ້າບໍ່ພົບຈຶ່ງແຈ້ງໃຫ້ຜູ້ດູແລສາງສ້າງລາຍການໃນ Catalog ກ່ອນ)
+    await this.autoLinkCatalog(request.items);
+    const unlinked = request.items.filter((i) => !i.catalogItemId);
+    if (unlinked.length > 0) {
+      throw new BadRequestException(
+        `ອະນຸມັດບໍ່ໄດ້: ລາຍການຍັງບໍ່ຜູກກັບ Catalog (${unlinked.map((i) => i.name).join(', ')})`,
       );
     }
     const before = request.toObject();

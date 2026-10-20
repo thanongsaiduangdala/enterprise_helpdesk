@@ -55,6 +55,10 @@ export class Asset {
   @Prop()
   purchaseDate?: Date;
 
+  /** ລາຄາຊື້ຕໍ່ໜ່ວຍ (ກີບ) — ມາຈາກ POPR */
+  @Prop({ min: 0 })
+  purchasePrice?: number;
+
   @Prop()
   warrantyExpiry?: Date;
 

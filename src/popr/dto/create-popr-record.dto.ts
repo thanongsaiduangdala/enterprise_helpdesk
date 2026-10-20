@@ -77,25 +77,38 @@ export class ProcurementDto {
   @IsString()
   spec?: string;
 
-  @ApiPropertyOptional({
-    example: 'Latitude-5450-i5',
-    description: 'Product number / model — stored only on the POPR record',
-  })
-  @IsOptional()
-  @IsString()
-  productNumber?: string;
-
   @ApiPropertyOptional({ example: 12000000 })
   @IsOptional()
   @IsNumber()
   @Min(0)
   budget?: number;
 
-  @ApiPropertyOptional({ example: 11500000 })
+  @ApiPropertyOptional({
+    example: 11500000,
+    description: 'Purchase price per 1 unit',
+  })
   @IsOptional()
   @IsNumber()
   @Min(0)
   price?: number;
+
+  @ApiPropertyOptional({
+    example: 50,
+    description: 'Total quantity ordered on the whole PO (all lots)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  poTotalQuantity?: number;
+
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Lot (delivery) number of this PO',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  lotNo?: number;
 
   @ApiPropertyOptional({ example: 'IT Solutions Co., Ltd' })
   @IsOptional()
@@ -121,6 +134,20 @@ export class ProcurementDto {
   @IsOptional()
   @IsString()
   goodsReceiptNo?: string;
+
+  @ApiPropertyOptional({ example: 'Somchai S.' })
+  @IsOptional()
+  @IsString()
+  orderedBy?: string;
+
+  @ApiPropertyOptional({
+    example: '65f1a2b3c4d5e6f708192a3b',
+    description:
+      'User._id of who placed the order (defaults to the record creator)',
+  })
+  @IsOptional()
+  @IsMongoId()
+  orderedByUserId?: string;
 
   @ApiPropertyOptional({
     enum: PoprOrderStatus,
@@ -349,6 +376,15 @@ export class ReleaseDto {
   @IsOptional()
   @IsEnum(PoprAssetStatus)
   assetStatus?: PoprAssetStatus;
+
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'true = store the assets in stock (AVAILABLE) instead of assigning them to a user',
+  })
+  @IsOptional()
+  @IsBoolean()
+  storeInStock?: boolean;
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()

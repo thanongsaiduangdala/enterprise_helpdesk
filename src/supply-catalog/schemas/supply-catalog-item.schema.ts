@@ -4,6 +4,13 @@ import { Document } from 'mongoose';
 export type SupplyCatalogItemDocument = SupplyCatalogItem &
   Omit<Document, '_id'>;
 
+export enum CatalogItemType {
+  /** ຊັບສິນ — ສະຕ໊ອກນັບຈາກຈຳນວນຊັບສິນ AVAILABLE */
+  ASSET = 'ASSET',
+  /** ວັດສະດຸສິ້ນເປືອງ — ສະຕ໊ອກປັບດ້ວຍຕົວເລກ */
+  CONSUMABLE = 'CONSUMABLE',
+}
+
 @Schema({ timestamps: true })
 export class SupplyCatalogItem {
   @Prop({ type: String })
@@ -17,6 +24,9 @@ export class SupplyCatalogItem {
 
   @Prop({ required: true })
   unit!: string;
+
+  @Prop({ enum: CatalogItemType })
+  itemType?: CatalogItemType;
 
   @Prop({ required: true, default: 0, min: 0 })
   stockQty!: number;

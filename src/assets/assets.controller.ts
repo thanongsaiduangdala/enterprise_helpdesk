@@ -26,12 +26,16 @@ import { AssetStatus } from './schemas/asset.schema';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Controller('assets')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class AssetsController {
-  constructor(private assetsService: AssetsService) {}
+  constructor(
+    private assetsService: AssetsService,
+    private auditLogsService: AuditLogsService,
+  ) {}
 
   @Post()
   @RequirePermission('assets', 'create')
@@ -49,13 +53,30 @@ export class AssetsController {
       properties: { file: { type: 'string', format: 'binary' } },
     },
   })
-  bulkImport(@UploadedFile() file: Express.Multer.File) {
+  bulkImport(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
     if (!file) {
       throw new BadRequestException(
         'No file uploaded — expected a CSV file under field name "file"',
       );
     }
-    return this.assetsService.bulkImport(file.buffer);
+    return this.assetsService
+      .bulkImport(file.buffer, req.user.userId, req.ip)
+      .then(async (result) => {
+        await this.auditLogsService.log(
+          req.user.userId,
+          'ASSET_BULK_IMPORTED',
+          'Asset',
+          'bulk',
+          undefined,
+          {
+            total: result.total,
+            created: result.created,
+            failed: result.failed,
+          },
+          req.ip,
+        );
+        return result;
+      });
   }
 
   @Get()

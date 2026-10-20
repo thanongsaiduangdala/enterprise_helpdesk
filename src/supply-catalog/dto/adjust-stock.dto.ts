@@ -1,5 +1,5 @@
-import { IsInt } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsInt, IsOptional, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class AdjustStockDto {
   @ApiProperty({
@@ -8,4 +8,12 @@ export class AdjustStockDto {
   })
   @IsInt()
   delta!: number;
+
+  @ApiPropertyOptional({
+    example: 'restock from supplier',
+    description: 'Reason recorded in the audit log',
+  })
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }

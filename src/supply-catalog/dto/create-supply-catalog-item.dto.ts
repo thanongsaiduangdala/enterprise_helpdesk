@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -7,6 +8,7 @@ import {
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { CatalogItemType } from '../schemas/supply-catalog-item.schema';
 
 export class CreateSupplyCatalogItemDto {
   @ApiProperty({ example: 'Ballpoint Pen (Blue)' })
@@ -23,6 +25,15 @@ export class CreateSupplyCatalogItemDto {
   @IsNotEmpty()
   @IsString()
   unit!: string;
+
+  @ApiPropertyOptional({
+    enum: CatalogItemType,
+    description:
+      'ASSET = ສະຕ໊ອກນັບຈາກຊັບສິນວ່າງ; CONSUMABLE = ສະຕ໊ອກປັບດ້ວຍຕົວເລກ',
+  })
+  @IsOptional()
+  @IsEnum(CatalogItemType)
+  itemType?: CatalogItemType;
 
   @ApiPropertyOptional({
     example: 100,

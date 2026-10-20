@@ -1,7 +1,9 @@
 import {
   IsDateString,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
+  Min,
   IsString,
   Matches,
 } from 'class-validator';
@@ -44,6 +46,15 @@ export class CreateAssetDto {
   @IsOptional()
   @IsDateString()
   purchaseDate?: string;
+
+  @ApiPropertyOptional({
+    example: 5000000,
+    description: 'Purchase price per unit',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  purchasePrice?: number;
 
   @ApiPropertyOptional({ example: '2029-01-15' })
   @IsOptional()
