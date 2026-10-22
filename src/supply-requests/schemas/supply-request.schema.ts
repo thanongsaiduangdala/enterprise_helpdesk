@@ -7,6 +7,16 @@ export enum SupplyRequestStatus {
   REQUESTED = 'REQUESTED',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
+  /** ອະນຸມັດແລ້ວ ແລະ ມີ PO/ສັ່ງຊື້ແລ້ວ ແຕ່ຍັງບໍ່ຮັບຂອງ */
+  ORDERED = 'ORDERED',
+  /** ຮັບຂອງແລ້ວບາງສ່ວນ (ບາງລາຍການ/ບາງງວດ) */
+  PARTIALLY_RECEIVED = 'PARTIALLY_RECEIVED',
+  /** ຮັບຄົບທຸກລາຍການແລ້ວ (ປິດ) */
+  CLOSED = 'CLOSED',
+  /**
+   * @deprecated alias ຂອງ CLOSED — ຂໍ້ມູນທີ່ບັນທຶກໃນເວລາກ່ອນຢູ່ໃນ status ນີ້
+   * ລະບົບປົດໃຫ້ຖືກເປັນ terminal (ບໍ່ເຄີນຖືກຄຳນວນກັບຄືນ)
+   */
   FULFILLED = 'FULFILLED',
 }
 

@@ -156,6 +156,8 @@ export class AssetsService {
       branchId: string;
       /** ບໍ່ໃສ່ = ເຂົ້າຄັງ (AVAILABLE, ບວກສະຕ໊ອກ); ໃສ່ = ມອບໃຫ້ຜູ້ນີ້ທັນທີ (ASSIGNED) */
       assigneeId?: string;
+      /** ສະຖານະທີ່ຕ້ອງການເປັນ (ຈາກ POPR) — ຖ້າບໍ່ໃສ່ ຈະອີງຈາກ assigneeId */
+      status?: AssetStatus;
       serialNumber?: string;
       note?: string;
       purchaseDate?: string;
@@ -168,6 +170,33 @@ export class AssetsService {
   ): Promise<AssetDocument> {
     const serial = input.serialNumber?.trim();
     if (serial) await this.assertSerialFree(serial, ctx.session);
+    // ມີ assignee = ຖືກມອບໝາຍ (ASSIGNED); ບໍ່ມີ = ວ່າງ (AVAILABLE).
+    // ຖ້າ POPR ສົ່ງ status ມາ ໃຫ້ສະຖານະນັ້ນຊະນະ — ແຕ່ຫ້າມ "ວ່າງ" ໃນຂະນະທີ່ມີ assignee
+    // (ກັນຂໍ້ມູນຂັດແຍ່ງ: ມີຜູ້ຖືແຕ່ບອກວ່າວ່າງ).
+    let status =
+      input.status &&
+      !(input.status === AssetStatus.AVAILABLE && input.assigneeId)
+        ? input.status
+        : input.assigneeId
+          ? AssetStatus.ASSIGNED
+          : AssetStatus.AVAILABLE;
+    // ຊັບສິນ ASSIGNED ຕ້ອງມີຜູ້ຖື ສະເພາະ — ຖ້າບໍ່ມີຜູ້ຖືໃຫ້ລົງເປັນວ່າງ (AVAILABLE)
+    // (ກັນຕາມຂໍ້ມູນຂັດແຍ່ງ: ຊັບສິນວ່າງແຕ່ບໍ່ມີຜູ້ຮັບ/ປະຫວັດການມອບ)
+    if (status === AssetStatus.ASSIGNED && !input.assigneeId) {
+      status = AssetStatus.AVAILABLE;
+    }
+    const assignmentHistory =
+      input.assigneeId && status !== AssetStatus.AVAILABLE
+        ? [
+            {
+              assigneeId: input.assigneeId,
+              assignedAt: new Date(),
+              note: input.note,
+            },
+          ]
+        : [];
+    const currentAssigneeId =
+      status === AssetStatus.AVAILABLE ? undefined : input.assigneeId;
     const maxAttempts = 5;
     for (let attempt = 1; ; attempt++) {
       const tag = await this.generateCatalogAssetTag(
@@ -175,7 +204,6 @@ export class AssetsService {
         ctx.session,
       );
       const _id = await this.generateId(ctx.session);
-      const now = new Date();
       try {
         const saved = await new this.assetModel({
           _id,
@@ -187,21 +215,11 @@ export class AssetsService {
           purchaseDate: input.purchaseDate,
           purchasePrice: input.purchasePrice,
           warrantyExpiry: input.warrantyExpiry,
-          status: input.assigneeId
-            ? AssetStatus.ASSIGNED
-            : AssetStatus.AVAILABLE,
-          currentAssigneeId: input.assigneeId,
-          assignmentHistory: input.assigneeId
-            ? [
-                {
-                  assigneeId: input.assigneeId,
-                  assignedAt: now,
-                  note: input.note,
-                },
-              ]
-            : [],
+          status,
+          currentAssigneeId,
+          assignmentHistory,
         }).save({ session: ctx.session });
-        if (!input.assigneeId) {
+        if (status === AssetStatus.AVAILABLE) {
           await this.syncStock(
             saved,
             undefined,
@@ -442,7 +460,16 @@ export class AssetsService {
 
   async assign(id: string, dto: AssignAssetDto, actorId: string, ip?: string) {
     // ແຍກໜ້າທີ່: ຜູ້ມີສິດ assign ມອບຊັບສິນໃຫ້ຕົນເອງບໍ່ໄດ້ (ຕ້ອງໃຫ້ຄົນອື່ນມອບ ຫຼືຜ່ານໃບຂໍທີ່ອະນຸມັດ)
-    if (sodEnforced() && String(dto.assigneeId) === String(actorId)) {
+    if ((await sodEnforced()) && String(dto.assigneeId) === String(actorId)) {
+      await this.auditLogsService.log(
+        actorId,
+        'SOD_BLOCKED:ASSET_ASSIGN_SELF',
+        'Asset',
+        id,
+        undefined,
+        { blocked: true, action: 'ASSET_ASSIGN_SELF' },
+        ip,
+      );
       throw new ForbiddenException(
         'Segregation of duties: you cannot assign equipment to yourself',
       );
@@ -601,7 +628,8 @@ export class AssetsService {
       }
     }
     // ຜູ້ມີສິດ assign ຮັບໃຫ້ຕົນເອງໂດຍບໍ່ຕ້ອງມີໃບຂໍໄດ້ ສະເພາະເມື່ອບໍ່ບັງຄັບແຍກໜ້າທີ່ (ໂໝດ dev)
-    const needEntitlement = !canAssign || targetIsOther || sodEnforced();
+    const needEntitlement =
+      !canAssign || targetIsOther || (await sodEnforced());
 
     return this.inTx(undefined, async (ctx) => {
       const asset = await this.findOne(id, ctx.session);
@@ -653,16 +681,24 @@ export class AssetsService {
     });
   }
 
-  /** ໃບຂໍ APPROVED ຂອງຜູ້ຮັບ ທີ່ຍັງມີໂຄຕ້າເຫຼືອສຳລັບຊັບສິນນີ້ (ນັບຊັບສິນທີ່ຮັບໄປແລ້ວຕາມໃບນັ້ນ) */
+  /** ໃບຂໍທີ່ອະນຸມັດແລ້ວ ຂອງຜູ້ຮັບ ທີ່ຍັງມີໂຄຕ້າເຫຼືອສຳລັບຊັບສິນນີ້ (ນັບຊັບສິນທີ່ຮັບໄປແລ້ວຕາມໃບນັ້ນ) */
   private async findEntitlement(
     targetId: string,
     asset: AssetDocument,
     session?: ClientSession,
   ) {
+    // ສະຖານະທີ່ຍັງຮັບຂອງບໍ່ຄົບ: APPROVED / ORDERED / PARTIALLY_RECEIVED
+    // (CLOSED = ຮັບຄົບແລ້ວ, ບໍ່ມີໂຄຕ້າໃຫ້ຮັບເພີ່ມ)
     const requests = await this.supplyRequestModel
       .find({
         requestedBy: targetId as any,
-        status: SupplyRequestStatus.APPROVED,
+        status: {
+          $in: [
+            SupplyRequestStatus.APPROVED,
+            SupplyRequestStatus.ORDERED,
+            SupplyRequestStatus.PARTIALLY_RECEIVED,
+          ],
+        },
       })
       .sort({ createdAt: 1 })
       .session(session ?? null)
@@ -706,7 +742,7 @@ export class AssetsService {
       (it, i) => tagged[i] && counts[i] >= it.quantity,
     );
     if (complete) {
-      request.status = SupplyRequestStatus.FULFILLED;
+      request.status = SupplyRequestStatus.CLOSED;
       request.fulfilledBy = actorId as any;
       request.fulfilledAt = new Date();
       request.receivedBy = assigneeId as any;
@@ -963,9 +999,10 @@ export class AssetsService {
       const reasons: string[] = [];
       const history = a.assignmentHistory ?? [];
       if (opts.stocked) {
-        // ເຂົ້າຄັງແລ້ວ ຍັງບໍ່ມີໃຜເບີກ: ຕ້ອງຍັງ AVAILABLE ແລະ ບໍ່ເຄີຍຖືກມອບ
-        if (a.status !== AssetStatus.AVAILABLE)
-          reasons.push(`ສະຖານະ ${a.status}`);
+        // ຢູ່ຄັງແລ້ວ ຍັງບໍ່ມີໃຜເບີກ: ຕ້ອງບໍ່ຖືກມອບ (ບໍ່ມີຜູ້ຖື) ແລະ ບໍ່ເຄີຍຖືກມອບ
+        // ສະຖານະອາດເປັນ AVAILABLE/UNDER_REPAIR/RETIRED ໄດ້ ຕາມທີ່ຜູ້ໃຊ້ເລືອກ
+        if (a.currentAssigneeId || a.status === AssetStatus.ASSIGNED)
+          reasons.push(`ມີຜູ້ຖື (${a.status})`);
         if (history.length > 0) reasons.push('ເຄີຍຖືກມອບແລ້ວ');
       } else {
         if (a.status !== AssetStatus.ASSIGNED)

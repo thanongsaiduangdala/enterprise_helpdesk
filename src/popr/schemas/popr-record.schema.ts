@@ -53,6 +53,10 @@ export class ProcurementDetails {
   @Prop()
   itemName?: string;
 
+  /** ວັນທີ່ຄາດວ່າຈະສົ່ງມອບ (expected delivery date) — ໜຶ່ງໃນ 5 ຟິວຂອງ PO */
+  @Prop()
+  expectedDeliveryDate?: Date;
+
   @Prop({ min: 1 })
   quantity?: number;
 
@@ -262,6 +266,17 @@ export class PoprRecord {
   @Prop({ enum: PoprItemType, default: PoprItemType.ELECTRONIC })
   itemType!: PoprItemType;
 
+  /**
+   * ໃບຂໍຊື້ (SupplyRequest) ຕົ້ນທາງ — ໜຶ່ງ PoprRecord ຕໍ່ໜຶ່ງລາຍການ (item line) ຂອງ SR.
+   * ບໍ່ມີຄ່າ = ບັນທຶກເກົ່າ (legacy) — ຈັດການແບບ read-only.
+   */
+  @Prop({ type: String, ref: 'SupplyRequest' })
+  supplyRequestId?: string;
+
+  /** ດັດຊະນີລາຍການໃນ SR ທີ່ POPR ນີ້ຮັບຜິດຊອບ (item line identifier) */
+  @Prop({ min: 0 })
+  supplyRequestItemIndex?: number;
+
   /** ໄລຍະທີ່ດຳເນີນການຮອດ (1 = P ຈັດຊື້ ... 4 = R ປ່ອຍ) */
   @Prop({ default: 1, min: 1, max: 4 })
   stage!: number;
@@ -319,6 +334,7 @@ export class PoprRecord {
 export const PoprRecordSchema = SchemaFactory.createForClass(PoprRecord);
 PoprRecordSchema.index({ status: 1 });
 PoprRecordSchema.index({ createdBy: 1 });
+PoprRecordSchema.index({ supplyRequestId: 1 });
 PoprRecordSchema.index({ 'procurement.catalogItemId': 1 });
 // ໃຊ້ partialFilterExpression ($gt: '') ແທນ sparse — sparse ບໍ່ຂ້າມຄ່າ '' ຈຶ່ງເຮັດໃຫ້ຮ່າງທີສອງທີ່ບໍ່ມີ PO ຊົນ (E11000)
 // ໝາຍເຫດ: index ເກົ່າຊື່ເດີມຖືກປ່ຽນ options → PoprService.onModuleInit ຈະ drop ແລ້ວສ້າງໃໝ່ໃຫ້ອັດຕະໂນມັດ

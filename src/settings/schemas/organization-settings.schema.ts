@@ -53,6 +53,17 @@ export class OrganizationSettings {
 
   @Prop({ type: Array, default: [] })
   integrations?: IntegrationSetting[];
+
+  /**
+   * ແຍກໜ້າທີ່ (segregation of duties) — ຄົນດຽວບໍ່ສາມາດເຮັດສອງຂັ້ນຕອນຕິດກັນ.
+   *
+   * ບໍ່ຕັ້ງ default ໄວ້ໃນ schema ຢ່າງສະຄັນ: ຄ່າ "ບໍ່ໄດ້ຕັ້ງ" ຕ້ອງເປັນ undefined
+   * ເພື່ອໃຫ້ chain ລຳດັບ (settings → SOD_ENFORCE → NODE_ENV) ເຮັດວຽກໄດ້. ຖ້າມີ default:true
+   * Mongoose ຈະ apply ໃສ່ doc ທີ່ hydrate ຈາກ DB → env fallback ຈະບໍ່ເຄີັດໃຊ້.
+   * ຄ່າທີ່ມີຜົນຈິງ = ຄ່າທີ່ admin ຕັ້ງຢ່າງເຈີງ (true/false).
+   */
+  @Prop({ type: Boolean })
+  sodEnforce?: boolean;
 }
 
 export const OrganizationSettingsSchema =

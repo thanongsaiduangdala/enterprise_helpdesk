@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import {
@@ -9,26 +9,51 @@ import {
   SECRET_MASK,
 } from './schemas/organization-settings.schema';
 import { UpdateOrganizationSettingsDto } from './dto/update-organization-settings.dto';
+import {
+  envFallback,
+  invalidateSodCache,
+  registerSodLoader,
+} from '../common/utils/sod.util';
 
 @Injectable()
-export class OrganizationSettingsService {
+export class OrganizationSettingsService implements OnModuleInit {
   constructor(
     @InjectModel(OrganizationSettings.name)
     private settingsModel: Model<OrganizationSettingsDocument>,
   ) {}
 
+  onModuleInit() {
+    // ລົງທະບຽນ loader ໃຫ້ sodEnforced() ອ່ານຄ່າ settings (ແຄດ TTL ຢູ່ sod.util)
+    // ຄືນ undefined ເມື່ອຍັງບໍ່ໄດ້ຕັ້ງຄ່າ → ໃຫ້ env fallback ເຮັດວຽກ
+    registerSodLoader(async () => (await this.getSettingsDoc()).sodEnforce);
+  }
+
+  /** ຄ່າ SoD ທີ່ໃຊ້ຈິງຈິງ: ຄ່າໃນ settings (ຖ້າຕັ້ງໄວ້) → env fallback */
+  async getSodEnforce(): Promise<boolean> {
+    const doc = await this.getSettingsDoc();
+    return doc.sodEnforce ?? envFallback();
+  }
+
   // ຮັບປະກັນວ່າມີ singleton ເອກະສານດຽວ (ງ່າຍຕໍ່ການໝູນໃຊ້ຂ້າມບ່ອນ)
   async getSettingsDoc(): Promise<OrganizationSettingsDocument> {
-    let doc = await this.settingsModel.findById(ORG_SETTINGS_ID).exec();
-    if (!doc) {
-      doc = new this.settingsModel({
+    const existing = await this.settingsModel.findById(ORG_SETTINGS_ID).exec();
+    if (existing) return existing;
+
+    try {
+      const created = new this.settingsModel({
         _id: ORG_SETTINGS_ID,
         systemName: 'Helpdesk Enterprise',
         integrations: [],
       });
-      doc = await doc.save();
+      return await created.save();
+    } catch (err: any) {
+      // ຊົນກັນຈາກ 2 instance (race) → ອີກ instance ສ້າງໄຟແລ້ວ → ອານ ເຮັດວຽກ
+      if (err?.code === 11000) {
+        const raced = await this.settingsModel.findById(ORG_SETTINGS_ID).exec();
+        if (raced) return raced;
+      }
+      throw err;
     }
-    return doc;
   }
 
   async getPublic(): Promise<{ systemName: string }> {
@@ -50,6 +75,9 @@ export class OrganizationSettingsService {
         it.secret && it.value ? { ...it, value: SECRET_MASK } : it,
       );
     }
+
+    // ຄືນ "ຄ່າທີ່ໃຊ້ຈິງຈິງ" ໃຫ້ client (override ຖ້າມີ, ຖ້າບໍ່ → env fallback)
+    obj.sodEnforce = doc.sodEnforce ?? envFallback();
     return obj;
   }
 
@@ -74,6 +102,14 @@ export class OrganizationSettingsService {
 
     if (dto.systemName !== undefined && dto.systemName !== null) {
       doc.systemName = dto.systemName.trim() || 'Helpdesk Enterprise';
+    }
+
+    if (dto.sodEnforce === null) {
+      // ຍົກເຄືອນ override → ກັບໄປໃຊ້ env fallback ຕາມລຳດັບ
+      doc.set('sodEnforce', undefined);
+      doc.unmarkModified('sodEnforce');
+    } else if (dto.sodEnforce !== undefined) {
+      doc.sodEnforce = dto.sodEnforce;
     }
 
     if (dto.smtp !== undefined) {
@@ -125,6 +161,9 @@ export class OrganizationSettingsService {
       );
     }
 
-    return doc.save();
+    const saved = await doc.save();
+    // ໃຫ້ sodEnforced() ເຫັນຄ່າໃໝ່ທັນທີ (ບໍ່ຕ້ອງລໍ TTL)
+    invalidateSodCache();
+    return saved;
   }
 }

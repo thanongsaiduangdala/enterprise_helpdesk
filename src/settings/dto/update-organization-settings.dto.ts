@@ -45,6 +45,12 @@ class IntegrationSettingDto implements IntegrationSetting {
 export class UpdateOrganizationSettingsDto {
   @IsOptional() @IsString() systemName?: string;
 
+  /**
+   * true = ບັງຄັບ, false = ປິດ, null = ຍົກເຄືອນ override
+   * (ກັບໄປໃຊ້ env SOD_ENFORCE / NODE_ENV ຕາມລຳດັບ)
+   */
+  @IsOptional() @IsBoolean() sodEnforce?: boolean | null;
+
   @IsOptional()
   @IsObject()
   @ValidateNested()

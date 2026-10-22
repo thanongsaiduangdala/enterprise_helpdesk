@@ -7,6 +7,7 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { UsersModule } from '../users/users.module';
 import { AssetsModule } from '../assets/assets.module';
 import { SupplyCatalogModule } from '../supply-catalog/supply-catalog.module';
+import { SupplyRequestsModule } from '../supply-requests/supply-requests.module';
 import { Counter, CounterSchema } from '../roles/schemas/counter.schema';
 
 @Module({
@@ -19,6 +20,7 @@ import { Counter, CounterSchema } from '../roles/schemas/counter.schema';
     UsersModule,
     AssetsModule,
     SupplyCatalogModule,
+    SupplyRequestsModule,
   ],
   controllers: [PoprController],
   providers: [PoprService],

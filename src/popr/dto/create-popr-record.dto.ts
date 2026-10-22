@@ -14,7 +14,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   PoprAssetStatus,
   PoprCondition,
@@ -39,6 +39,14 @@ export class ProcurementDto {
   @IsOptional()
   @IsString()
   itemName?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-11-01',
+    description: 'Expected delivery date for the PO (one of the 5 PO fields)',
+  })
+  @IsOptional()
+  @IsDateString()
+  expectedDeliveryDate?: string;
 
   @ApiPropertyOptional({ example: 5 })
   @IsOptional()
@@ -427,6 +435,24 @@ export class CreatePoprRecordDto {
   @Min(1)
   @Max(4)
   stage?: number;
+
+  @ApiProperty({
+    example: 'SR001',
+    description:
+      'SupplyRequest this record originates from (one record per SR item line). Required — POPR ຕ້ອງມາຈາກໃບຂໍຊື້.',
+  })
+  @IsString()
+  @Matches(/^SR\d{3,}$/, { message: 'supplyRequestId must look like SR001' })
+  supplyRequestId!: string;
+
+  @ApiPropertyOptional({
+    example: 0,
+    description: 'Index of the item line within the SupplyRequest',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  supplyRequestItemIndex?: number;
 
   @ApiPropertyOptional({ type: ProcurementDto })
   @IsOptional()

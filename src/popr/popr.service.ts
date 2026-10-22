@@ -10,6 +10,7 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
 import {
+  PoprAssetStatus,
   PoprItemType,
   PoprRecord,
   PoprRecordDocument,
@@ -19,6 +20,7 @@ import { CreatePoprRecordDto } from './dto/create-popr-record.dto';
 import { UpdatePoprRecordDto } from './dto/update-popr-record.dto';
 import { AssetsService } from '../assets/assets.service';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
+import { SupplyRequestsService } from '../supply-requests/supply-requests.service';
 import { CatalogItemType } from '../supply-catalog/schemas/supply-catalog-item.schema';
 import { UsersService } from '../users/users.service';
 import { sodEnforced } from '../common/utils/sod.util';
@@ -36,6 +38,29 @@ interface UnitInput {
   assetId?: string;
 }
 
+/**
+ * ແປງສະຖານະທີ່ຜູ້ໃຊ້ເລືອກໃນຟອມ POPR ໄປເປັນສະຖານະຊັບສິນຈິງ (AssetStatus).
+ * - IN_STOCK  → AVAILABLE   (ຢູ່ຄັງ/ວ່າງ)
+ * - IN_USE    → ASSIGNED    (ມີຜູ້ຖື)
+ * - MAINTENANCE → UNDER_REPAIR
+ * - RETIRED   → RETIRED
+ * ບໍ່ຮູ້ຈັກ/ບໍ່ມີ → AVAILABLE
+ */
+function mapPoprAssetStatus(status?: PoprAssetStatus): AssetStatus {
+  switch (status) {
+    case PoprAssetStatus.IN_STOCK:
+      return AssetStatus.AVAILABLE;
+    case PoprAssetStatus.IN_USE:
+      return AssetStatus.ASSIGNED;
+    case PoprAssetStatus.MAINTENANCE:
+      return AssetStatus.UNDER_REPAIR;
+    case PoprAssetStatus.RETIRED:
+      return AssetStatus.RETIRED;
+    default:
+      return AssetStatus.AVAILABLE;
+  }
+}
+
 @Injectable()
 export class PoprService implements OnModuleInit {
   private readonly logger = new Logger(PoprService.name);
@@ -46,6 +71,7 @@ export class PoprService implements OnModuleInit {
     private assetsService: AssetsService,
     private catalogService: SupplyCatalogService,
     private usersService: UsersService,
+    private supplyRequestsService: SupplyRequestsService,
     @InjectModel(Counter.name) private counterModel: Model<CounterDocument>,
     @InjectConnection() private connection: Connection,
   ) {}
@@ -140,13 +166,21 @@ export class PoprService implements OnModuleInit {
     if (dto.status !== undefined) payload.status = dto.status;
     if (dto.itemType !== undefined) payload.itemType = dto.itemType;
     if (dto.stage !== undefined) payload.stage = dto.stage;
+    if (dto.supplyRequestId !== undefined)
+      payload.supplyRequestId = dto.supplyRequestId;
+    if (dto.supplyRequestItemIndex !== undefined)
+      payload.supplyRequestItemIndex = dto.supplyRequestItemIndex;
 
     if (dto.procurement) {
-      const { orderedByUserId, ...rest } = dto.procurement;
+      const { orderedByUserId, expectedDeliveryDate, ...rest } =
+        dto.procurement;
       payload.procurement = {
         ...this.cleanStrings(rest),
         ...(orderedByUserId
           ? { orderedByUserId: new Types.ObjectId(orderedByUserId) }
+          : {}),
+        ...(expectedDeliveryDate
+          ? { expectedDeliveryDate: new Date(expectedDeliveryDate) }
           : {}),
       };
     }
@@ -219,6 +253,14 @@ export class PoprService implements OnModuleInit {
     if (isConsumable) {
       if (o.receivedQuantity === undefined || o.receivedQuantity === null)
         missing.push('receiving.receivedQuantity');
+      // ກັນຮັບເກີນຈຳນວນທີ່ຈັດຊື້ໃນງວດນີ້ (quantity) — poTotalQuantity ເປັນຍອດສັ່ງທັງ PO ບໍ່ໃຊ້ເປັນລົງຂອງງວດ
+      // (ກວດຢອດເກີນຍອດ PO ຕໍ່ໃນ collectPoWarnings → POPR_PO_OVER_RECEIVED)
+      const maxQty = Number(p.quantity ?? 0) || 0;
+      if (maxQty > 0 && Number(o.receivedQuantity) > maxQty) {
+        throw new BadRequestException(
+          `ຈຳນວນທີ່ຮັບ (${o.receivedQuantity}) ເກີນຈຳນວນສັ່ງທັງ PO (${maxQty}) — ກະລຸນາກວດຈຳນວນຮັບ ຫຼື ຈຳນວນສັ່ງ`,
+        );
+      }
     } else {
       const qty = p.quantity ?? 1;
       const units = this.effectiveUnits(record);
@@ -263,11 +305,49 @@ export class PoprService implements OnModuleInit {
     }
   }
 
-  /** ແຍກໜ້າທີ່: ຜູ້ສ້າງ POPR ບໍ່ສາມາດປິດດ້ວຍຕົນເອງ (ເປີດໃຊ້ຕາມ SOD_ENFORCE / production) */
-  private assertSoD(record: PoprRecordDocument, actorId: string) {
-    if (sodEnforced() && String(record.createdBy) === String(actorId)) {
+  /** ແຍກໜ້າທີ່: ຜູ້ສ້າງ POPR ບໍ່ສາມາດປິດດ້ວຍຕົນເອງ (ບັງຄັບຕາມ settings) */
+  private async assertSoD(
+    record: PoprRecordDocument,
+    actorId: string,
+    ip?: string,
+  ) {
+    if ((await sodEnforced()) && String(record.createdBy) === String(actorId)) {
+      await this.logSodBlocked(actorId, record._id, 'POPR_COMPLETE_SELF', ip);
       throw new ForbiddenException(
         'Segregation of duties: ຜູ້ສ້າງ POPR ບໍ່ສາມາດປິດສຳເລັດດ້ວຍຕົນເອງໄດ້',
+      );
+    }
+  }
+
+  /** ບັນທຶກການຖືກບລັອກຍ້ອນແຍກໜ້າທີ່ — ທຸກຄັ້ງທີ່ຖືກບລັອກ */
+  private async logSodBlocked(
+    actorId: string,
+    entityId: string,
+    action: string,
+    ip?: string,
+  ) {
+    await this.flushAudits([
+      {
+        actorId,
+        action: `SOD_BLOCKED:${action}`,
+        entityType: 'PoprRecord',
+        entityId,
+        before: undefined,
+        after: { blocked: true, action },
+        ip,
+      },
+    ]);
+  }
+
+  /**
+   * ບັນທຶກເກົ່າ (legacy) ທີ່ບໍ່ມີ supplyRequestId = ບໍ່ມີບົນໃບຂໍຊື້.
+   * ປິດສຳເລັດ/ເປີດຄືນ/ປິດ PO ສັ້ນ — ຮັກສາປະຫວັດໄວ້ ບໍ່ລຶບ ບໍ່ migrate.
+   * (ແກ້ໄຂຂໍ້ມູນ/ລຶບຂໍ້ມູນ ຍັງອະນຸມັດໄດ້ ເພື່ອແກ້ຂໍ້ມູນຜິດໄວ້ໄດ້)
+   */
+  private assertLinked(record: PoprRecordDocument) {
+    if (!record.supplyRequestId) {
+      throw new BadRequestException(
+        'POPR ນີ້ເປັນບັນທຶກເກົ່າ (ບໍ່ຜູກກັບໃບຂໍຊື້) — ປິດສຳເລັດ/ເປີດຄືນ/ປິດ PO ບໍ່ໄດ້',
       );
     }
   }
@@ -314,6 +394,20 @@ export class PoprService implements OnModuleInit {
       const t = v.trim();
       return t === '' ? undefined : t;
     };
+    // ວັນຄາດວ່າຈະສົ່ງມອບ — ທຽບເທື່ອວັນ (ບໍ່ສົນເວລາ)
+    const normDate = (v: unknown): string | undefined => {
+      if (v === undefined || v === null || v === '') return undefined;
+      let d: Date;
+      if (v instanceof Date) {
+        d = v;
+      } else if (typeof v === 'string' || typeof v === 'number') {
+        d = new Date(v);
+      } else {
+        return undefined;
+      }
+      if (Number.isNaN(d.getTime())) return undefined;
+      return d.toISOString().slice(0, 10);
+    };
     const totalOf = (p: any) => p.poTotalQuantity ?? p.quantity;
 
     const mine = {
@@ -321,6 +415,7 @@ export class PoprService implements OnModuleInit {
       itemName: norm(dto.itemName),
       total: totalOf(dto),
       budget: dto.budget ?? undefined,
+      expectedDeliveryDate: normDate(dto.expectedDeliveryDate),
     };
 
     for (const s of siblings) {
@@ -330,6 +425,7 @@ export class PoprService implements OnModuleInit {
         itemName: norm(sp.itemName),
         total: totalOf(sp),
         budget: sp.budget ?? undefined,
+        expectedDeliveryDate: normDate(sp.expectedDeliveryDate),
       };
       const mismatches: string[] = [];
       // ທຽບສະເພາະຄ່າທີ່ທັງສອງຝ່າຍມີ — ຝ່າຍໃດຝ່າຍໜຶ່ງຍັງວ່າງ = ບໍ່ສາມາດກຳນົດວ່າບໍ່ກົງ
@@ -339,9 +435,11 @@ export class PoprService implements OnModuleInit {
       if (differs(mine.itemName, ref.itemName)) mismatches.push('itemName');
       if (differs(mine.total, ref.total)) mismatches.push('poTotalQuantity');
       if (differs(mine.budget, ref.budget)) mismatches.push('budget');
+      if (differs(mine.expectedDeliveryDate, ref.expectedDeliveryDate))
+        mismatches.push('expectedDeliveryDate');
       if (mismatches.length > 0) {
         throw new ConflictException(
-          `ເລກ PO "${po}" ມີຢູ່ແລ້ວໃນບັນທຶກ ${s._id} ແຕ່ຂໍ້ມູນບໍ່ກົງກັນ (${mismatches.join(', ')}) — PO ດຽວກັນຕ້ອງມີຜູ້ຂາຍ/ລາຍການ/ຈຳນວນສັ່ງ/ງົບ ດຽວກັນ`,
+          `ເລກ PO "${po}" ມີຢູ່ແລ້ວໃນບັນທຶກ ${s._id} ແຕ່ຂໍ້ມູນບໍ່ກົງກັນ (${mismatches.join(', ')}) — PO ດຽວກັນຕ້ອງມີຜູ້ຂາຍ/ລາຍການ/ຈຳນວນສັ່ງ/ງົບ/ວັນສົ່ງມອບ ດຽວກັນ`,
         );
       }
     }
@@ -687,9 +785,16 @@ export class PoprService implements OnModuleInit {
       const storeInStock = !!record.release.storeInStock;
       const purchasePrice =
         p.price !== undefined && p.price !== null ? Number(p.price) : undefined;
-      const assigneeId = record.release.assignedUserId
-        ? String(record.release.assignedUserId)
-        : undefined;
+      // ເລືອກ "ເຂົ້າຄັງ" = ຊັບສິນຕ້ອງຢູ່ຄັງ (ບໍ່ມອບໃຫ້ໃຜ) ເສຍກ່ອນ — ບໍ່ສົນ assignee ທີ່ຄ້າງຢູ່
+      const assigneeId =
+        !storeInStock && record.release.assignedUserId
+          ? String(record.release.assignedUserId)
+          : undefined;
+      // ສະຖານະທີ່ຜູ້ໃຊ້ເລືອກໃນຟອມ (IN_STOCK/IN_USE/MAINTENANCE/RETIRED) ນຳມາໃຊ້ກັບຊັບສິນຈິງ.
+      // ແຕ່ໂໝດ "ເຂົ້າຄັງ" (storeInStock) ຊະນະສະເໝີ → ຕ້ອງເປັນ AVAILABLE (ຢູ່ຄັງ/ວ່າງ)
+      const desiredStatus = storeInStock
+        ? AssetStatus.AVAILABLE
+        : mapPoprAssetStatus(record.release.assetStatus);
       // ໂໝດເຂົ້າຄັງ: ບໍ່ມີຜູ້ຮັບ → ໃຊ້ສາຂາຂອງຜູ້ຮັບເຂົ້າ ຫຼື ຜູ້ສ້າງ
       const branchId = assigneeId
         ? (await this.usersService.findOneRaw(assigneeId)).branchId
@@ -750,6 +855,7 @@ export class PoprService implements OnModuleInit {
               catalogItemId,
               branchId,
               assigneeId,
+              status: desiredStatus,
               serialNumber: u.serialNumber,
               note,
               purchaseDate: record.receiving?.receivedDate?.toISOString(),
@@ -811,7 +917,38 @@ export class PoprService implements OnModuleInit {
     await this.assetsService.flushAudits(audits);
   }
 
+  /** ອັບເດດສະຖານະ SR ຈາກ POPR (ຖ້າ POPR ນີ້ຜູກກັບໃບຂໍຊື້) */
+  private async syncSupplyRequestStatus(
+    record: PoprRecordDocument,
+    actorId?: string,
+    ip?: string,
+  ) {
+    if (!record.supplyRequestId) return;
+    try {
+      await this.supplyRequestsService.recomputeStatus(
+        record.supplyRequestId,
+        actorId,
+        ip,
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to recompute SupplyRequest ${record.supplyRequestId}: ${err?.message ?? err}`,
+      );
+    }
+  }
+
   async create(dto: CreatePoprRecordDto, userId: string, ip?: string) {
+    // ປິດການສ້າງ POPR ເດ່ຍວ — ຕ້ອງມາຈາກໃບຂໍຊື້ (SupplyRequest) ເທົ່ານັ້ນ
+    if (!dto.supplyRequestId) {
+      throw new BadRequestException(
+        'POPR ຕ້ອງຜູກກັບໃບຂໍຊື້ (supplyRequestId) — ການສ້າງ POPR ເດ່ຍວຖືກປິດໃຊ້',
+      );
+    }
+    // ໃບຂໍຊື້ຕ້ອງມີຈິງ + ສະຖານະອະນຸມັດແລ້ວ + ດັດຊະນີລາຍການຢູ່ໃນຊ່ວງ
+    await this.supplyRequestsService.assertLinkableForPopr(
+      dto.supplyRequestId,
+      dto.supplyRequestItemIndex,
+    );
     await this.validateLinkage(dto);
     const payload = this.buildPayload(dto);
     const status = dto.status ?? PoprStatus.DRAFT;
@@ -830,7 +967,7 @@ export class PoprService implements OnModuleInit {
       const ctx: TxCtx = { session, audits };
       if (status === PoprStatus.COMPLETED) {
         this.assertCompletable(record);
-        this.assertSoD(record, userId);
+        await this.assertSoD(record, userId, ip);
         audits.push(...(await this.collectPoWarnings(record, userId, ip)));
         await this.applyCompletion(record, ctx, userId, ip);
       } else {
@@ -840,6 +977,7 @@ export class PoprService implements OnModuleInit {
       await record.save({ session: session ?? undefined });
     });
     await this.flushAudits(audits);
+    await this.syncSupplyRequestStatus(record, userId, ip);
     return record;
   }
 
@@ -936,6 +1074,23 @@ export class PoprService implements OnModuleInit {
     const record = await this.poprModel.findById(id).exec();
     if (!record) throw new NotFoundException('POPR record not found');
 
+    // ບໍ່ໃຫ້ re-point POPR ໄປໃບຂໍອື່ນ (ສະຖານະ SR ຄຳນວນຈາກ POPR ຂອງມັນ)
+    if (
+      dto.supplyRequestId !== undefined &&
+      String(dto.supplyRequestId) !== String(record.supplyRequestId ?? '')
+    ) {
+      throw new BadRequestException(
+        'supplyRequestId ບໍ່ສາມາດແກ້ໄຂໄດ້ — POPR ຜູກໃບຂໍຊື້ເດີວ',
+      );
+    }
+    if (
+      dto.supplyRequestItemIndex !== undefined &&
+      dto.supplyRequestItemIndex !== record.supplyRequestItemIndex
+    ) {
+      throw new BadRequestException(
+        'supplyRequestItemIndex ບໍ່ສາມາດແກ້ໄຂໄດ້ — POPR ຜູກໃບຂໍຊື້ເດີວ',
+      );
+    }
     if (record.status === PoprStatus.COMPLETED) {
       throw new BadRequestException(
         'POPR ທີ່ປິດສຳເລັດແລ້ວ ບໍ່ສາມາດແກ້ໄຂໄດ້ — ຕ້ອງເປີດໃໝ່ໂດຍຜູ້ອະນຸມັດກ່ອນ',
@@ -962,7 +1117,7 @@ export class PoprService implements OnModuleInit {
       const ctx: TxCtx = { session, audits };
       if (dto.status === PoprStatus.COMPLETED) {
         this.assertCompletable(record);
-        this.assertSoD(record, actorId ?? '');
+        await this.assertSoD(record, actorId ?? '', ip);
         audits.push(
           ...(await this.collectPoWarnings(record, actorId ?? '', ip)),
         );
@@ -974,6 +1129,7 @@ export class PoprService implements OnModuleInit {
       await record.save({ session: session ?? undefined });
     });
     await this.flushAudits(audits);
+    await this.syncSupplyRequestStatus(record, actorId, ip);
     return record;
   }
 
@@ -1006,17 +1162,19 @@ export class PoprService implements OnModuleInit {
         .session(session ?? null)
         .exec();
       if (!record) throw new NotFoundException('POPR record not found');
+      this.assertLinked(record);
       if (record.status === PoprStatus.COMPLETED) {
         throw new BadRequestException('POPR ນີ້ປິດສຳເລັດແລ້ວ');
       }
       this.assertCompletable(record);
-      this.assertSoD(record, actorId);
+      await this.assertSoD(record, actorId, ip);
       audits.push(...(await this.collectPoWarnings(record, actorId, ip)));
       await this.applyCompletion(record, { session, audits }, actorId, ip);
       await record.save({ session: session ?? undefined });
       return record;
     });
     await this.flushAudits(audits);
+    await this.syncSupplyRequestStatus(saved, actorId, ip);
     return saved;
   }
 
@@ -1033,10 +1191,14 @@ export class PoprService implements OnModuleInit {
     actorId: string,
     ip?: string,
   ): Promise<void> {
-    const assigneeId = record.release?.assignedUserId
-      ? String(record.release.assignedUserId)
-      : undefined;
     const storeInStock = !!record.release?.storeInStock;
+    // ຕ້ອງກົງກັບ applyCompletion: ໂໝດເຂົ້າຄັງ ບໍ່ຖື assignee (ຈຶ່ງຍ້ອນກັບແບບ "ຢູ່ຄັງ")
+    const assigneeId =
+      !storeInStock && record.release?.assignedUserId
+        ? String(record.release.assignedUserId)
+        : undefined;
+    // ຖ້າສ້າງໂດຍບໍ່ມີຜູ້ຮັບ = ຢູ່ຄັງ (ສະຖານະອາດເປັນ AVAILABLE/UNDER_REPAIR/RETIRED)
+    const stocked = storeInStock || !assigneeId;
     const created = record.appliedAssetIds ?? [];
     const linked = record.appliedLinkedAssetIds ?? [];
     const catalogItemId = record.procurement.catalogItemId;
@@ -1044,7 +1206,7 @@ export class PoprService implements OnModuleInit {
 
     // 1) ກວດທັງໝົດກ່ອນ
     await this.assetsService.assertReversibleByPopr(created, assigneeId, ctx, {
-      stocked: storeInStock,
+      stocked,
     });
     await this.assetsService.assertReversibleByPopr(linked, assigneeId, ctx, {
       linked: true,
@@ -1068,7 +1230,7 @@ export class PoprService implements OnModuleInit {
       ctx,
       actorId,
       ip,
-      { stocked: storeInStock },
+      { stocked },
     );
     await this.assetsService.unassignLinkedInTx(
       linked,
@@ -1120,6 +1282,7 @@ export class PoprService implements OnModuleInit {
         .session(session ?? null)
         .exec();
       if (!record) throw new NotFoundException('POPR record not found');
+      this.assertLinked(record);
       if (record.status !== PoprStatus.COMPLETED) {
         throw new BadRequestException(
           'ເປີດໃໝ່ໄດ້ສະເພາະ POPR ທີ່ປິດສຳເລັດແລ້ວເທົ່ານັ້ນ',
@@ -1179,6 +1342,7 @@ export class PoprService implements OnModuleInit {
       return savedRecord;
     });
     await this.flushAudits(audits);
+    await this.syncSupplyRequestStatus(saved, actorId, ip);
     return saved;
   }
 
@@ -1201,6 +1365,12 @@ export class PoprService implements OnModuleInit {
     const budget = lots
       .map((l) => (l.procurement as any)?.budget as number | undefined)
       .find((b) => b !== undefined && b !== null);
+    // ວັນຄາດວ່າຈະສົ່ງມອບ (ຂໍ້ມູນດຽວກັນຕ້ອງຕົງກັນ)
+    const expectedDeliveryDate = lots
+      .map(
+        (l) => (l.procurement as any)?.expectedDeliveryDate as Date | undefined,
+      )
+      .find((d) => d !== undefined && d !== null);
     return {
       lots: lots.length,
       total: totals.length ? Math.max(...totals) : 0,
@@ -1210,6 +1380,7 @@ export class PoprService implements OnModuleInit {
         return sum + (Number(lp.price ?? 0) || 0) * this.lotReceivedQty(l);
       }, 0),
       budget,
+      expectedDeliveryDate,
       closedShort: lots.some((l) => l.poClosedShort),
     };
   }
@@ -1227,6 +1398,7 @@ export class PoprService implements OnModuleInit {
         .session(session ?? null)
         .exec();
       if (!record) throw new NotFoundException('POPR record not found');
+      this.assertLinked(record);
       const po = record.procurement?.poNumber?.trim();
       if (!po) {
         throw new BadRequestException(
@@ -1242,7 +1414,7 @@ export class PoprService implements OnModuleInit {
         );
       }
       // ດຽວກັນກັບການປິດສຳເລັດທົ່ວໄປ: ຜູ້ສ້າງບໍ່ປິດງວດຕົນເອງ (ເມື່ອ SoD ບັງຄັບ)
-      this.assertSoD(record, actorId);
+      await this.assertSoD(record, actorId, ip);
 
       const summary = await this.poSummary(po, id);
       const before = record.toObject();
@@ -1273,11 +1445,13 @@ export class PoprService implements OnModuleInit {
       return savedRecord;
     });
     await this.flushAudits(audits);
+    await this.syncSupplyRequestStatus(saved, actorId, ip);
     return saved;
   }
 
   async remove(id: string, actorId: string, ip?: string) {
     const audits: AuditEvent[] = [];
+    let linkedSrId: string | undefined;
     const result = await runInTransaction(this.connection, async (session) => {
       audits.length = 0;
       const ctx: TxCtx = { session, audits };
@@ -1292,10 +1466,24 @@ export class PoprService implements OnModuleInit {
         await this.reverseCompletionEffects(record, ctx, actorId, ip);
       }
 
+      linkedSrId = record.supplyRequestId;
       await this.poprModel.deleteOne({ _id: id }, { session }).exec();
       return { deleted: true };
     });
     await this.flushAudits(audits);
+    if (linkedSrId) {
+      try {
+        await this.supplyRequestsService.recomputeStatus(
+          linkedSrId,
+          actorId,
+          ip,
+        );
+      } catch (err: any) {
+        this.logger.warn(
+          `Failed to recompute SupplyRequest ${linkedSrId}: ${err?.message ?? err}`,
+        );
+      }
+    }
     return result;
   }
 }
