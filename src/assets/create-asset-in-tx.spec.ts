@@ -11,9 +11,10 @@ import { UsersService } from '../users/users.service';
 
 /**
  * Regression tests for `createAssignedAssetInTx` — the asset-creation path used
- * when a POPR is completed. Covers the "add to inventory" fix: the status
- * produced must reflect the store-in-stock / assignee intent, and catalog stock
- * must only be incremented when the asset actually ends up AVAILABLE.
+ * when a goods receipt stores equipment in stock. Covers the "add to inventory"
+ * fix: the status produced must reflect the store-in-stock / assignee intent,
+ * and catalog stock must only be incremented when the asset actually ends up
+ * AVAILABLE.
  */
 describe('AssetsService.createAssignedAssetInTx status resolution', () => {
   let service: AssetsService;

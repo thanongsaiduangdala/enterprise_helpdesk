@@ -54,11 +54,17 @@ describe('sod.util', () => {
     expect(await sodEnforced()).toBe(true);
   });
 
-  it('defaults to enforcing only in production', () => {
+  it('defaults to enforcing in every environment (ON by default)', () => {
     process.env.NODE_ENV = 'test';
     delete process.env.SOD_ENFORCE;
-    expect(envFallback()).toBe(false);
+    expect(envFallback()).toBe(true);
     process.env.NODE_ENV = 'production';
     expect(envFallback()).toBe(true);
+  });
+
+  it('allows explicitly disabling SoD via env', () => {
+    process.env.SOD_ENFORCE = 'false';
+    expect(envFallback()).toBe(false);
+    delete process.env.SOD_ENFORCE;
   });
 });

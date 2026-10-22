@@ -11,12 +11,6 @@ import {
   SupplyRequestDocument,
   SupplyRequestStatus,
 } from './schemas/supply-request.schema';
-import {
-  PoprItemType,
-  PoprRecord,
-  PoprRecordDocument,
-  PoprStatus,
-} from '../popr/schemas/popr-record.schema';
 import { CreateSupplyRequestDto } from './dto/create-supply-request.dto';
 import { ReceiveSupplyRequestDto } from './dto/receive-supply-request.dto';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
@@ -36,12 +30,10 @@ import {
 } from '../common/utils/transaction.util';
 import { sodEnforced } from '../common/utils/sod.util';
 import { matchAssetToItem } from '../common/utils/supply-match.util';
-import { SYSTEM_ACTOR_ID } from '../common/utils/audit.util';
 
 /**
  * ສະຖານະທີ່ "ເປີດ" — ອະນຸມັດແລ້ວ ແລະ ຍັງຮັບຂອງບໍ່ຄົບ.
- * ທັງສອງ flow (scan/fulfill) ແລະ flow POPR ຕ້ອງສາມາດເຮັດວຽກໄດ້ໃນສະຖານະເຫຼົ່າເຫຼົ່ມ
- * (ເຊັ່ນ ສະ້າງ POPR ແລ້ວ SR ເປັນ ORDERED ແຕ່ຍັງຕ້ອງຮັບຂອງຜ່ານການສະແກນໄດ້).
+ * ທັງສອງ flow (scan/fulfill) ແລະ flow ຮັບຂອງແລ້ວ ຕ້ອງສາມາດເຮັດວຽກໄດ້ໃນສະຖານະເຫຼົ່າເຫຼົ່ມ.
  */
 const OPEN_STATUSES: SupplyRequestStatus[] = [
   SupplyRequestStatus.APPROVED,
@@ -49,24 +41,11 @@ const OPEN_STATUSES: SupplyRequestStatus[] = [
   SupplyRequestStatus.PARTIALLY_RECEIVED,
 ];
 
-/**
- * ສະຖານະທີ່ "ຄຳນວນກັບໄດ້" ຈາກ POPR ໄດ້.
- * ທຸກສະຖານະອື່ນ (REQUESTED/REJECTED/CANCELLED/ຄ່າທີ່ບໍ່ຮູ້ໃນ enum) → ບໍ່ແຕະ.
- */
-const RECOMPUTABLE_STATUSES: SupplyRequestStatus[] = [
-  SupplyRequestStatus.APPROVED,
-  SupplyRequestStatus.ORDERED,
-  SupplyRequestStatus.PARTIALLY_RECEIVED,
-  SupplyRequestStatus.CLOSED,
-];
-
 @Injectable()
 export class SupplyRequestsService {
   constructor(
     @InjectModel(SupplyRequest.name)
     private requestModel: Model<SupplyRequestDocument>,
-    @InjectModel(PoprRecord.name)
-    private poprModel: Model<PoprRecordDocument>,
     private catalogService: SupplyCatalogService,
     private auditLogsService: AuditLogsService,
     private usersService: UsersService,
@@ -199,141 +178,6 @@ export class SupplyRequestsService {
       { blocked: true, action },
       ip,
     );
-  }
-
-  /**
-   * ກວດວ່າ POPR ຜູກໃບຂໍຊື້ໄດ້ຖືກຕ້ອງ:
-   * - ໃບຂໍຊື້ມີຈິງ
-   * - ສະຖານະເປັນສະຖານະທີ່ຮັບ/ຈັດສັ່ງໄດ້ (APPROVED / ORDERED / PARTIALLY_RECEIVED)
-   * - ດັດຊະນີລາຍການ (supplyRequestItemIndex) ຢູ່ໃນຊ່ວງຂອງໃບຂໍ
-   */
-  async assertLinkableForPopr(supplyRequestId: string, itemIndex?: number) {
-    const request = await this.requestModel.findById(supplyRequestId).exec();
-    if (!request) {
-      throw new BadRequestException(
-        `Supply request "${supplyRequestId}" not found`,
-      );
-    }
-    if (!OPEN_STATUSES.includes(request.status)) {
-      throw new BadRequestException(
-        `Supply request ${supplyRequestId} is "${request.status}" — POPR ສ້າງໄດ້ສະເພາະໃບຂໍທີ່ອະນຸມັດແລ້ວ ແລະ ຍັງຮັບຂອງບໍ່ຄົບ`,
-      );
-    }
-    if (itemIndex !== undefined && itemIndex !== null) {
-      const items = request.items ?? [];
-      if (
-        !Number.isInteger(itemIndex) ||
-        itemIndex < 0 ||
-        itemIndex >= items.length
-      ) {
-        throw new BadRequestException(
-          `supplyRequestItemIndex ${itemIndex} is out of range (ໃບຂໍ ${supplyRequestId} ມີ ${items.length} ລາຍການ)`,
-        );
-      }
-    }
-    return request;
-  }
-
-  /**
-   * ຈຳນວນທີ່ "ຮັບ" ຂອງ POPR (ສິ້ນເປືອງ = ຈຳນວນຮັບຈິງ, ອື່ນໆ = ຈຳນວນສັ່ງຂອງງວດ)
-   */
-  private poprReceivedQty(p: any): number {
-    if (p.itemType === PoprItemType.CONSUMABLE) {
-      return (
-        Number(p.receiving?.receivedQuantity ?? p.procurement?.quantity ?? 0) ||
-        0
-      );
-    }
-    return Number(p.procurement?.quantity ?? 0) || 0;
-  }
-
-  /**
-   * ຄຳນວນສະຖານະ SR ຈາກ POPR ຂອງມັນ (ນັບຕາມຈຳນວນທີ່ຮັບຈິງ ບໍ່ແມ່ນຈຳນວນ index ລາຍການ):
-   * - ບໍ່ມີການຮັບເລີຍ       → ORDERED
-   * - ຮັບບາງລາຍການ         → PARTIALLY_RECEIVED
-   * - ຮັບຄົບທຸກລາຍການ        → CLOSED
-   * ຮັກສາສະຖານະ REQUESTED/APPROVED/REJECTED ໄວ້ຈົນກວ່າຈະມີ POPR.
-   * ເອີ້ນໂດຍ PoprService ຫຼັງສ້າງ/ແກ້/ປິດ/ເປີດ POPR.
-   */
-  async recomputeStatus(
-    supplyRequestId: string,
-    actorId?: string,
-    ip?: string,
-  ) {
-    const request = await this.requestModel.findById(supplyRequestId).exec();
-    if (!request) return undefined;
-    // ຄຳນວນກັບໄດ້ເທົ່າສະຖານະທີ່ຢູ່ໃນຂອບບ້ອນນີ້ເທົ່ານັ້ນ.
-    // REQUESTED/REJECTED/CANCELLED (ຫຼື ຄ່າທີ່ບໍ່ຮູ້ໃນ enum ເຊັ່ນ CANCELLED ໃນຂໍ້ມູນເດີມ)
-    // → ບໍ່ຕ້ອງແຕະ, ບໍ່ຕ້ອງຢູ່ໃນການຄຳນວນຂອງ POPR.
-    if (!RECOMPUTABLE_STATUSES.includes(request.status)) {
-      return request;
-    }
-    // ຖືກຮັບຂອງຈິງແລ້ວຜ່ານ flow scan/fulfill (ມີ fulfilledBy) → ສະຖານະ terminal
-    // ບໍ່ໃຫ້ POPR ຄຳນວນກັບຄືນ (ກັນຕາມປະຫວັດການຮັບຈິງ)
-    // FULFILLED = ສະຖານະເດີມຂອງລຸລຸດ (alias ຂອງ CLOSED) — ຖືກເປັນ terminal ເຊັ່ນກັນ
-    if (
-      request.status === SupplyRequestStatus.FULFILLED ||
-      request.fulfilledBy
-    ) {
-      return request;
-    }
-
-    const poprs = await this.poprModel
-      .find({ supplyRequestId })
-      .select(
-        'status supplyRequestItemIndex itemType poClosedShort procurement.quantity receiving.receivedQuantity',
-      )
-      .exec();
-
-    // ນັບເຉພາະ POPR ທີ່ປິດສຳເລັດ ແລະ ບໍ່ໄດ້ຖືກປິດ PO ແບບບໍ່ຄົບ (ບໍ່ໄດ້ຮັບຂອງຈິງ)
-    const receivedByIndex = new Map<number, number>();
-    for (const p of poprs) {
-      if (p.status !== PoprStatus.COMPLETED) continue;
-      if (p.poClosedShort) continue;
-      const idx = p.supplyRequestItemIndex;
-      if (typeof idx !== 'number' || idx < 0) continue;
-      const qty = this.poprReceivedQty(p);
-      if (qty <= 0) continue;
-      receivedByIndex.set(idx, (receivedByIndex.get(idx) ?? 0) + qty);
-    }
-
-    const items = request.items ?? [];
-    let anyReceived = false;
-    let allReceived = items.length > 0;
-    items.forEach((item, i) => {
-      const got = receivedByIndex.get(i) ?? 0;
-      if (got > 0) anyReceived = true;
-      if (got < (item.quantity ?? 0)) allReceived = false;
-    });
-
-    const next = allReceived
-      ? SupplyRequestStatus.CLOSED
-      : anyReceived
-        ? SupplyRequestStatus.PARTIALLY_RECEIVED
-        : SupplyRequestStatus.ORDERED;
-
-    if (request.status !== next) {
-      const before = request.status;
-      request.status = next;
-      if (next === SupplyRequestStatus.CLOSED) {
-        if (!request.fulfilledAt) request.fulfilledAt = new Date();
-      } else {
-        // ຍັງບໍ່ຮັບຄົບ → ລ້າງເວລາທີ່ປິດສຳເລັດ
-        request.set('fulfilledAt', undefined);
-      }
-      const saved = await request.save();
-      await this.auditLogsService.log(
-        actorId || SYSTEM_ACTOR_ID,
-        'SUPPLY_REQUEST_STATUS_AUTO',
-        'SupplyRequest',
-        supplyRequestId,
-        { status: before },
-        { status: next },
-        ip,
-      );
-      return saved;
-    }
-    return request;
   }
 
   async approve(id: string, approverId: string, ip?: string) {

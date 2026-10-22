@@ -86,7 +86,7 @@ export class SupplyCatalogService {
     }
   }
 
-  /** ຫາລາຍການ catalog ດ້ວຍຊື່ (ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່) — ໃຊ້ຈາກ POPR ຕອນປິດເພື່ອຜູກ ຫຼື ສ້າງໃໝ່ */
+  /** ຫາລາຍການ catalog ດ້ວຍຊື່ (ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່) */
   async findByName(name: string, session?: ClientSession) {
     return this.catalogModel
       .findOne({ name: this.nameRegex(name) })
@@ -95,47 +95,7 @@ export class SupplyCatalogService {
   }
 
   /**
-   * ຮັບປະກັນວ່າລາຍການ catalog ກົງກັບປະເພດ (itemType) ຂອງການເຄື່ອນໄຫວ POPR —
-   * - ຖ້າຍັງບໍ່ເຄີຍກຳນົດ (ຂໍ້ມູນເກົ່າ / ນຳເຂົ້າ CSV ໂດຍບໍ່ລະບາຍ itemType): ຕື່ມໃຫ້ທັນທີ (backfill),
-   *   ແຕ່ຈະປະຕິເສດຖ້າມີຫຼັກຖານວ່າລາຍການນັ້ນກຳລັງນັບແບບອື່ນຢູ່ແລ້ວ
-   *   (ມີ asset ລວກກັນ / ມີຕົວເລກ stockQty ຄ້າງຢູ່).
-   * - ຖ້າກຳນົດແລ້ວແຕ່ຕ່າງກັນ → ປະຕິເສດ ເພາະ "ນັບເປັນລາຍການ (asset)" ແລະ "ນັບເປັນຈຳນວນ (consumable)"
-   *   ບໍ່ສາມາດປົນກັນໄດ້ — ສະຕ໊ອກຈະຜິດ (drift) ທັນທີທີ່ອີກຝ່າຍໜຶ່ງເພີ່ມ/ຫຼຸດສະຕ໊ອກ.
-   */
-  async reconcileItemType(
-    item: SupplyCatalogItemDocument,
-    itemType: CatalogItemType,
-    session?: ClientSession,
-  ): Promise<SupplyCatalogItemDocument> {
-    if (item.itemType === itemType) return item;
-    if (item.itemType) {
-      throw new BadRequestException(
-        `ລາຍການ catalog "${item.name}" (${item._id}) ກຳນົດເປັນ ${item.itemType} ແລ້ວ ແຕ່ການເຄື່ອນໄຫວນີ້ເປັນ ${itemType} — ສະຕ໊ອກນັບສະເໜີກັນບໍ່ໄດ້. ກະລຸນາປ່ຽນຊື່ລາຍການ ຫຼື ປ່ຽນ itemType ໃນ Catalog ໃຫ້ກົງກັນກ່ອນ`,
-      );
-    }
-    if (itemType === CatalogItemType.CONSUMABLE) {
-      const assetCount = await this.assetModel
-        .countDocuments({ catalogItemId: item._id })
-        .session(session ?? null);
-      if (assetCount > 0) {
-        throw new BadRequestException(
-          `ລາຍການ catalog "${item.name}" (${item._id}) ມີອຸປະກອນລວກກັນ ${assetCount} ລາຍການ (asset-tracked) ແລ້ວ ບໍ່ສາມາດໃຊ້ເປັນ CONSUMABLE ໄດ້ — ກະລຸນາປ່ຽນຊື່ລາຍການ POPR ຫຼື ປ່ຽນ itemType ໃນ Catalog`,
-        );
-      }
-    }
-    if (itemType === CatalogItemType.ASSET && item.stockQty !== 0) {
-      throw new BadRequestException(
-        `ລາຍການ catalog "${item.name}" (${item._id}) ມີ stockQty=${item.stockQty} (ນັບເປັນຈຳນວນ) ຢູ່ແລ້ວ ບໍ່ສາມາດປ່ຽນເປັນ ASSET ໄດ້ — ກະລຸນາກຳຈັບຕົວເລກສະຕ໊ອກກ່ອນ (adjust-stock) ຫຼື ປ່ຽນຊື່ລາຍການ`,
-      );
-    }
-    item.itemType = itemType;
-    if (session) await item.save({ session });
-    else await item.save();
-    return item;
-  }
-
-  /**
-   * ສ້າງລາຍການ catalog ພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ POPR).
+   * ສ້າງລາຍການ catalog ພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ ຮັບເຄື່ອງເຂົ້າຄັງ).
    * ຖ້າຊື່ຊ້ຳ (race) → ຄືນລາຍການທີ່ມີຢູ່ແລ້ວ. ຜູ້ເອີ້ນເປັນຜູ້ push audit ເອງ.
    */
   async createInTx(dto: CreateSupplyCatalogItemDto, ctx: TxCtx) {

@@ -145,9 +145,9 @@ export class AssetsService {
   }
 
   /**
-   * ສ້າງຊັບສິນພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ ຕອນປິດ POPR) ແລະ
+   * ສ້າງຊັບສິນພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ ຕອນຮັບເຄື່ອງເຂົ້າຄັງ) ແລະ
    * ມອບໃຫ້ຜູ້ໃຊ້ໃນທັນທີ — ບໍ່ເອີ້ນ performAssign/syncStock ເພື່ອບໍ່ໃຫ້ນັບສະຕ໊ອກສອງເທື່ອ
-   * (POPR ຈະບວກສະຕ໊ອກຄັ້ງດຽວຕອນປິດ).
+   * (ສະຕ໊ອກຈະບວກຄັ້ງດຽວຕອນຮັບເຄື່ອງເຂົ້າຄັງ).
    */
   async createAssignedAssetInTx(
     input: {
@@ -156,7 +156,7 @@ export class AssetsService {
       branchId: string;
       /** ບໍ່ໃສ່ = ເຂົ້າຄັງ (AVAILABLE, ບວກສະຕ໊ອກ); ໃສ່ = ມອບໃຫ້ຜູ້ນີ້ທັນທີ (ASSIGNED) */
       assigneeId?: string;
-      /** ສະຖານະທີ່ຕ້ອງການເປັນ (ຈາກ POPR) — ຖ້າບໍ່ໃສ່ ຈະອີງຈາກ assigneeId */
+      /** ສະຖານະທີ່ຕ້ອງການເປັນ — ຖ້າບໍ່ໃສ່ ຈະອີງຈາກ assigneeId */
       status?: AssetStatus;
       serialNumber?: string;
       note?: string;
@@ -171,7 +171,7 @@ export class AssetsService {
     const serial = input.serialNumber?.trim();
     if (serial) await this.assertSerialFree(serial, ctx.session);
     // ມີ assignee = ຖືກມອບໝາຍ (ASSIGNED); ບໍ່ມີ = ວ່າງ (AVAILABLE).
-    // ຖ້າ POPR ສົ່ງ status ມາ ໃຫ້ສະຖານະນັ້ນຊະນະ — ແຕ່ຫ້າມ "ວ່າງ" ໃນຂະນະທີ່ມີ assignee
+    // ຖ້າ service ອື່ນສົ່ງ status ມາ ໃຫ້ສະຖານະນັ້ນຊະນະ — ແຕ່ຫ້າມ "ວ່າງ" ໃນຂະນະທີ່ມີ assignee
     // (ກັນຂໍ້ມູນຂັດແຍ່ງ: ມີຜູ້ຖືແຕ່ບອກວ່າວ່າງ).
     let status =
       input.status &&
@@ -976,144 +976,6 @@ export class AssetsService {
       });
       return { deleted: true };
     });
-  }
-
-  /**
-   * ກວດວ່າຊັບສິນທີ່ POPR ສ້າງ/ມອບ ຍັງ "ບໍ່ຖືກໃຊ້ຕໍ່" ຈຶ່ງຍ້ອນກັບໄດ້ຢ່າງປອດໄພ:
-   * ຕ້ອງຍັງ ASSIGNED ໃຫ້ຜູ້ຮັບເດີມ, ມີປະຫວັດການມອບລາຍການດຽວທີ່ຍັງເປີດຢູ່, ແລະບໍ່ມີປະຫວັດບຳລຸງຮັກສາ.
-   * ຖ້າບໍ່ຕົງ → ປະຕິເສດທັງໝົດ (ບໍ່ແກ້ໄຂຫຍັງ).
-   */
-  async assertReversibleByPopr(
-    ids: string[],
-    expectedAssigneeId: string | undefined,
-    ctx: TxCtx,
-    opts: { linked?: boolean; stocked?: boolean } = {},
-  ) {
-    if (!ids || ids.length === 0) return;
-    const assets = await this.assetModel
-      .find({ _id: { $in: ids } })
-      .session(ctx.session ?? null)
-      .exec();
-    const problems: string[] = [];
-    for (const a of assets) {
-      const reasons: string[] = [];
-      const history = a.assignmentHistory ?? [];
-      if (opts.stocked) {
-        // ຢູ່ຄັງແລ້ວ ຍັງບໍ່ມີໃຜເບີກ: ຕ້ອງບໍ່ຖືກມອບ (ບໍ່ມີຜູ້ຖື) ແລະ ບໍ່ເຄີຍຖືກມອບ
-        // ສະຖານະອາດເປັນ AVAILABLE/UNDER_REPAIR/RETIRED ໄດ້ ຕາມທີ່ຜູ້ໃຊ້ເລືອກ
-        if (a.currentAssigneeId || a.status === AssetStatus.ASSIGNED)
-          reasons.push(`ມີຜູ້ຖື (${a.status})`);
-        if (history.length > 0) reasons.push('ເຄີຍຖືກມອບແລ້ວ');
-      } else {
-        if (a.status !== AssetStatus.ASSIGNED)
-          reasons.push(`ສະຖານະ ${a.status}`);
-        if (
-          !expectedAssigneeId ||
-          String(a.currentAssigneeId ?? '') !== String(expectedAssigneeId)
-        ) {
-          reasons.push('ຜູ້ຖືປັດຈຸບັນບໍ່ແມ່ນຜູ້ຮັບເດີມ');
-        }
-        const openCount = history.filter((h) => !h.returnedAt).length;
-        if (openCount !== 1) reasons.push('ປະຫວັດການມອບບໍ່ຕົງ');
-        // ຊັບສິນທີ່ POPR ສ້າງເອງມີປະຫວັດໄດ້ແຕ່ລາຍການດຽວ; ຊັບສິນທີ່ຜູກມາຈາກທະບຽນມີປະຫວັດເກົ່າໄດ້
-        if (!opts.linked && history.length !== 1)
-          reasons.push('ມີປະຫວັດການມອບຫຼາຍຄັ້ງ');
-      }
-      const maintenance = await this.maintenanceHistoryService.findByAssetId(
-        String(a._id),
-      );
-      if (maintenance.length > 0) reasons.push('ມີປະຫວັດບຳລຸງຮັກສາ');
-      if (reasons.length > 0)
-        problems.push(`${a.assetTag}: ${reasons.join(', ')}`);
-    }
-    if (problems.length > 0) {
-      throw new BadRequestException(
-        `ຍ້ອນກັບບໍ່ໄດ້ ເພາະຊັບສິນຖືກນຳໃຊ້ແລ້ວ — ${problems.join(' | ')}`,
-      );
-    }
-  }
-
-  /**
-   * ລຶບຊັບສິນພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ ຍ້ອນກັບຕອນເປີດ POPR ໃໝ່).
-   * ກວດ assertReversibleByPopr ກ່ອນລຶບສະເໝີ. ຊັບສິນເຫຼົ່ານີ້ຢູ່ສະຖານະ ASSIGNED
-   * (ບໍ່ນັບເຂົ້າສະຕ໊ອກ) ຈຶ່ງບໍ່ຕ້ອງ syncStock.
-   */
-  async deleteAssetsInTx(
-    ids: string[],
-    expectedAssigneeId: string | undefined,
-    ctx: TxCtx,
-    actorId: string,
-    ip?: string,
-    opts: { stocked?: boolean } = {},
-  ): Promise<number> {
-    if (!ids || ids.length === 0) return 0;
-    await this.assertReversibleByPopr(ids, expectedAssigneeId, ctx, opts);
-    const assets = await this.assetModel
-      .find({ _id: { $in: ids } })
-      .session(ctx.session ?? null)
-      .exec();
-    for (const asset of assets) {
-      await this.assetModel
-        .deleteOne({ _id: asset._id }, { session: ctx.session })
-        .exec();
-      if (opts.stocked) {
-        await this.syncStock(asset, asset.status, undefined, actorId, ip, ctx);
-      }
-      ctx.audits.push({
-        actorId,
-        action: 'ASSET_DELETED',
-        entityType: 'Asset',
-        entityId: String(asset._id),
-        before: asset.toObject(),
-        after: undefined,
-        ip,
-      });
-    }
-    return assets.length;
-  }
-
-  /** ຍ້ອນກັບການມອບຊັບສິນເດີມ (ທີ່ POPR ມອບ) ກັບເປັນວ່າງ ພາຍໃນ transaction ຂອງ service ອື່ນ */
-  async unassignLinkedInTx(
-    ids: string[],
-    expectedAssigneeId: string | undefined,
-    note: string,
-    ctx: TxCtx,
-    actorId: string,
-    ip?: string,
-  ) {
-    if (!ids || ids.length === 0) return;
-    await this.assertReversibleByPopr(ids, expectedAssigneeId, ctx, {
-      linked: true,
-    });
-    for (const id of ids) {
-      const asset = await this.findOne(id, ctx.session);
-      const before = asset.toObject();
-      const open = asset.assignmentHistory.find((h) => !h.returnedAt);
-      if (open) {
-        open.returnedAt = new Date();
-        open.note = open.note ? `${open.note} · ${note}` : note;
-      }
-      asset.currentAssigneeId = undefined;
-      asset.status = AssetStatus.AVAILABLE;
-      const saved = await asset.save({ session: ctx.session });
-      await this.syncStock(
-        asset,
-        AssetStatus.ASSIGNED,
-        AssetStatus.AVAILABLE,
-        actorId,
-        ip,
-        ctx,
-      );
-      ctx.audits.push({
-        actorId,
-        action: 'ASSET_RETURNED',
-        entityType: 'Asset',
-        entityId: id,
-        before,
-        after: saved.toObject(),
-        ip,
-      });
-    }
   }
 
   async findOverdueReturns() {

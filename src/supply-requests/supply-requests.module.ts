@@ -4,10 +4,6 @@ import {
   SupplyRequest,
   SupplyRequestSchema,
 } from './schemas/supply-request.schema';
-import {
-  PoprRecord,
-  PoprRecordSchema,
-} from '../popr/schemas/popr-record.schema';
 import { SupplyRequestsService } from './supply-requests.service';
 import { SupplyRequestsController } from './supply-requests.controller';
 import { SupplyCatalogModule } from '../supply-catalog/supply-catalog.module';
@@ -19,7 +15,6 @@ import { UsersModule } from '../users/users.module';
   imports: [
     MongooseModule.forFeature([
       { name: SupplyRequest.name, schema: SupplyRequestSchema },
-      { name: PoprRecord.name, schema: PoprRecordSchema },
     ]),
     SupplyCatalogModule,
     AuditLogsModule,

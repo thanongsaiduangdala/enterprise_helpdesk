@@ -7,7 +7,7 @@
  *
  * ຖ້າອ່ານ settings ລົ້ມເຫລວ → FAIL CLOSED (ຖືວ່າບັງຄັບໃຊ້).
  *
- * ລຳດັບຄວາມສຳຄັນ: ແຄດ settings (ຖ້າຕັ້ງໄວ້ຊັດເຈນ) → env SOD_ENFORCE → NODE_ENV=production.
+ * ລຳດັບຄວາມສຳຄັນ: ແຄດ settings (ຖ້າຕັ້ງໄວ້ຊັດເຈນ) → env SOD_ENFORCE → default ON.
  *
  * ສຳຄັນ: OrganizationSettings.sodEnforce ຕ້ອງ "ບໍ່ຕັ້ງໄວ້" ເທິງທີ່ຈະເປັນ undefined
  * (ຫ້າມີ default ໃນ schema, Mongoose ຈະ apply default ເມື່ hydrate ເອົາ doc ຈາກ DB
@@ -37,14 +37,14 @@ export function invalidateSodCache() {
  * ຄ່າສຳຮັດຈາກ environment — ໃຊ້ເມື່ອ settings ຍັງບໍ່ໄດ້ຕັ້ງຄ່າ (undefined).
  * - SOD_ENFORCE=true  → ບັງຄັບ
  * - SOD_ENFORCE=false → ປິດ
- * - ບໍ່ຕັ້ງ           → ບັງຄັບສະເພາະ NODE_ENV=production (ເພື່ອຜູ້ພັດທະນາທີ່ມີບັນຊີດຽວທົດສອບໄດ້)
+ * - ບໍ່ຕັ້ງ           → ບັງຄັບ (default ON — ບໍ່ຕ້ອງຮັກສາໄວ້ເປັນ ON ຢູ່ທຸກ environment)
  */
 export function envFallback(): boolean {
   const v = (process.env.SOD_ENFORCE || '').toLowerCase();
   if (v === 'true') return true;
   if (v === 'false') return false;
-  // ໄມ່ຕັ້ງ → ບັງຄັບສະເພາະ production (ເພື່ອ dev ທົດສອບໄດ້)
-  return process.env.NODE_ENV === 'production';
+  // ບໍ່ຕັ້ງ → default ON (ປ້ອຍໄວ້ບໍ່ຕ້ອງໃຊ້ເຄດ້ໃຫ້ປິດ ຫຼື ຕ້ອງຕັ້ງຄ່າເປັນພິເສດ)
+  return true;
 }
 
 /**

@@ -215,3 +215,122 @@ describe('SupplyRequestsService.recomputeStatus', () => {
     expect(request.fulfilledAt).toBeUndefined();
   });
 });
+
+/**
+ * ທົດສອບຄວາມຄືກໄດ້ຂອງ SR ທີ່ອະນຸມັດແລ້ວ (remaining / ordered / received) ສຳລັບການສ້າງ POPR
+ * ແລະຈຳນວນທີ່ອະນຸມັດຂອງລາຍການ (ໃຊ້ເປັນ hard cap ຂອງ POPR).
+ */
+describe('SupplyRequestsService.findApprovedForPopr / getApprovedItemQuantity', () => {
+  const build = (requests: any[], poprs: any[] = []) => {
+    const requestModel = {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          populate: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue(requests),
+          }),
+        }),
+      }),
+      findById: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue(requests[0] ?? null),
+      }),
+    };
+    const poprModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue(poprs),
+        }),
+      }),
+    };
+    const service = new SupplyRequestsService(
+      requestModel as any,
+      poprModel as any,
+      {} as any,
+      { log: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return { service, requestModel, poprModel };
+  };
+
+  const makeRequest = (items: any[]) =>
+    ({
+      _id: 'SR001',
+      status: SupplyRequestStatus.APPROVED,
+      items,
+      toObject: () => ({ _id: 'SR001', items }),
+    }) as any;
+
+  it('computes remaining per item line from completed and in-progress POPRs', async () => {
+    const request = makeRequest([
+      { name: 'A', quantity: 5 },
+      { name: 'B', quantity: 2 },
+    ]);
+    const { service } = build(
+      [request],
+      [
+        {
+          status: PoprStatus.COMPLETED,
+          supplyRequestItemIndex: 0,
+          itemType: PoprItemType.ELECTRONIC,
+          procurement: { quantity: 3 },
+          poClosedShort: false,
+        },
+        {
+          status: PoprStatus.IN_PROGRESS,
+          supplyRequestItemIndex: 0,
+          itemType: PoprItemType.ELECTRONIC,
+          procurement: { quantity: 1 },
+        },
+        {
+          status: PoprStatus.COMPLETED,
+          supplyRequestItemIndex: 1,
+          itemType: PoprItemType.ELECTRONIC,
+          procurement: { quantity: 2 },
+          poClosedShort: false,
+        },
+      ],
+    );
+
+    const [row] = await service.findApprovedForPopr();
+    expect(row.progress[0]).toEqual({
+      received: 3,
+      ordered: 1,
+      remaining: 1,
+      done: false,
+    });
+    expect(row.progress[1]).toEqual({
+      received: 2,
+      ordered: 0,
+      remaining: 0,
+      done: true,
+    });
+  });
+
+  it('ignores lots closed as short when counting received', async () => {
+    const request = makeRequest([{ name: 'A', quantity: 5 }]);
+    const { service } = build(
+      [request],
+      [
+        {
+          status: PoprStatus.COMPLETED,
+          supplyRequestItemIndex: 0,
+          itemType: PoprItemType.ELECTRONIC,
+          procurement: { quantity: 5 },
+          poClosedShort: true,
+        },
+      ],
+    );
+
+    const [row] = await service.findApprovedForPopr();
+    expect(row.progress[0].received).toBe(0);
+    expect(row.progress[0].remaining).toBe(5);
+  });
+
+  it('returns the approved quantity of an item line', async () => {
+    const request = makeRequest([{ name: 'A', quantity: 7 }]);
+    const { service } = build([request]);
+    expect(await service.getApprovedItemQuantity('SR001', 0)).toBe(7);
+    expect(await service.getApprovedItemQuantity('SR001', 5)).toBe(0);
+  });
+});

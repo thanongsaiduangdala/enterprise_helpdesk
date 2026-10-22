@@ -12,6 +12,13 @@ export class AuditLogsService {
     @InjectModel(AuditLog.name) private auditLogModel: Model<AuditLogDocument>,
   ) {}
 
+  /**
+   * ລັອກບັນທຶກ audit ໃຫ້ຮັນຕາມລຳດັບ (ອ່າງ queue ໜ່າ)
+   * — ຖ້າບໍ່ລັອກ: 2 request ພ້ອມກັນຈະ "ອ່ານ chain head ເດີວ" ຄືກັນ
+   *   → prevHash ຊີ້ລາງ (fork) → verifyChain ຂຶ້ນ "prevHash does not match".
+   */
+  private writeQueue: Promise<unknown> = Promise.resolve();
+
   private computeHash(entry: {
     actorId: string;
     action: string;
@@ -46,11 +53,52 @@ export class AuditLogsService {
     after?: Record<string, any>,
     ip?: string,
   ) {
+    const run = this.writeQueue.then(
+      () =>
+        this.appendEntry(
+          actorId,
+          action,
+          entityType,
+          entityId,
+          before,
+          after,
+          ip,
+        ),
+      () =>
+        this.appendEntry(
+          actorId,
+          action,
+          entityType,
+          entityId,
+          before,
+          after,
+          ip,
+        ),
+    );
+    // ຫຼັງຄິວບໍ່ຕ້ອງເປັນ rejected (ບໍ່ເປັນຕົວຢ່າງ block ຄິວຕໍ່ໄປ)
+    this.writeQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async appendEntry(
+    actorId: string,
+    action: string,
+    entityType: string,
+    entityId: string,
+    before?: Record<string, any>,
+    after?: Record<string, any>,
+    ip?: string,
+  ) {
+    // ຫຼັງ chain ຈາກ entry ລ້າສຸດທີ່ "ມີ hash" ຈິງເທົ່າ
+    // (entry ທີ່ຖືກ insert ນອກ collection ແລວ ບໍ່ມີ hash → ບໍ່ເປັນຕົວຢ່າງ prevHash ຂອງ chain ຫລາຍ)
     const lastEntry = await this.auditLogModel
-      .findOne()
+      .findOne({ hash: { $exists: true, $nin: [null, ''] } })
       .sort({ _id: -1 })
       .exec();
-    const prevHash = lastEntry ? lastEntry.hash : GENESIS_HASH;
+    const prevHash = lastEntry?.hash || GENESIS_HASH;
     const timestamp = new Date();
 
     const hash = this.computeHash({
@@ -113,8 +161,18 @@ export class AuditLogsService {
 
     let expectedPrevHash = GENESIS_HASH;
     for (const entry of entries) {
+      // entry ທີ່ຖືກ insert ນອກ collection (ບໍ່ມີ hash/prevHash/timestamp) → ຢຸດເລີຍ ແຕ່ບໍ່ເປັນ 500
+      if (!entry.hash || !entry.prevHash || !entry.timestamp) {
+        return {
+          valid: false,
+          brokenAtId: entry._id,
+          reason:
+            'entry ຂາດ hash/prevHash/timestamp — ຖືກ insert ນອກ audit chain (chain ຢຸດເລີຍທີ່ນີ້)',
+        };
+      }
+
       const recomputed = this.computeHash({
-        actorId: entry.actorId.toString(),
+        actorId: entry.actorId ? entry.actorId.toString() : '',
         action: entry.action,
         entityType: entry.entityType,
         entityId: entry.entityId,
