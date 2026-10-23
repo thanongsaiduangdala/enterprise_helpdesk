@@ -436,6 +436,14 @@ export class AssetsService {
     }
   }
 
+  /** ລາຍການ catalog ນີ້ມີຊັບສິນ (ທີ່ບໍ່ຖືກປົດ) ແລ້ວຫຼືບໍ່ — ໃຊ້ແຍກອຸປະກອນອອກຈາກວັດສະດຸສິ້ນເປືອງ ສຳລັບຂໍ້ມູນເກົ່າທີ່ບໍ່ມີ itemType */
+  async catalogHasAssets(catalogItemId: string, session?: ClientSession) {
+    const hit = await this.assetModel
+      .exists({ catalogItemId })
+      .session(session ?? null);
+    return !!hit;
+  }
+
   /** ຫາຊັບສິນດ້ວຍ S/N (ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່) */
   async findBySerialNumber(serial: string, session?: ClientSession) {
     const escaped = serial.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

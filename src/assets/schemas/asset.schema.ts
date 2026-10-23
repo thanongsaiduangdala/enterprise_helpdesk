@@ -55,7 +55,7 @@ export class Asset {
   @Prop()
   purchaseDate?: Date;
 
-  /** ລາຄາຊື້ຕໍ່ໜ່ວຍ (ກີບ) — ມາຈາກ POPR */
+  /** ລາຄາຊື້ຕໍ່ໜ່ວຍ (ກີບ) */
   @Prop({ min: 0 })
   purchasePrice?: number;
 
