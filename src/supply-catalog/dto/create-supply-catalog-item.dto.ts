@@ -36,6 +36,15 @@ export class CreateSupplyCatalogItemDto {
   itemType?: CatalogItemType;
 
   @ApiPropertyOptional({
+    example: true,
+    description:
+      'ASSET only: true = ຕ້ອງມີ Serial Number; false = ຕິດ Asset Tag ໂດຍບໍ່ມີ S/N (default true)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  trackSerial?: boolean;
+
+  @ApiPropertyOptional({
     example: 100,
     description: 'Initial stock quantity, defaults to 0',
   })

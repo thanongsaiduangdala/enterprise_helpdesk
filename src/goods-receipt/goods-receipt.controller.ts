@@ -32,12 +32,24 @@ export class GoodsReceiptController {
     return this.service.newItem(dto, req.user.userId, req.ip);
   }
 
+  @Get('summary')
+  @RequirePermission('supplies', 'read')
+  summary() {
+    return this.service.summary();
+  }
+
   @Get()
+  @RequirePermission('supplies', 'read')
   @ApiQuery({ name: 'q', required: false })
   @ApiQuery({ name: 'mode', required: false, enum: GoodsReceiptMode })
-  findAll(@Query('q') q?: string, @Query('mode') mode?: GoodsReceiptMode) {
+  @ApiQuery({ name: 'catalogItemId', required: false })
+  findAll(
+    @Query('q') q?: string,
+    @Query('mode') mode?: GoodsReceiptMode,
+    @Query('catalogItemId') catalogItemId?: string,
+  ) {
     const m =
       mode && Object.values(GoodsReceiptMode).includes(mode) ? mode : undefined;
-    return this.service.findAll({ q, mode: m });
+    return this.service.findAll({ q, mode: m, catalogItemId });
   }
 }

@@ -10,8 +10,21 @@ export enum GoodsReceiptMode {
   NEW_ITEM = 'NEW_ITEM',
 }
 
+@Schema({ _id: false })
+export class InvoiceFile {
+  @Prop({ required: true })
+  url!: string;
+
+  @Prop()
+  name?: string;
+}
+
 @Schema({ timestamps: { createdAt: true, updatedAt: false } })
 export class GoodsReceipt {
+  /** ເລກໃບຮັບເຄື່ອງ GR-0001 (ອອກອັດຕະໂນມັດ, ບໍ່ຊ້ຳ) */
+  @Prop()
+  receiptNo?: string;
+
   @Prop({ required: true, enum: GoodsReceiptMode })
   mode!: GoodsReceiptMode;
 
@@ -29,11 +42,49 @@ export class GoodsReceipt {
   @Prop({ required: true, min: 1 })
   quantity!: number;
 
+  /** ຈຳນວນຕາມໃບສົ່ງເຄື່ອງ (ຖ້າມີ) */
+  @Prop({ min: 1 })
+  expectedQuantity?: number;
+
+  /** ໝາຍເຫດເມື່ອຈຳນວນນັບບໍ່ກົງກັບໃບສົ່ງ */
+  @Prop()
+  countNote?: string;
+
+  @Prop()
+  stockBefore?: number;
+
+  @Prop()
+  stockAfter?: number;
+
+  /** ສາຂາ / ບ່ອນເກັບ */
+  @Prop({ type: String, ref: 'Branch' })
+  branchId?: string;
+
   @Prop({ required: true })
   receivedDate!: Date;
 
   @Prop()
   vendor?: string;
+
+  /** ລາຄາຕໍ່ໜ່ວຍ (ກີບ) */
+  @Prop({ min: 0 })
+  unitPrice?: number;
+
+  /** ລາຄາລວມ = ລາຄາຕໍ່ໜ່ວຍ × ຈຳນວນ (ລະບົບຄຳນວນເອງ) */
+  @Prop({ min: 0 })
+  totalAmount?: number;
+
+  /** ຫ້ອງ/ບ່ອນເກັບເຄື່ອງ (ຂໍ້ຄວາມອິດສະຫຼະ) */
+  @Prop()
+  storageRoom?: string;
+
+  /** ເລກໃບບິນ/ໃບເກັບເງິນຈາກຮ້ານ */
+  @Prop()
+  invoiceNo?: string;
+
+  /** ຮູບ/PDF ໃບບິນ (ອັບໂຫຼດຜ່ານ /uploads) */
+  @Prop({ type: [{ url: String, name: String, _id: false }], default: [] })
+  invoiceFiles!: InvoiceFile[];
 
   @Prop()
   note?: string;
@@ -53,3 +104,7 @@ export class GoodsReceipt {
 export const GoodsReceiptSchema = SchemaFactory.createForClass(GoodsReceipt);
 GoodsReceiptSchema.index({ createdAt: -1 });
 GoodsReceiptSchema.index({ catalogItemId: 1 });
+GoodsReceiptSchema.index(
+  { receiptNo: 1 },
+  { unique: true, partialFilterExpression: { receiptNo: { $type: 'string' } } },
+);

@@ -141,6 +141,23 @@ export class SupplyCatalogService {
       patch.name = patch.name.trim();
       await this.assertNameFree(patch.name, id);
     }
+    const current = await this.findOne(id);
+    const changingType =
+      patch.itemType !== undefined && patch.itemType !== current.itemType;
+    const changingTrack =
+      patch.trackSerial !== undefined &&
+      (current.trackSerial ?? true) !== patch.trackSerial;
+    // ລາຍການເກົ່າທີ່ຍັງບໍ່ມີ itemType ອະນຸຍາດໃຫ້ກຳນົດໄດ້ໜຶ່ງຄັ້ງ.
+    if ((changingType || changingTrack) && current.itemType) {
+      const hasAssets = await this.assetModel
+        .exists({ catalogItemId: id, status: { $ne: AssetStatus.RETIRED } })
+        .exec();
+      if (hasAssets || current.stockQty > 0) {
+        throw new ConflictException(
+          `ລາຍການ "${current.name}" ມີຊັບສິນ ຫຼື ສະຕັອກແລ້ວ — ປ່ຽນວິທີຕິດຕາມບໍ່ໄດ້`,
+        );
+      }
+    }
     try {
       const item = await this.catalogModel
         .findByIdAndUpdate(id, patch, { new: true })
@@ -201,6 +218,13 @@ export class SupplyCatalogService {
           category: row.category,
           unit: row.unit,
           ...(itemType ? { itemType } : {}),
+          ...(row.trackSerial !== undefined && row.trackSerial !== ''
+            ? {
+                trackSerial:
+                  String(row.trackSerial).toLowerCase() === 'true' ||
+                  String(row.trackSerial) === '1',
+              }
+            : {}),
           stockQty:
             row.stockQty !== undefined && row.stockQty !== ''
               ? parseInt(row.stockQty, 10)

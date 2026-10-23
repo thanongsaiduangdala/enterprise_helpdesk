@@ -5,14 +5,32 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNumber,
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
+  MaxLength,
   Max,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class InvoiceFileDto {
+  @ApiProperty({ example: '/api/uploads/0123456789abcdef0123456789abcdef.pdf' })
+  @IsString()
+  @Matches(/^\/api\/uploads\/[a-f0-9]{32}(\.[a-z0-9]+)?$/i, {
+    message: 'ລິ້ງໄຟລ໌ໃບບິນບໍ່ຖືກຕ້ອງ',
+  })
+  url!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  name?: string;
+}
 
 export class ReceiveCommonDto {
   @ApiProperty({ example: 10, description: 'ຈຳນວນຊິ້ນ (ຈຳນວນເຕັມ ≥ 1)' })
@@ -37,6 +55,58 @@ export class ReceiveCommonDto {
   @IsString()
   note?: string;
 
+  @ApiPropertyOptional({ example: 250000, description: 'ລາຄາຕໍ່ໜ່ວຍ (ກີບ)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'ລາຄາຕໍ່ໜ່ວຍບໍ່ຖືກຕ້ອງ' })
+  @Min(0, { message: 'ລາຄາຕໍ່ໜ່ວຍຕ້ອງບໍ່ຕິດລົບ' })
+  unitPrice?: number;
+
+  @ApiPropertyOptional({ example: 'ຫ້ອງເກັບເຄື່ອງ 2' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  storageRoom?: string;
+
+  @ApiPropertyOptional({ description: 'ເລກໃບບິນ/ໃບເກັບເງິນ (ບັງຄັບເມື່ອມີລາຄາ)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  invoiceNo?: string;
+
+  @ApiPropertyOptional({ type: [InvoiceFileDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => InvoiceFileDto)
+  invoiceFiles?: InvoiceFileDto[];
+
+  @ApiPropertyOptional({
+    example: 20,
+    description: 'ຈຳນວນຕາມໃບສົ່ງເຄື່ອງ (ທາງເລືອກ)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'ຈຳນວນຕາມໃບສົ່ງຕ້ອງເປັນຈຳນວນເຕັມ' })
+  @Min(1, { message: 'ຈຳນວນຕາມໃບສົ່ງຕ້ອງຢ່າງໜ້ອຍ 1' })
+  expectedQuantity?: number;
+
+  @ApiPropertyOptional({
+    description: 'ໝາຍເຫດເມື່ອຈຳນວນນັບບໍ່ກົງກັບໃບສົ່ງ',
+  })
+  @IsOptional()
+  @IsString()
+  countNote?: string;
+
+  @ApiPropertyOptional({
+    example: 'BX001',
+    description: 'ສາຂາ / ບ່ອນເກັບ (ຄ່າເລີ່ມຕົ້ນ = ສາຂາຂອງຜູ້ຮັບ)',
+  })
+  @IsOptional()
+  @IsString()
+  branchId?: string;
+
   @ApiPropertyOptional({ type: [String], description: 'ສະເພາະອຸປະກອນ (DEVICE)' })
   @IsOptional()
   @IsArray()
@@ -53,7 +123,10 @@ export class RestockDto extends ReceiveCommonDto {
 }
 
 export enum NewItemKind {
+  /** ຮັກສາໄວ້ເພື່ອຄວາມເຂົ້າກັນໄດ້ກັບ client ເກົ່າ — ເທົ່າກັບ DEVICE_SERIAL */
   DEVICE = 'DEVICE',
+  DEVICE_SERIAL = 'DEVICE_SERIAL',
+  DEVICE_TAG = 'DEVICE_TAG',
   CONSUMABLE = 'CONSUMABLE',
 }
 
@@ -74,7 +147,10 @@ export class NewItemInfoDto {
   unit!: string;
 
   @ApiProperty({ enum: NewItemKind })
-  @IsEnum(NewItemKind, { message: 'ປະເພດຕ້ອງເປັນ DEVICE ຫຼື CONSUMABLE' })
+  @IsEnum(NewItemKind, {
+    message:
+      'ປະເພດຕ້ອງເປັນ DEVICE_SERIAL, DEVICE_TAG ຫຼື CONSUMABLE',
+  })
   type!: NewItemKind;
 }
 

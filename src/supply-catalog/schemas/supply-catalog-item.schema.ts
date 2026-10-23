@@ -28,6 +28,10 @@ export class SupplyCatalogItem {
   @Prop({ enum: CatalogItemType })
   itemType?: CatalogItemType;
 
+  /** ສຳລັບ ASSET: true = ຕ້ອງມີ Serial Number, false = ຕິດ Asset Tag ຢ່າງດຽວ (ບໍ່ມີ S/N) */
+  @Prop({ default: true })
+  trackSerial!: boolean;
+
   @Prop({ required: true, default: 0, min: 0 })
   stockQty!: number;
 
