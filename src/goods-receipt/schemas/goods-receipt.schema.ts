@@ -10,19 +10,10 @@ export enum GoodsReceiptMode {
   NEW_ITEM = 'NEW_ITEM',
 }
 
-@Schema({ _id: false })
-export class InvoiceFile {
-  @Prop({ required: true })
-  url!: string;
-
-  @Prop()
-  name?: string;
-}
-
 @Schema({ timestamps: { createdAt: true, updatedAt: false } })
 export class GoodsReceipt {
-  /** ເລກໃບຮັບເຄື່ອງ GR-0001 (ອອກອັດຕະໂນມັດ, ບໍ່ຊ້ຳ) */
-  @Prop()
+  /** ເລກທີໃບຮັບເຄື່ອງ (GR-0001) — ອອກອັດຕະໂນມັດ */
+  @Prop({ unique: true, sparse: true })
   receiptNo?: string;
 
   @Prop({ required: true, enum: GoodsReceiptMode })
@@ -66,25 +57,37 @@ export class GoodsReceipt {
   @Prop()
   vendor?: string;
 
-  /** ລາຄາຕໍ່ໜ່ວຍ (ກີບ) */
+  /** ລາຄາຕໍ່ໜ່ວຍ ແລະ ລາຄາລວມ (ກີບ) — ລາຄາລວມ = ລາຄາຕໍ່ໜ່ວຍ × ຈຳນວນ (ຄຳນວນໃນ backend) */
   @Prop({ min: 0 })
   unitPrice?: number;
 
-  /** ລາຄາລວມ = ລາຄາຕໍ່ໜ່ວຍ × ຈຳນວນ (ລະບົບຄຳນວນເອງ) */
   @Prop({ min: 0 })
-  totalAmount?: number;
+  totalPrice?: number;
 
-  /** ຫ້ອງ/ບ່ອນເກັບເຄື່ອງ (ຂໍ້ຄວາມອິດສະຫຼະ) */
+  /** ຫ້ອງ / ບ່ອນເກັບເຄື່ອງ */
   @Prop()
   storageRoom?: string;
 
-  /** ເລກໃບບິນ/ໃບເກັບເງິນຈາກຮ້ານ */
+  /** ໃບບິນຈາກຮ້ານ: ເລກທີ + ໄຟລ໌ແນບ (/api/uploads/...) */
   @Prop()
   invoiceNo?: string;
 
-  /** ຮູບ/PDF ໃບບິນ (ອັບໂຫຼດຜ່ານ /uploads) */
-  @Prop({ type: [{ url: String, name: String, _id: false }], default: [] })
-  invoiceFiles!: InvoiceFile[];
+  @Prop()
+  invoiceFileUrl?: string;
+
+  @Prop()
+  invoiceFileName?: string;
+
+  /** ໃບສະເໜີຊື້ທີ່ຜູກກັບການຮັບເຄື່ອງນີ້ */
+  @Prop()
+  purchaseRequestId?: string;
+
+  @Prop()
+  purchaseRequestNo?: string;
+
+  /** ຮັບເຄື່ອງໂດຍບໍ່ມີໃບສະເໜີ (ຂໍ້ຍົກເວັ້ນ) — ຕ້ອງມີເຫດຜົນ */
+  @Prop()
+  exceptionReason?: string;
 
   @Prop()
   note?: string;
@@ -104,7 +107,3 @@ export class GoodsReceipt {
 export const GoodsReceiptSchema = SchemaFactory.createForClass(GoodsReceipt);
 GoodsReceiptSchema.index({ createdAt: -1 });
 GoodsReceiptSchema.index({ catalogItemId: 1 });
-GoodsReceiptSchema.index(
-  { receiptNo: 1 },
-  { unique: true, partialFilterExpression: { receiptNo: { $type: 'string' } } },
-);

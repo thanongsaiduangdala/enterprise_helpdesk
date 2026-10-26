@@ -8,7 +8,17 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model } from 'mongoose';
 import { parse } from 'csv-parse/sync';
-import { Asset, AssetDocument, AssetStatus } from './schemas/asset.schema';
+import {
+  Asset,
+  AssetDocument,
+  AssetStatus,
+  HolderType,
+} from './schemas/asset.schema';
+import {
+  Department,
+  DepartmentDocument,
+} from '../departments/schemas/department.schema';
+import { AssignDepartmentDto } from './dto/assign-department.dto';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { AssignAssetDto } from './dto/assign-asset.dto';
@@ -45,6 +55,8 @@ export class AssetsService {
     private supplyRequestModel: Model<SupplyRequestDocument>,
     private usersService: UsersService,
     @InjectModel(Counter.name) private counterModel: Model<CounterDocument>,
+    @InjectModel(Department.name)
+    private departmentModel: Model<DepartmentDocument>,
     @InjectConnection() private connection: Connection,
   ) {}
 
@@ -352,8 +364,17 @@ export class AssetsService {
     branchId?: string;
     status?: AssetStatus;
     assigneeId?: string;
+    departmentId?: string;
+    holderType?: HolderType;
   }) {
     const query: any = {};
+    if (filters.departmentId) query.departmentId = filters.departmentId;
+    if (filters.holderType === HolderType.DEPARTMENT) {
+      query.holderType = HolderType.DEPARTMENT;
+    } else if (filters.holderType === HolderType.PERSON) {
+      // ເອກະສານເກົ່າບໍ່ມີ holderType — ນັບເປັນ "ບຸກຄົນ"
+      query.holderType = { $ne: HolderType.DEPARTMENT };
+    }
     if (filters.branchId) query.branchId = filters.branchId;
     if (filters.status) query.status = filters.status;
     if (filters.assigneeId) query.currentAssigneeId = filters.assigneeId;
@@ -491,6 +512,78 @@ export class AssetsService {
         actorId,
         ip,
         ctx,
+      );
+    });
+  }
+
+  /**
+   * ມອບຊັບສິນໃຫ້ "ພະແນກ" — ມີຜູ້ຮັບຜິດຊອບ (custodian) ໜຶ່ງຄົນກຳກັບສະເໝີ.
+   * - ຜູ້ຮັບຜິດຊອບ/ຜູ້ຮັບແທນຕ້ອງຢູ່ພະແນກນັ້ນ (ຫຼືເປັນຫົວໜ້າພະແນກ) ແລະບັນຊີຍັງໃຊ້ງານ
+   * - ແຍກໜ້າທີ່: ຜູ້ມອບບໍ່ເປັນຜູ້ຮັບຜິດຊອບ ຫຼືຜູ້ຮັບແທນຂອງຕົນເອງ
+   * - currentAssigneeId = ຜູ້ຮັບຜິດຊອບ ເພື່ອໃຫ້ການຄືນເຄື່ອງ/ເກີນກຳນົດ ທຳງານຄືເດີມ
+   */
+  async assignToDepartment(
+    id: string,
+    dto: AssignDepartmentDto,
+    actorId: string,
+    ip?: string,
+  ) {
+    const dept = await this.departmentModel.findById(dto.departmentId).exec();
+    if (!dept || dept.isActive === false) {
+      throw new BadRequestException('ບໍ່ພົບພະແນກ ຫຼືພະແນກຖືກປິດໃຊ້ງານ');
+    }
+    const belongsToDept = async (userId: string, label: string) => {
+      const u = await this.usersService.findOneRaw(userId);
+      if (u.isActive === false) {
+        throw new BadRequestException(`${label}: ບັນຊີຖືກປິດໃຊ້ງານແລ້ວ`);
+      }
+      const inDept = String(u.departmentId ?? '') === String(dept._id);
+      const isManager = (dept.managerIds ?? [])
+        .map(String)
+        .includes(String(u._id));
+      if (!inDept && !isManager) {
+        throw new BadRequestException(
+          `${label} ຕ້ອງເປັນຫົວໜ້າ ຫຼືພະນັກງານຂອງພະແນກ "${dept.name}"`,
+        );
+      }
+      return u;
+    };
+    await belongsToDept(dto.custodianId, 'ຜູ້ຮັບຜິດຊອບ');
+    const receivedById =
+      dto.receivedById && String(dto.receivedById) !== String(dto.custodianId)
+        ? dto.receivedById
+        : undefined;
+    if (receivedById) await belongsToDept(receivedById, 'ຜູ້ຮັບແທນ');
+
+    if (await sodEnforced()) {
+      const self =
+        String(dto.custodianId) === String(actorId) ||
+        (receivedById && String(receivedById) === String(actorId));
+      if (self) {
+        await this.auditLogsService.log(
+          actorId,
+          'SOD_BLOCKED:ASSET_ASSIGN_DEPT_SELF',
+          'Asset',
+          id,
+          undefined,
+          { blocked: true, action: 'ASSET_ASSIGN_DEPT_SELF' },
+          ip,
+        );
+        throw new ForbiddenException(
+          'ແຍກໜ້າທີ່: ຜູ້ມອບເຄື່ອງບໍ່ສາມາດເປັນຜູ້ຮັບຜິດຊອບ ຫຼືຜູ້ຮັບແທນຂອງຕົນເອງໄດ້',
+        );
+      }
+    }
+    return this.inTx(undefined, async (ctx) => {
+      const asset = await this.findOne(id, ctx.session);
+      return this.performAssign(
+        asset,
+        dto.custodianId,
+        dto.note,
+        actorId,
+        ip,
+        ctx,
+        { departmentId: String(dept._id), receivedById },
       );
     });
   }
@@ -779,8 +872,9 @@ export class AssetsService {
     actorId: string,
     ip: string | undefined,
     ctx: TxCtx,
+    dept?: { departmentId: string; receivedById?: string },
   ) {
-    return this.performAssign(asset, assigneeId, note, actorId, ip, ctx);
+    return this.performAssign(asset, assigneeId, note, actorId, ip, ctx, dept);
   }
 
   private async performAssign(
@@ -790,6 +884,7 @@ export class AssetsService {
     actorId: string,
     ip: string | undefined,
     ctx: TxCtx,
+    dept?: { departmentId: string; receivedById?: string },
   ) {
     if (asset.status === AssetStatus.RETIRED) {
       throw new BadRequestException('Cannot assign a retired asset');
@@ -816,8 +911,16 @@ export class AssetsService {
       assigneeId: assigneeId as any,
       assignedAt: now,
       note,
+      ...(dept
+        ? {
+            departmentId: dept.departmentId,
+            receivedById: dept.receivedById as any,
+          }
+        : {}),
     });
     asset.currentAssigneeId = assigneeId as any;
+    asset.holderType = dept ? HolderType.DEPARTMENT : HolderType.PERSON;
+    asset.departmentId = dept ? dept.departmentId : undefined;
     asset.status = AssetStatus.ASSIGNED;
     const saved = await asset.save({ session: ctx.session });
 
@@ -832,7 +935,11 @@ export class AssetsService {
     );
     ctx.audits.push({
       actorId,
-      action: wasAssigned ? 'ASSET_REASSIGNED' : 'ASSET_ASSIGNED',
+      action: dept
+        ? 'ASSET_ASSIGNED_DEPT'
+        : wasAssigned
+          ? 'ASSET_REASSIGNED'
+          : 'ASSET_ASSIGNED',
       entityType: 'Asset',
       entityId: String(asset._id),
       before,
@@ -862,6 +969,8 @@ export class AssetsService {
         if (dto.note) openEntry.note = dto.note;
       }
       asset.currentAssigneeId = undefined;
+      asset.holderType = HolderType.PERSON;
+      asset.departmentId = undefined;
       asset.status = AssetStatus.AVAILABLE;
       const saved = await asset.save({ session: ctx.session });
 
@@ -902,6 +1011,8 @@ export class AssetsService {
           const openEntry = asset.assignmentHistory.find((h) => !h.returnedAt);
           if (openEntry) openEntry.returnedAt = new Date();
           asset.currentAssigneeId = undefined;
+          asset.holderType = HolderType.PERSON;
+          asset.departmentId = undefined;
         }
 
         const prev = asset.status;

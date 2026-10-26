@@ -16,6 +16,7 @@ import { ReceiveSupplyRequestDto } from './dto/receive-supply-request.dto';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { UsersService } from '../users/users.service';
+import { DepartmentsService } from '../departments/departments.service';
 import { AssetsService } from '../assets/assets.service';
 import { AssetDocument, AssetStatus } from '../assets/schemas/asset.schema';
 import {
@@ -49,6 +50,7 @@ export class SupplyRequestsService {
     private catalogService: SupplyCatalogService,
     private auditLogsService: AuditLogsService,
     private usersService: UsersService,
+    private departmentsService: DepartmentsService,
     private assetsService: AssetsService,
     @InjectConnection() private connection: Connection,
   ) {}
@@ -67,7 +69,70 @@ export class SupplyRequestsService {
     return `SR${String(seq).padStart(3, '0')}`;
   }
 
+  /**
+   * ກວດ ແລະ ແປງຂໍ້ມູນພະແນກ/ຜູ້ຮັບຜິດຊອບ ສຳລັບໃບຂໍທີ່ຂໍໃນນາມພະແນກ.
+   * ຜູ້ຂໍ ແລະ ຜູ້ຮັບຜິດຊອບ ຕ້ອງເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງພະແນກນັ້ນ.
+   */
+  private async resolveDepartmentAssignment(
+    dto: CreateSupplyRequestDto,
+    requestedBy: string,
+  ): Promise<{ departmentId: string; custodianId: string } | undefined> {
+    if (!dto.departmentId) {
+      if (dto.custodianId || dto.custodianCode) {
+        throw new BadRequestException('custodian ໃຊ້ໄດ້ສະເພາະໃບຂໍຂອງພະແນກ');
+      }
+      return undefined;
+    }
+
+    const department = await this.departmentsService.findOne(dto.departmentId);
+    if (!department || department.isActive === false) {
+      throw new BadRequestException('ພະແນກບໍ່ພົບ ຫຼື ຖືກປິດໃຊ້ງານ');
+    }
+    const managerIds = (department.managerIds ?? []).map(String);
+
+    const requester = await this.usersService.findOneRaw(requestedBy);
+    if (requester.isActive === false) {
+      throw new BadRequestException('ບັນຊີຜູ້ຂໍຖືກປິດໃຊ້ງານແລ້ວ');
+    }
+    const requesterInDept =
+      String(requester.departmentId ?? '') === String(department._id);
+    if (!requesterInDept && !managerIds.includes(String(requester._id))) {
+      throw new BadRequestException(
+        `ຂໍໃນນາມພະແນກໄດ້ສະເພາະສະມາຊິກ ຫຼື ຫົວໜ້າພະແນກ "${department.name}"`,
+      );
+    }
+
+    if (!dto.custodianId && !dto.custodianCode?.trim()) {
+      throw new BadRequestException('ຕ້ອງລະບຸຜູ້ຮັບຜິດຊອບຂອງພະແນກ');
+    }
+    const custodian = dto.custodianId
+      ? await this.usersService.findOneRaw(dto.custodianId)
+      : await this.usersService.findByEmployeeCode(dto.custodianCode!.trim());
+    if (!custodian) {
+      throw new BadRequestException('ບໍ່ພົບຜູ້ຮັບຜິດຊອບຕາມລະຫັດທີ່ລະບຸ');
+    }
+    if (custodian.isActive === false) {
+      throw new BadRequestException('ບັນຊີຜູ້ຮັບຜິດຊອບຖືກປິດໃຊ້ງານແລ້ວ');
+    }
+    const custodianInDept =
+      String(custodian.departmentId ?? '') === String(department._id);
+    if (!custodianInDept && !managerIds.includes(String(custodian._id))) {
+      throw new BadRequestException(
+        `ຜູ້ຮັບຜິດຊອບຕ້ອງເປັນສະມາຊິກ ຫຼື ຫົວໜ້າພະແນກ "${department.name}"`,
+      );
+    }
+
+    return {
+      departmentId: String(department._id),
+      custodianId: String(custodian._id),
+    };
+  }
+
   async create(dto: CreateSupplyRequestDto, requestedBy: string, ip?: string) {
+    const departmentAssignment = await this.resolveDepartmentAssignment(
+      dto,
+      requestedBy,
+    );
     for (const item of dto.items) {
       if (item.catalogItemId) {
         await this.catalogService.findOne(item.catalogItemId);
@@ -80,6 +145,7 @@ export class SupplyRequestsService {
       _id,
       requestedBy,
       items: dto.items,
+      ...(departmentAssignment ?? {}),
     }).save();
     await this.auditLogsService.log(
       requestedBy,
@@ -95,9 +161,11 @@ export class SupplyRequestsService {
 
   findMine(userId: string) {
     return this.requestModel
-      .find({ requestedBy: userId })
+      .find({ $or: [{ requestedBy: userId }, { custodianId: userId }] })
       .sort({ createdAt: -1 })
       .populate('requestedBy', 'firstName lastName email employeeCode')
+      .populate('departmentId', 'name')
+      .populate('custodianId', 'firstName lastName employeeCode')
       .exec();
   }
 
@@ -127,6 +195,8 @@ export class SupplyRequestsService {
       .find(filter)
       .sort({ createdAt: -1 })
       .populate('requestedBy', 'firstName lastName email employeeCode')
+      .populate('departmentId', 'name')
+      .populate('custodianId', 'firstName lastName employeeCode')
       .exec();
   }
 
@@ -317,23 +387,40 @@ export class SupplyRequestsService {
   }
 
   /**
-   * ໃບຮັບເຄື່ອງ (ເປີດຈາກ QR ຂອງໃບຂໍ) — ຜູ້ຂໍ ຫຼື ຜູ້ມີສິດ supplies.fulfill ເທົ່ານັ້ນ
+   * ໃບຮັບເຄື່ອງ (ເປີດຈາກ QR ຂອງໃບຂໍ) — ຜູ້ຂໍ, ຜູ້ຮັບຜິດຊອບ/ຫົວໜ້າແຜນກ,
+   * ຫຼື ຜູ້ມີສິດ supplies.* ເທົ່ານັ້ນ
    */
   async getReceipt(id: string, user: PermissionUser) {
     const request = await this.requestModel
       .findById(id)
       .populate('requestedBy', 'firstName lastName employeeCode')
+      .populate('departmentId', 'name managerIds branchId')
+      .populate('custodianId', 'firstName lastName employeeCode')
       .exec();
     if (!request) throw new NotFoundException('Supply request not found');
 
     const ref: any = request.requestedBy;
     const requesterId = String(ref?._id ?? ref);
+    const deptRef: any = request.departmentId;
+    const departmentId = deptRef ? String(deptRef._id ?? deptRef) : undefined;
+    const custodianRef: any = request.custodianId;
+    const custodianId = custodianRef
+      ? String(custodianRef._id ?? custodianRef)
+      : undefined;
+    const managerIds: string[] =
+      departmentId && typeof deptRef === 'object'
+        ? (deptRef.managerIds ?? []).map(String)
+        : [];
+    const isRequester = requesterId === user.userId;
+    const isCustodian = !!custodianId && custodianId === user.userId;
+    const isDepartmentManager =
+      !!departmentId && !!user.userId && managerIds.includes(user.userId);
     const elevated = hasAnyPermission(user, 'supplies', [
       'approve',
       'fulfill',
       'manage',
     ]);
-    if (!elevated && requesterId !== user.userId) {
+    if (!elevated && !isRequester && !isCustodian && !isDepartmentManager) {
       throw new NotFoundException('Supply request not found');
     }
 
@@ -349,10 +436,15 @@ export class SupplyRequestsService {
         ...it,
         requiresAssetTag: flags[k],
       })),
-      isRequester: requesterId === user.userId,
+      isDepartmentRequest: !!departmentId,
+      isRequester,
+      isCustodian,
+      isDepartmentManager,
       canConfirm:
         OPEN_STATUSES.includes(request.status) &&
-        (requesterId === user.userId ||
+        (isRequester ||
+          isCustodian ||
+          isDepartmentManager ||
           hasPermission(user, 'supplies', 'fulfill')),
     };
   }
@@ -390,9 +482,51 @@ export class SupplyRequestsService {
       const requesterId = request.requestedBy.toString();
       const isRequester = actorId === requesterId;
       const canFulfill = hasPermission(user, 'supplies', 'fulfill');
-      if (!isRequester && !canFulfill) {
+      const canAssign = hasPermission(user, 'assets', 'assign');
+
+      const requestDepartmentId = request.departmentId
+        ? String(request.departmentId)
+        : undefined;
+      let departmentCustodianId: string | undefined;
+      let departmentManagerIds: string[] = [];
+      if (requestDepartmentId) {
+        const department =
+          await this.departmentsService.findOne(requestDepartmentId);
+        if (!department || department.isActive === false) {
+          throw new BadRequestException('ພະແນກບໍ່ພົບ ຫຼື ຖືກປິດໃຊ້ງານ');
+        }
+        departmentManagerIds = (department.managerIds ?? []).map(String);
+        if (!request.custodianId) {
+          throw new BadRequestException(
+            'ໃບຂໍຂອງພະແນກນີ້ບໍ່ມີຜູ້ຮັບຜິດຊອບ — ກະລຸນາແຈ້ງຜູ້ດູແລລະບົບ',
+          );
+        }
+        const custodian = await this.usersService.findOneRaw(
+          String(request.custodianId),
+        );
+        if (custodian.isActive === false) {
+          throw new BadRequestException('ບັນຊີຜູ້ຮັບຜິດຊອບຖືກປິດໃຊ້ງານແລ້ວ');
+        }
+        const custodianInDept =
+          String(custodian.departmentId ?? '') === requestDepartmentId;
+        if (
+          !custodianInDept &&
+          !departmentManagerIds.includes(String(custodian._id))
+        ) {
+          throw new BadRequestException(
+            'ຜູ້ຮັບຜິດຊອບບໍ່ໄດ້ເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງພະແນກນີ້',
+          );
+        }
+        departmentCustodianId = String(custodian._id);
+      }
+      const isDepartmentRequest = !!requestDepartmentId;
+      const isCustodian =
+        !!departmentCustodianId && actorId === departmentCustodianId;
+      const isDepartmentManager =
+        isDepartmentRequest && departmentManagerIds.includes(actorId);
+      if (!isRequester && !canFulfill && !isCustodian && !isDepartmentManager) {
         throw new ForbiddenException(
-          'Only the requester (or warehouse staff with supplies.fulfill) can confirm receipt of this request',
+          'Only the requester, the department custodian/manager (or warehouse staff with supplies.fulfill) can confirm receipt of this request',
         );
       }
       if (
@@ -407,9 +541,13 @@ export class SupplyRequestsService {
         );
       }
 
-      // 1. ຜູ້ຮັບເຄື່ອງ — default ແມ່ນຜູ້ຂໍ
-      let assigneeId = requesterId;
-      if (dto.assigneeCode) {
+      // 1. ຜູ້ຮັບເຄື່ອງ — ໃບສ່ວນຕົວ default ແມ່ນຜູ້ຂໍ,
+      //    ໃບຂອງພະແນກ default ແມ່ນຜູ້ຮັບຜິດຊອບ (custodian) ຂອງພະແນກ
+      let assigneeId = isDepartmentRequest
+        ? departmentCustodianId!
+        : requesterId;
+      let receivedById: string | undefined;
+      if (dto.assigneeCode?.trim()) {
         const assignee = await this.usersService.findByEmployeeCode(
           dto.assigneeCode.trim(),
         );
@@ -423,12 +561,44 @@ export class SupplyRequestsService {
             `Employee code "${dto.assigneeCode}" is inactive`,
           );
         }
-        assigneeId = assignee._id.toString();
+        if (isDepartmentRequest) {
+          const receiverInDept =
+            String(assignee.departmentId ?? '') === requestDepartmentId;
+          const receiverIsManager = departmentManagerIds.includes(
+            String(assignee._id),
+          );
+          if (!receiverInDept && !receiverIsManager) {
+            throw new BadRequestException(
+              'ຜູ້ຮັບແທນຕ້ອງເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງພະແນກນີ້',
+            );
+          }
+          if (String(assignee._id) !== departmentCustodianId) {
+            receivedById = String(assignee._id);
+          }
+        } else {
+          assigneeId = assignee._id.toString();
+        }
       }
-      const allowedAssignee =
-        (isRequester && assigneeId === actorId) ||
-        hasPermission(user, 'assets', 'assign') ||
-        (canFulfill && assigneeId === requesterId);
+      if (
+        isDepartmentRequest &&
+        !receivedById &&
+        actorId !== departmentCustodianId &&
+        (isRequester || isDepartmentManager)
+      ) {
+        receivedById = actorId;
+      }
+      const proxyReceiver = isDepartmentRequest && !!receivedById;
+      const allowedAssignee = isDepartmentRequest
+        ? proxyReceiver
+          ? isRequester || isCustodian || isDepartmentManager || canAssign
+          : isRequester ||
+            isCustodian ||
+            isDepartmentManager ||
+            canFulfill ||
+            canAssign
+        : (isRequester && assigneeId === actorId) ||
+          canAssign ||
+          (canFulfill && assigneeId === requesterId);
       if (!allowedAssignee) {
         throw new ForbiddenException(
           'Giving the equipment to another employee requires the "assets.assign" permission',
@@ -536,6 +706,9 @@ export class SupplyRequestsService {
           actorId,
           ip,
           ctx,
+          isDepartmentRequest
+            ? { departmentId: requestDepartmentId, receivedById }
+            : undefined,
         );
       }
       for (const k of consumableIdx) {
@@ -556,7 +729,7 @@ export class SupplyRequestsService {
       request.status = SupplyRequestStatus.CLOSED;
       request.fulfilledBy = actorId as any;
       request.fulfilledAt = new Date();
-      request.receivedBy = assigneeId as any;
+      request.receivedBy = (receivedById ?? assigneeId) as any;
       const savedRequest = await request.save({ session });
 
       audits.push({

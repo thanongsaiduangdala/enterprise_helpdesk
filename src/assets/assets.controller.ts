@@ -19,10 +19,11 @@ import { AssetsService } from './assets.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { AssignAssetDto } from './dto/assign-asset.dto';
+import { AssignDepartmentDto } from './dto/assign-department.dto';
 import { ReturnAssetDto } from './dto/return-asset.dto';
 import { ClaimAssetDto } from './dto/claim-asset.dto';
 import { SetAssetStatusDto } from './dto/set-asset-status.dto';
-import { AssetStatus } from './schemas/asset.schema';
+import { AssetStatus, HolderType } from './schemas/asset.schema';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
@@ -84,12 +85,26 @@ export class AssetsController {
   @ApiQuery({ name: 'branchId', required: false })
   @ApiQuery({ name: 'status', required: false, enum: AssetStatus })
   @ApiQuery({ name: 'assigneeId', required: false })
+  @ApiQuery({ name: 'departmentId', required: false })
+  @ApiQuery({ name: 'holderType', required: false, enum: HolderType })
   findAll(
     @Query('branchId') branchId?: string,
     @Query('status') status?: AssetStatus,
     @Query('assigneeId') assigneeId?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('holderType') holderType?: HolderType,
   ) {
-    return this.assetsService.findAll({ branchId, status, assigneeId });
+    const ht =
+      holderType && Object.values(HolderType).includes(holderType)
+        ? holderType
+        : undefined;
+    return this.assetsService.findAll({
+      branchId,
+      status,
+      assigneeId,
+      departmentId,
+      holderType: ht,
+    });
   }
 
   @Get('overdue')
@@ -118,6 +133,21 @@ export class AssetsController {
     @Req() req: any,
   ) {
     return this.assetsService.assign(id, dto, req.user.userId, req.ip);
+  }
+
+  @Patch(':id/assign-department')
+  @RequirePermission('assets', 'assign')
+  assignDepartment(
+    @Param('id') id: string,
+    @Body() dto: AssignDepartmentDto,
+    @Req() req: any,
+  ) {
+    return this.assetsService.assignToDepartment(
+      id,
+      dto,
+      req.user.userId,
+      req.ip,
+    );
   }
 
   @Patch(':id/claim')

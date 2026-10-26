@@ -10,6 +10,7 @@ import { SupplyCatalogModule } from '../supply-catalog/supply-catalog.module';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { AssetsModule } from '../assets/assets.module';
 import { UsersModule } from '../users/users.module';
+import { DepartmentsModule } from '../departments/departments.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { UsersModule } from '../users/users.module';
     AuditLogsModule,
     AssetsModule,
     UsersModule,
+    DepartmentsModule,
   ],
   controllers: [SupplyRequestsController],
   providers: [SupplyRequestsService],

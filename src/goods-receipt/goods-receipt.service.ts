@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
@@ -10,19 +12,16 @@ import {
   GoodsReceiptDocument,
   GoodsReceiptMode,
 } from './schemas/goods-receipt.schema';
-import {
-  InvoiceFileDto,
-  NewItemDto,
-  NewItemKind,
-  RestockDto,
-} from './dto/goods-receipt.dto';
-import { Counter, CounterDocument } from '../roles/schemas/counter.schema';
-import { nextSequence } from '../common/utils/counter.util';
+import { NewItemDto, NewItemKind, RestockDto } from './dto/goods-receipt.dto';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
 import { CatalogItemType } from '../supply-catalog/schemas/supply-catalog-item.schema';
 import { AssetsService } from '../assets/assets.service';
 import { UsersService } from '../users/users.service';
 import { BranchesService } from '../branches/branches.service';
+import { PurchaseRequestsService } from '../purchase-requests/purchase-requests.service';
+import { PurchaseRequestMode } from '../purchase-requests/schemas/purchase-request.schema';
+import { Counter, CounterDocument } from '../roles/schemas/counter.schema';
+import { bumpCounterTo, nextSequence } from '../common/utils/counter.util';
 import {
   AuditEvent,
   runInTransaction,
@@ -43,19 +42,21 @@ type ReceiveInput = {
   quantity: number;
   receivedDate?: string;
   vendor?: string;
+  unitPrice?: number;
+  storageRoom?: string;
+  invoiceNo?: string;
+  invoiceFileUrl?: string;
+  invoiceFileName?: string;
+  purchaseRequestId?: string;
+  exceptionReason?: string;
   note?: string;
   serialNumbers?: string[];
   expectedQuantity?: number;
   countNote?: string;
   branchId?: string;
-  unitPrice?: number;
-  storageRoom?: string;
-  invoiceNo?: string;
-  invoiceFiles?: InvoiceFileDto[];
+  canException?: boolean;
 };
 
-const INVOICE_REQUIRED_MESSAGE =
-  'ກະລຸນາໃສ່ເລກໃບບິນ/ໃບເກັບເງິນ ເມື່ອມີລາຄາ';
 const MAX_TAG_QUANTITY = 500;
 const COUNT_MISMATCH_MESSAGE =
   'ຈຳນວນບໍ່ກົງກັບໃບສົ່ງເຄື່ອງ ກະລຸນາໃສ່ໝາຍເຫດ';
@@ -65,26 +66,26 @@ export class GoodsReceiptService {
   constructor(
     @InjectModel(GoodsReceipt.name)
     private model: Model<GoodsReceiptDocument>,
-    @InjectModel(Counter.name)
-    private counterModel: Model<CounterDocument>,
     private catalogService: SupplyCatalogService,
     private assetsService: AssetsService,
     private usersService: UsersService,
     private branchesService: BranchesService,
+    private purchaseRequests: PurchaseRequestsService,
+    @InjectModel(Counter.name) private counterModel: Model<CounterDocument>,
     @InjectConnection() private connection: Connection,
   ) {}
 
   /** ເພີ່ມເຄື່ອງເຂົ້າສະຕັອກ: ລາຍການຕ້ອງມີໃນ catalog ແລ້ວ */
-  restock(dto: RestockDto, actorId: string, ip?: string) {
+  restock(dto: RestockDto, actorId: string, ip?: string, canException = false) {
     return this.receive(
-      { ...dto, mode: GoodsReceiptMode.RESTOCK },
+      { ...dto, mode: GoodsReceiptMode.RESTOCK, canException },
       actorId,
       ip,
     );
   }
 
   /** ຊື້ເຄື່ອງໃໝ່: ສ້າງລາຍການ catalog ແລ້ວຮັບເຂົ້າດ້ວຍວິທີດຽວກັນ (receive) */
-  async newItem(dto: NewItemDto, actorId: string, ip?: string) {
+  async newItem(dto: NewItemDto, actorId: string, ip?: string, canException = false) {
     const name = dto.item.name.trim();
     const similar = await this.catalogService.findByName(name);
     if (similar) {
@@ -96,6 +97,7 @@ export class GoodsReceiptService {
       {
         ...dto,
         mode: GoodsReceiptMode.NEW_ITEM,
+        canException,
         // ຈະສ້າງ catalog ພາຍໃນ transaction ດຽວກັນ
         catalogItemId: '',
       },
@@ -112,6 +114,33 @@ export class GoodsReceiptService {
     ip?: string,
     newItem?: NewItemDto['item'],
   ) {
+    // ການຮັບເຄື່ອງຕ້ອງອ້າງອີງໃບສະເໜີຊື້ທີ່ອະນຸມັດແລ້ວ — ຍົກເວັ້ນສະເພາະຜູ້ມີສິດພິເສດ + ເຫດຜົນ
+    // (ປິດການບັງຄັບໄດ້ຊົ່ວຄາວດ້ວຍ env PURCHASE_REQUEST_REQUIRED=false ເພື່ອທົດສອບ)
+    const prRequired = process.env.PURCHASE_REQUEST_REQUIRED !== 'false';
+    const exceptionReason = input.exceptionReason?.trim();
+    if (!input.purchaseRequestId && prRequired) {
+      if (!input.canException) {
+        throw new ForbiddenException(
+          'ການຮັບເຄື່ອງຕ້ອງອ້າງອີງໃບສະເໜີຊື້ທີ່ອະນຸມັດແລ້ວ — ສ້າງໃບສະເໜີ ແລະລໍອະນຸມັດກ່ອນ',
+        );
+      }
+      if (!exceptionReason || exceptionReason.length < 5) {
+        throw new BadRequestException(
+          'ຮັບເຄື່ອງໂດຍບໍ່ມີໃບສະເໜີ ຕ້ອງໃສ່ເຫດຜົນ (ຢ່າງໜ້ອຍ 5 ຕົວອັກສອນ)',
+        );
+      }
+    }
+
+    const invoiceNo = input.invoiceNo?.trim();
+    if ((input.unitPrice ?? 0) > 0 && !invoiceNo) {
+      throw new BadRequestException(
+        'ເມື່ອໃສ່ລາຄາ ຕ້ອງໃສ່ເລກທີໃບບິນ/ໃບເກັບເງິນ',
+      );
+    }
+    const unitPrice = input.unitPrice ?? undefined;
+    const totalPrice =
+      unitPrice !== undefined ? unitPrice * input.quantity : undefined;
+
     const countNote = input.countNote?.trim();
     if (
       input.expectedQuantity !== undefined &&
@@ -120,17 +149,6 @@ export class GoodsReceiptService {
     ) {
       throw new BadRequestException(COUNT_MISMATCH_MESSAGE);
     }
-
-    const unitPrice =
-      input.unitPrice !== undefined && input.unitPrice !== null
-        ? Math.round(Number(input.unitPrice))
-        : undefined;
-    const invoiceNo = input.invoiceNo?.trim() || undefined;
-    if (unitPrice !== undefined && unitPrice > 0 && !invoiceNo) {
-      throw new BadRequestException(INVOICE_REQUIRED_MESSAGE);
-    }
-    const totalAmount =
-      unitPrice !== undefined ? unitPrice * input.quantity : undefined;
 
     const actor = await this.usersService.findOneRaw(actorId);
     let branchId = actor.branchId;
@@ -183,6 +201,26 @@ export class GoodsReceiptService {
         }
       }
 
+      // 1.1) ຜູກກັບໃບສະເໜີ: ກວດສະຖານະ/ຈຳນວນ/ຄວາມສອດຄ່ອງຂອງລາຍການ
+      const pr = input.purchaseRequestId
+        ? await this.purchaseRequests.loadForReceiveInTx(
+            input.purchaseRequestId,
+            input.quantity,
+            actorId,
+            session,
+          )
+        : null;
+      if (pr) {
+        const consistent = newItem
+          ? pr.mode === PurchaseRequestMode.NEW_ITEM && !pr.catalogItemId
+          : pr.catalogItemId === String(item._id);
+        if (!consistent) {
+          throw new BadRequestException(
+            `ລາຍການບໍ່ກົງກັບໃບສະເໜີ ${pr.prNo} (${pr.itemName})`,
+          );
+        }
+      }
+
       // 2) ວິທີຕິດຕາມ: SERIAL (ມີ S/N), TAG (Asset Tag ຢ່າງດຽວ), COUNT (ນັບຈຳນວນ)
       const tracking = await this.trackingMode(item, session);
       const stockBefore = item.stockQty ?? 0;
@@ -198,7 +236,7 @@ export class GoodsReceiptService {
           tracking === 'TAG' ? undefined : serials[index];
 
         if (tracking === 'SERIAL') {
-          // S/N ເປັນທາງເລືອກຕອນຮັບ: ໃສ່ໄດ້ 0..ຈຳນວນທີ່ຮັບ ແລະຕື່ມພາຍຫຼັງໃນທະບຽນຊັບສິນ
+          // S/N ເປັນທາງເລືອກຕອນຮັບ — ຕື່ມພາຍຫຼັງໄດ້ຢູ່ທະບຽນຊັບສິນ. ຖ້າໃສ່ ຈັບຄູ່ຕາມລຳດັບ ແລະ ຕ້ອງບໍ່ເກີນຈຳນວນທີ່ຮັບ
           if (serials.length > input.quantity) {
             throw new BadRequestException(
               `ຈຳນວນ Serial Number (${serials.length}) ຕ້ອງບໍ່ເກີນຈຳນວນທີ່ຮັບ (${input.quantity})`,
@@ -286,20 +324,11 @@ export class GoodsReceiptService {
       }
 
       // 3) ບັນທຶກໃບຮັບ + audit
-      const seq = await nextSequence(this.counterModel, 'goodsReceipt', session);
-      const receiptNo = `GR-${String(seq).padStart(4, '0')}`;
+      const receiptNo = await this.nextReceiptNo(session);
       const [doc] = await this.model.create(
         [
           {
             receiptNo,
-            unitPrice,
-            totalAmount,
-            storageRoom: input.storageRoom?.trim() || undefined,
-            invoiceNo,
-            invoiceFiles: (input.invoiceFiles ?? []).map((f) => ({
-              url: f.url,
-              name: f.name?.trim() || undefined,
-            })),
             mode: input.mode,
             catalogItemId: String(item._id),
             itemName: item.name,
@@ -314,6 +343,15 @@ export class GoodsReceiptService {
               ? new Date(input.receivedDate)
               : new Date(),
             vendor: input.vendor?.trim() || undefined,
+            unitPrice,
+            totalPrice,
+            storageRoom: input.storageRoom?.trim() || undefined,
+            invoiceNo: invoiceNo || undefined,
+            invoiceFileUrl: input.invoiceFileUrl || undefined,
+            invoiceFileName: input.invoiceFileName?.trim() || undefined,
+            purchaseRequestId: pr ? String(pr._id) : undefined,
+            purchaseRequestNo: pr ? pr.prNo : undefined,
+            exceptionReason: !pr ? exceptionReason || undefined : undefined,
             note: input.note?.trim() || undefined,
             serialNumbers: serials,
             assetIds,
@@ -322,9 +360,18 @@ export class GoodsReceiptService {
         ],
         { session },
       );
+      if (pr) {
+        await this.purchaseRequests.applyReceiptInTx(
+          pr,
+          input.quantity,
+          String(doc._id),
+          String(item._id),
+          session,
+        );
+      }
       audits.push({
         actorId,
-        action: 'GOODS_RECEIVED',
+        action: pr ? 'GOODS_RECEIVED' : 'GOODS_RECEIVED_WITHOUT_PR',
         entityType: 'GoodsReceipt',
         entityId: String(doc._id),
         after: {
@@ -333,9 +380,11 @@ export class GoodsReceiptService {
           item: item.name,
           quantity: input.quantity,
           receiptNo,
+          purchaseRequestNo: pr ? pr.prNo : undefined,
+          exceptionReason: !pr ? exceptionReason : undefined,
           unitPrice,
-          totalAmount,
-          invoiceNo,
+          totalPrice,
+          invoiceNo: invoiceNo || undefined,
         },
         ip,
       });
@@ -348,6 +397,51 @@ export class GoodsReceiptService {
     });
     await this.assetsService.flushAudits(audits);
     return saved;
+  }
+
+  /** ເລກທີໃບຮັບ GR-0001 — counter ແບບ monotonic (seed ຈາກເລກສູງສຸດທີ່ມີ) */
+  private async nextReceiptNo(session?: any): Promise<string> {
+    const last = await this.model
+      .findOne({ receiptNo: /^GR-\d+$/ }, { receiptNo: 1 })
+      .sort({ receiptNo: -1 })
+      .session(session ?? null)
+      .exec();
+    const max = last?.receiptNo ? parseInt(last.receiptNo.slice(3), 10) : 0;
+    if (Number.isFinite(max)) {
+      await bumpCounterTo(this.counterModel, 'goodsReceipt', max, session);
+    }
+    const seq = await nextSequence(this.counterModel, 'goodsReceipt', session);
+    return `GR-${String(seq).padStart(4, '0')}`;
+  }
+
+  /** ໃບຮັບເຄື່ອງ 1 ໃບ (ສຳລັບພິມ): ຂໍ້ມູນໃບ + ຊື່ສາຂາ + ຊັບສິນທີ່ສ້າງ + ຜູ້ບັນທຶກ */
+  async findOne(id: string) {
+    const doc = await this.model
+      .findById(id)
+      .populate('createdBy', 'firstName lastName employeeCode')
+      .exec();
+    if (!doc) throw new NotFoundException('ບໍ່ພົບໃບຮັບເຄື່ອງ');
+    const assets = await this.assetsService.findManyByIds(doc.assetIds ?? []);
+    let branchName: string | undefined;
+    if (doc.branchId) {
+      try {
+        const b: any = await this.branchesService.findOne(doc.branchId);
+        branchName = b?.name;
+      } catch {
+        branchName = undefined;
+      }
+    }
+    return {
+      ...doc.toObject(),
+      branchName,
+      assets: assets
+        .map((a) => ({
+          _id: String(a._id),
+          assetTag: a.assetTag,
+          serialNumber: a.serialNumber || undefined,
+        }))
+        .sort((a, b) => a.assetTag.localeCompare(b.assetTag)),
+    };
   }
 
   private async trackingMode(
@@ -381,12 +475,13 @@ export class GoodsReceiptService {
         'i',
       );
       query.$or = [
-        { receiptNo: rx },
-        { invoiceNo: rx },
-        { storageRoom: rx },
         { itemName: rx },
         { catalogItemId: rx },
         { vendor: rx },
+        { receiptNo: rx },
+        { purchaseRequestNo: rx },
+        { invoiceNo: rx },
+        { storageRoom: rx },
         { serialNumbers: rx },
       ];
     }

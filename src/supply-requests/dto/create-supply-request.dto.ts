@@ -2,6 +2,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsInt,
+  IsMongoId,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -45,4 +46,30 @@ export class CreateSupplyRequestDto {
   @ValidateNested({ each: true })
   @Type(() => SupplyRequestItemDto)
   items!: SupplyRequestItemDto[];
+
+  @ApiPropertyOptional({
+    example: 'DX001',
+    description: 'Raise this request on behalf of a department',
+  })
+  @IsOptional()
+  @Matches(/^DX\d{3}$/, { message: 'departmentId must look like DX001' })
+  departmentId?: string;
+
+  @ApiPropertyOptional({
+    example: 'EMP001',
+    description:
+      'Employee code of the department custodian (required for department requests)',
+  })
+  @IsOptional()
+  @IsString()
+  custodianCode?: string;
+
+  @ApiPropertyOptional({
+    example: '665fbb1f2c1a4e3b9c8d0a11',
+    description:
+      'users._id of the department custodian (alternative to custodianCode)',
+  })
+  @IsOptional()
+  @IsMongoId()
+  custodianId?: string;
 }

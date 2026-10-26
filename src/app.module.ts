@@ -13,6 +13,7 @@ import { RoomBookingsModule } from './room-bookings/room-bookings.module';
 import { SupplyCatalogModule } from './supply-catalog/supply-catalog.module';
 import { SupplyRequestsModule } from './supply-requests/supply-requests.module';
 import { GoodsReceiptModule } from './goods-receipt/goods-receipt.module';
+import { PurchaseRequestsModule } from './purchase-requests/purchase-requests.module';
 import { CannedResponsesModule } from './canned-responses/canned-responses.module';
 import { TicketMessagesModule } from './ticket-messages/ticket-messages.module';
 import { AssetsModule } from './assets/assets.module';
@@ -56,6 +57,7 @@ import { MaintenanceHistoryModule } from './maintenance-history/maintenance-hist
     SupplyCatalogModule,
     SupplyRequestsModule,
     GoodsReceiptModule,
+    PurchaseRequestsModule,
     CannedResponsesModule,
     TicketMessagesModule,
     AssetsModule,

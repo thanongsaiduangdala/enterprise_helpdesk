@@ -6,31 +6,16 @@ import {
   IsEnum,
   IsInt,
   IsNumber,
+  Matches,
+  MaxLength,
   IsNotEmpty,
   IsOptional,
   IsString,
-  Matches,
-  MaxLength,
   Max,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-
-export class InvoiceFileDto {
-  @ApiProperty({ example: '/api/uploads/0123456789abcdef0123456789abcdef.pdf' })
-  @IsString()
-  @Matches(/^\/api\/uploads\/[a-f0-9]{32}(\.[a-z0-9]+)?$/i, {
-    message: 'ລິ້ງໄຟລ໌ໃບບິນບໍ່ຖືກຕ້ອງ',
-  })
-  url!: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  name?: string;
-}
 
 export class ReceiveCommonDto {
   @ApiProperty({ example: 10, description: 'ຈຳນວນຊິ້ນ (ຈຳນວນເຕັມ ≥ 1)' })
@@ -50,15 +35,10 @@ export class ReceiveCommonDto {
   @IsString()
   vendor?: string;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  note?: string;
-
-  @ApiPropertyOptional({ example: 250000, description: 'ລາຄາຕໍ່ໜ່ວຍ (ກີບ)' })
+  @ApiPropertyOptional({ example: 4500000, description: 'ລາຄາຕໍ່ໜ່ວຍ (ກີບ)' })
   @IsOptional()
   @Type(() => Number)
-  @IsNumber({}, { message: 'ລາຄາຕໍ່ໜ່ວຍບໍ່ຖືກຕ້ອງ' })
+  @IsNumber({}, { message: 'ລາຄາຕໍ່ໜ່ວຍຕ້ອງເປັນຕົວເລກ' })
   @Min(0, { message: 'ລາຄາຕໍ່ໜ່ວຍຕ້ອງບໍ່ຕິດລົບ' })
   unitPrice?: number;
 
@@ -68,19 +48,43 @@ export class ReceiveCommonDto {
   @MaxLength(100)
   storageRoom?: string;
 
-  @ApiPropertyOptional({ description: 'ເລກໃບບິນ/ໃບເກັບເງິນ (ບັງຄັບເມື່ອມີລາຄາ)' })
+  @ApiPropertyOptional({ example: 'INV-2026-0123' })
   @IsOptional()
   @IsString()
   @MaxLength(100)
   invoiceNo?: string;
 
-  @ApiPropertyOptional({ type: [InvoiceFileDto] })
+  @ApiPropertyOptional({ description: 'URL ໄຟລ໌ໃບບິນທີ່ອັບໂຫຼດແລ້ວ (/api/uploads/...)' })
   @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(10)
-  @ValidateNested({ each: true })
-  @Type(() => InvoiceFileDto)
-  invoiceFiles?: InvoiceFileDto[];
+  @IsString()
+  @Matches(/^\/api\/uploads\/[a-f0-9]{32}(\.[a-z0-9]+)?$/i, {
+    message: 'ໄຟລ໌ໃບບິນບໍ່ຖືກຕ້ອງ',
+  })
+  invoiceFileUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  invoiceFileName?: string;
+
+  @ApiPropertyOptional({ description: 'ໃບສະເໜີຊື້ (PurchaseRequest _id) ທີ່ອະນຸມັດແລ້ວ' })
+  @IsOptional()
+  @IsString()
+  purchaseRequestId?: string;
+
+  @ApiPropertyOptional({
+    description: 'ເຫດຜົນ ເມື່ອຮັບເຄື່ອງໂດຍບໍ່ມີໃບສະເໜີ (ສະເພາະຜູ້ມີສິດພິເສດ)',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  exceptionReason?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  note?: string;
 
   @ApiPropertyOptional({
     example: 20,

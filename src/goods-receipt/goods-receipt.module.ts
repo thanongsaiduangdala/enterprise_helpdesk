@@ -6,8 +6,9 @@ import { GoodsReceiptController } from './goods-receipt.controller';
 import { SupplyCatalogModule } from '../supply-catalog/supply-catalog.module';
 import { AssetsModule } from '../assets/assets.module';
 import { UsersModule } from '../users/users.module';
-import { BranchesModule } from '../branches/branches.module';
 import { Counter, CounterSchema } from '../roles/schemas/counter.schema';
+import { BranchesModule } from '../branches/branches.module';
+import { PurchaseRequestsModule } from '../purchase-requests/purchase-requests.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { Counter, CounterSchema } from '../roles/schemas/counter.schema';
     AssetsModule,
     UsersModule,
     BranchesModule,
+    PurchaseRequestsModule,
   ],
   controllers: [GoodsReceiptController],
   providers: [GoodsReceiptService],

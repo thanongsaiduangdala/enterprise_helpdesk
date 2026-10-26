@@ -9,6 +9,7 @@ import { AssetsService } from './assets.service';
 import { Asset, AssetStatus } from './schemas/asset.schema';
 import { SupplyRequest } from '../supply-requests/schemas/supply-request.schema';
 import { Counter } from '../roles/schemas/counter.schema';
+import { Department } from '../departments/schemas/department.schema';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { MaintenanceHistoryService } from '../maintenance-history/maintenance-history.service';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
@@ -99,6 +100,7 @@ describe('AssetsService claim authorization', () => {
           useValue: supplyRequestModel,
         },
         { provide: getModelToken(Counter.name), useValue: {} },
+        { provide: getModelToken(Department.name), useValue: {} },
         { provide: getConnectionToken(), useValue: connection },
         { provide: AuditLogsService, useValue: { log: jest.fn() } },
         {

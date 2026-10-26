@@ -43,6 +43,14 @@ export class SupplyRequest {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   requestedBy!: Types.ObjectId;
 
+  /** ມີຄ່າ = ໃບຂໍໃນນາມພະແນກ (ຊັບສິນຈະຂຶ້ນກັບພະແນກ) */
+  @Prop({ type: String, ref: 'Department' })
+  departmentId?: string;
+
+  /** ຜູ້ຮັບຜິດຊອບ (custodian) ເມື່ອເປັນໃບຂໍຂອງພະແນກ */
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  custodianId?: Types.ObjectId;
+
   @Prop({ type: [SupplyRequestItem], required: true })
   items!: SupplyRequestItem[];
 
@@ -74,4 +82,5 @@ export class SupplyRequest {
 
 export const SupplyRequestSchema = SchemaFactory.createForClass(SupplyRequest);
 SupplyRequestSchema.index({ requestedBy: 1, status: 1 });
+SupplyRequestSchema.index({ departmentId: 1, status: 1 });
 SupplyRequestSchema.index({ status: 1 });
