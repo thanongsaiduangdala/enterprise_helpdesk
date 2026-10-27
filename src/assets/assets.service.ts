@@ -382,8 +382,10 @@ export class AssetsService {
     assigneeId?: string;
     departmentId?: string;
     holderType?: HolderType;
+    catalogItemId?: string;
   }) {
     const query: any = {};
+    if (filters.catalogItemId) query.catalogItemId = filters.catalogItemId;
     if (filters.departmentId) query.departmentId = filters.departmentId;
     if (filters.holderType === HolderType.DEPARTMENT) {
       query.holderType = HolderType.DEPARTMENT;
