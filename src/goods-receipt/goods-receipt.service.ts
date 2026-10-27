@@ -15,6 +15,7 @@ import {
 import { NewItemDto, NewItemKind, RestockDto } from './dto/goods-receipt.dto';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
 import { CatalogItemType } from '../supply-catalog/schemas/supply-catalog-item.schema';
+import { catalogTrackingMode } from '../common/utils/catalog-item-type.util';
 import { AssetsService } from '../assets/assets.service';
 import { UsersService } from '../users/users.service';
 import { BranchesService } from '../branches/branches.service';
@@ -448,13 +449,12 @@ export class GoodsReceiptService {
     item: { _id: any; itemType?: CatalogItemType; trackSerial?: boolean },
     session?: any,
   ): Promise<TrackingMode> {
-    if (item.itemType === CatalogItemType.CONSUMABLE) return 'COUNT';
-    if (item.itemType === CatalogItemType.ASSET) {
-      return item.trackSerial === false ? 'TAG' : 'SERIAL';
-    }
-    return (await this.assetsService.catalogHasAssets(String(item._id), session))
-      ? 'SERIAL'
-      : 'COUNT';
+    // Use the same canonical classification as Supply Requests. Asset records
+    // are consulted only for legacy catalog rows that have no itemType yet.
+    const legacyHasAssets = item.itemType
+      ? false
+      : await this.assetsService.catalogHasAssets(String(item._id), session);
+    return catalogTrackingMode(item.itemType, item.trackSerial, legacyHasAssets);
   }
 
   async findAll(

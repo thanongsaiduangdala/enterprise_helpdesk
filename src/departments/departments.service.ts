@@ -159,6 +159,48 @@ export class DepartmentsService {
     }));
   }
 
+  /** Return department IDs where the given user is explicitly listed as a manager. */
+  async findManagedDepartmentIds(userId: string): Promise<string[]> {
+    const departments = await this.departmentModel
+      .find({ managerIds: String(userId) }, { _id: 1 })
+      .lean()
+      .exec();
+    return departments.map((department: { _id: unknown }) =>
+      String(department._id),
+    );
+  }
+
+  /**
+   * Departments the user may request supplies for: their own active department
+   * and any active departments that explicitly list them as a manager.
+   * Return only picker fields; authorization is still re-checked on POST.
+   */
+  async findRequestableForUser(
+    userId: string,
+    ownDepartmentId?: string,
+  ): Promise<Array<{ _id: string; name: string; branchId: string }>> {
+    const allowedDepartments: Record<string, unknown>[] = [
+      { managerIds: String(userId) },
+    ];
+    if (ownDepartmentId) {
+      allowedDepartments.push({ _id: String(ownDepartmentId) });
+    }
+
+    const departments = await this.departmentModel
+      .find(
+        { isActive: { $ne: false }, $or: allowedDepartments },
+        { _id: 1, name: 1, branchId: 1 },
+      )
+      .lean()
+      .exec();
+
+    return departments.map((department: any) => ({
+      _id: String(department._id),
+      name: String(department.name ?? ''),
+      branchId: String(department.branchId ?? ''),
+    }));
+  }
+
   async findOne(id: string): Promise<Record<string, any>> {
     const department = await this.departmentModel.findById(id).exec();
     if (!department) throw new NotFoundException('Department not found');

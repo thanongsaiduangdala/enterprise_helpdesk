@@ -27,6 +27,8 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { MaintenanceHistoryService } from '../maintenance-history/maintenance-history.service';
 import { MaintenanceStatus } from '../maintenance-history/schemas/maintenance-history.schema';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
+import { CatalogItemType } from '../supply-catalog/schemas/supply-catalog-item.schema';
+import { catalogCanCreateAsset, catalogRequiresAssetTag } from '../common/utils/catalog-item-type.util';
 import {
   SupplyRequest,
   SupplyRequestDocument,
@@ -103,9 +105,23 @@ export class AssetsService {
     if (rest.serialNumber)
       await this.assertSerialFree(rest.serialNumber, session);
 
-    // ຜູກກັບລາຍການ catalog (ຕ້ອງມີຈິງ)
+    // An asset record may only be linked to a catalog item explicitly typed ASSET.
+    // This server-side guard also protects the API when the frontend picker is bypassed.
     if (catalogItemId) {
-      await this.catalogService.findOne(catalogItemId, session);
+      const catalogItem = await this.catalogService.findOne(catalogItemId, session);
+      // Only infer type for old catalogs with existing Asset records. New/untyped
+      // catalogs must be explicitly classified to avoid stock/receipt divergence.
+      const legacyHasAssets = catalogItem.itemType
+        ? false
+        : await this.catalogHasAssets(String(catalogItemId), session);
+      if (!catalogCanCreateAsset(catalogItem.itemType, legacyHasAssets)) {
+        const reason = catalogItem.itemType === CatalogItemType.CONSUMABLE
+          ? 'ເປັນວັດສະດຸສິ້ນເປືອງ'
+          : 'ຍັງບໍ່ໄດ້ກຳນົດ itemType ແລະບໍ່ມີຊັບສິນເກົ່າຜູກຢູ່';
+        throw new BadRequestException(
+          `ບໍ່ສາມາດສ້າງຊັບສິນຈາກ Catalog "${catalogItem.name}" ໄດ້ — ${reason}. ກະລຸນາກຳນົດໃຫ້ເປັນ ASSET ກ່ອນ`,
+        );
+      }
     }
 
     // ຖ້າຜູ້ໃຊ້ກຣອກ Asset Tag ເອງ → ໃຊ້ຕາມນັ້ນ (ຊ້ຳ = ແຈ້ງ error ປົກກະຕິ)
@@ -532,6 +548,9 @@ export class AssetsService {
     if (!dept || dept.isActive === false) {
       throw new BadRequestException('ບໍ່ພົບພະແນກ ຫຼືພະແນກຖືກປິດໃຊ້ງານ');
     }
+    if (!String(dept.branchId ?? '').trim()) {
+      throw new BadRequestException('ພະແນກນີ້ບໍ່ໄດ້ກຳນົດສາຂາ');
+    }
     const belongsToDept = async (userId: string, label: string) => {
       const u = await this.usersService.findOneRaw(userId);
       if (u.isActive === false) {
@@ -583,7 +602,11 @@ export class AssetsService {
         actorId,
         ip,
         ctx,
-        { departmentId: String(dept._id), receivedById },
+        {
+          departmentId: String(dept._id),
+          branchId: String(dept.branchId ?? ''),
+          receivedById,
+        },
       );
     });
   }
@@ -592,7 +615,24 @@ export class AssetsService {
    * ອ້າງສິດຮັບເຄື່ອງດ້ວຍຕົນເອງ — ຜູ້ໃຊ້ທີ່ກຳລັງ login ຮັບຊັບສິນທີ່ຍັງວ່າງ
    * (ຈາກການສະແກນ QR/ບາໂຄ໊ດ ໃນໜ້າທະບຽນຊັບສິນ) ໂດຍບໍ່ຕ້ອງມີ assets.assign
    */
-  /** ມີຊັບສິນ (ທີ່ບໍ່ຖືກປົດ) ຜູກກັບລາຍການ catalog ນີ້ຫຼືບໍ່ — ໃຊ້ແຍກ "ຂອງມີ Asset Tag" ອອກຈາກ "ຂອງໃຊ້ສິ້ນເປືອງ" */
+  /**
+   * ກຳນົດວ່າ Catalog item ຕ້ອງຮັບຜ່ານ Asset Tag ຫຼືບໍ່.
+   * itemType ແມ່ນຄ່າຫຼັກ; ຈຳນວນ Asset Record ໃຊ້ເປັນ fallback ສະເພາະຂໍ້ມູນເກົ່າທີ່ຍັງບໍ່ມີ itemType.
+   */
+  async requiresAssetTagForCatalog(
+    catalogItemId?: string,
+    session?: ClientSession,
+  ): Promise<boolean> {
+    if (!catalogItemId) return false;
+    const item = await this.catalogService.findOne(String(catalogItemId), session);
+    // An explicit itemType always wins; only untyped legacy rows need inference.
+    const legacyHasAssets = item.itemType
+      ? false
+      : await this.catalogHasAssets(String(catalogItemId), session);
+    return catalogRequiresAssetTag(item.itemType, legacyHasAssets);
+  }
+
+  /** ກວດວ່າມີ Asset Record ທີ່ຍັງບໍ່ຖືກປົດຜູກກັບ Catalog ຫຼືບໍ່. */
   async hasAssetsForCatalog(catalogItemId?: string): Promise<boolean> {
     if (!catalogItemId) return false;
     const found = await this.assetModel
@@ -837,7 +877,9 @@ export class AssetsService {
     ];
     counts[itemIndex] += 1;
     const tagged = await Promise.all(
-      request.items.map((i) => this.hasAssetsForCatalog(i.catalogItemId)),
+      request.items.map((i) =>
+        this.requiresAssetTagForCatalog(i.catalogItemId, ctx.session),
+      ),
     );
     const complete = request.items.every(
       (it, i) => tagged[i] && counts[i] >= it.quantity,
@@ -872,7 +914,7 @@ export class AssetsService {
     actorId: string,
     ip: string | undefined,
     ctx: TxCtx,
-    dept?: { departmentId: string; receivedById?: string },
+    dept?: { departmentId: string; branchId: string; receivedById?: string },
   ) {
     return this.performAssign(asset, assigneeId, note, actorId, ip, ctx, dept);
   }
@@ -884,7 +926,7 @@ export class AssetsService {
     actorId: string,
     ip: string | undefined,
     ctx: TxCtx,
-    dept?: { departmentId: string; receivedById?: string },
+    dept?: { departmentId: string; branchId: string; receivedById?: string },
   ) {
     if (asset.status === AssetStatus.RETIRED) {
       throw new BadRequestException('Cannot assign a retired asset');
@@ -896,6 +938,15 @@ export class AssetsService {
           ? `ຊັບສິນ ${asset.assetTag} ຖືກມອບໃຫ້ຜູ້ອື່ນຢູ່ແລ້ວ — ຕ້ອງກົດ "ຄືນເຄື່ອງ" ກ່ອນຈຶ່ງມອບໃໝ່ໄດ້`
           : `ຊັບສິນ ${asset.assetTag} ບໍ່ວ່າງ (ສະຖານະ ${asset.status}) — ມອບບໍ່ໄດ້`,
       );
+    }
+    if (dept) {
+      const assetBranchId = String(asset.branchId ?? '').trim();
+      const departmentBranchId = String(dept.branchId ?? '').trim();
+      if (!assetBranchId || !departmentBranchId || assetBranchId !== departmentBranchId) {
+        throw new BadRequestException(
+          `ສາຂາຂອງຊັບສິນ ${asset.assetTag} (${assetBranchId || 'ບໍ່ລະບຸ'}) ບໍ່ກົງກັບສາຂາຂອງພະແນກ (${departmentBranchId || 'ບໍ່ລະບຸ'}) — ບໍ່ອະນຸຍາດມອບຂ້າມສາຂາ`,
+        );
+      }
     }
     const before = asset.toObject();
     const previousStatus = asset.status;

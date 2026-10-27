@@ -159,9 +159,31 @@ export class SupplyRequestsService {
     return saved;
   }
 
-  findMine(userId: string) {
+  async findRequestableDepartments(userId: string) {
+    const user = await this.usersService.findOneRaw(userId);
+    return this.departmentsService.findRequestableForUser(
+      userId,
+      user.departmentId ? String(user.departmentId) : undefined,
+    );
+  }
+
+  async findMine(userId: string) {
+    // Keep the existing personal scope, but include department requests for
+    // users explicitly listed as managers. This matches getReceipt()'s
+    // department-manager authorization and avoids exposing requests to every
+    // employee in the same department.
+    const managedDepartmentIds =
+      await this.departmentsService.findManagedDepartmentIds(userId);
+    const scope: any[] = [
+      { requestedBy: userId },
+      { custodianId: userId },
+    ];
+    if (managedDepartmentIds.length > 0) {
+      scope.push({ departmentId: { $in: managedDepartmentIds } });
+    }
+
     return this.requestModel
-      .find({ $or: [{ requestedBy: userId }, { custodianId: userId }] })
+      .find({ $or: scope })
       .sort({ createdAt: -1 })
       .populate('requestedBy', 'firstName lastName email employeeCode')
       .populate('departmentId', 'name')
@@ -332,7 +354,7 @@ export class SupplyRequestsService {
     // ລາຍການທີ່ມີ Asset Tag ຕ້ອງຮັບຜ່ານການສະແກນ (receive) ເພື່ອໃຫ້ທະບຽນຊັບສິນມີຜູ້ຮັບຜິດຊອບ — fulfill ປິດໃບແບບບໍ່ມີຄົນຮັບບໍ່ໄດ້
     const taggedFlags = await Promise.all(
       request.items.map((i) =>
-        this.assetsService.hasAssetsForCatalog(i.catalogItemId),
+        this.assetsService.requiresAssetTagForCatalog(i.catalogItemId),
       ),
     );
     if (taggedFlags.some(Boolean)) {
@@ -393,9 +415,9 @@ export class SupplyRequestsService {
   async getReceipt(id: string, user: PermissionUser) {
     const request = await this.requestModel
       .findById(id)
-      .populate('requestedBy', 'firstName lastName employeeCode')
+      .populate('requestedBy', 'firstName lastName employeeCode branchId')
       .populate('departmentId', 'name managerIds branchId')
-      .populate('custodianId', 'firstName lastName employeeCode')
+      .populate('custodianId', 'firstName lastName employeeCode branchId')
       .exec();
     if (!request) throw new NotFoundException('Supply request not found');
 
@@ -426,7 +448,7 @@ export class SupplyRequestsService {
 
     const flags = await Promise.all(
       request.items.map((i) =>
-        this.assetsService.hasAssetsForCatalog(i.catalogItemId),
+        this.assetsService.requiresAssetTagForCatalog(i.catalogItemId),
       ),
     );
     const obj: any = request.toObject();
@@ -488,6 +510,7 @@ export class SupplyRequestsService {
         ? String(request.departmentId)
         : undefined;
       let departmentCustodianId: string | undefined;
+      let requestDepartmentBranchId: string | undefined;
       let departmentManagerIds: string[] = [];
       if (requestDepartmentId) {
         const department =
@@ -496,6 +519,10 @@ export class SupplyRequestsService {
           throw new BadRequestException('ພະແນກບໍ່ພົບ ຫຼື ຖືກປິດໃຊ້ງານ');
         }
         departmentManagerIds = (department.managerIds ?? []).map(String);
+        requestDepartmentBranchId = String(department.branchId ?? '').trim();
+        if (!requestDepartmentBranchId) {
+          throw new BadRequestException('ພະແນກນີ້ບໍ່ໄດ້ກຳນົດສາຂາ');
+        }
         if (!request.custodianId) {
           throw new BadRequestException(
             'ໃບຂໍຂອງພະແນກນີ້ບໍ່ມີຜູ້ຮັບຜິດຊອບ — ກະລຸນາແຈ້ງຜູ້ດູແລລະບົບ',
@@ -605,7 +632,19 @@ export class SupplyRequestsService {
         );
       }
 
-      // 2. ກວດ Asset Tag ກັບທະບຽນຊັບສິນ + ສະຖານະ AVAILABLE
+      // 2. ຈຳແນກລາຍການຈາກ Supply Catalog ກ່ອນກວດ Asset Tag.
+      //    ສະເພາະ ASSET (ແລະ legacy item ທີ່ຍັງບໍ່ມີ itemType) ເທົ່ານັ້ນທີ່ຮັບດ້ວຍ Asset Tag.
+      const items = request.items;
+      const catalogTagged = await Promise.all(
+        items.map((i) =>
+          this.assetsService.requiresAssetTagForCatalog(i.catalogItemId, session),
+        ),
+      );
+      const assetItemIndexes = items
+        .map((_, index) => (catalogTagged[index] ? index : -1))
+        .filter((index) => index >= 0);
+      const assetRequestItems = assetItemIndexes.map((index) => items[index]);
+
       const tags = [
         ...new Set((dto.assetTags ?? []).map((t) => t.trim()).filter(Boolean)),
       ];
@@ -625,30 +664,54 @@ export class SupplyRequestsService {
           issues.push(`"${tag}": ສະຖານະ ${asset.status} — ບໍ່ວ່າງ`);
           continue;
         }
+        // ຖ້າ Asset Record ເກົ່າຜູກກັບ Catalog ປະເພດ CONSUMABLE, ຫ້າມຮັບມັນເປັນຊັບສິນ.
+        if (
+          asset.catalogItemId &&
+          !(await this.assetsService.requiresAssetTagForCatalog(
+            String(asset.catalogItemId),
+            session,
+          ))
+        ) {
+          issues.push(
+            `"${tag}": Catalog ທີ່ຜູກຢູ່ເປັນ CONSUMABLE ຫຼືບໍ່ແມ່ນລາຍການຊັບສິນ — ກະລຸນາກວດສອບທະບຽນ`,
+          );
+          continue;
+        }
         resolved.push(asset);
       }
 
-      // 3. ຈັບຄູ່ຊັບສິນກັບລາຍການທີ່ຂໍ — ນັບລວມຊັບສິນທີ່ເຄີຍຮັບແລ້ວຕາມໃບນີ້ (ຜ່ານການສະແກນຮັບເປັນຊິ້ນ)
-      const items = request.items;
-      const catalogTagged = await Promise.all(
-        items.map((i) =>
-          this.assetsService.hasAssetsForCatalog(i.catalogItemId),
-        ),
-      );
+      // 3. ຈັບຄູ່ກັບສະເພາະລາຍການ ASSET. ຂອງສິ້ນເປືອງຈະບໍ່ຖືກນັບເປັນຊັບສິນເຖິງແມ່ນຊື່ຄ້າຍກັນ.
       const prior = await this.assetsService.findManyByIds(
         request.receivedAssetIds ?? [],
         session,
       );
       const matched: number[] = items.map(() => 0);
-      prior.forEach((p) => {
-        const k = matchAssetToItem(items, p, matched);
-        if (k >= 0) matched[k] += 1;
-      });
+      const matchTrackedAsset = (asset: AssetDocument, counts: number[]) => {
+        const trackedCounts = assetItemIndexes.map((index) => counts[index]);
+        const trackedIndex = matchAssetToItem(assetRequestItems, asset, trackedCounts);
+        return trackedIndex >= 0 ? assetItemIndexes[trackedIndex] : -1;
+      };
+      for (const priorAsset of prior) {
+        if (
+          priorAsset.catalogItemId &&
+          !(await this.assetsService.requiresAssetTagForCatalog(
+            String(priorAsset.catalogItemId),
+            session,
+          ))
+        ) {
+          issues.push(
+            `Asset ${priorAsset.assetTag} ທີ່ຮັບໄວ້ກ່ອນໜ້ານີ້ຜູກກັບ Catalog ປະເພດ CONSUMABLE — ຕ້ອງກວດສອບຂໍ້ມູນ`,
+          );
+          continue;
+        }
+        const index = matchTrackedAsset(priorAsset, matched);
+        if (index >= 0) matched[index] += 1;
+      }
       for (const asset of resolved) {
-        const idx = matchAssetToItem(items, asset, matched);
+        const idx = matchTrackedAsset(asset, matched);
         if (idx === -1) {
           issues.push(
-            `"${asset.assetTag}": ຊະນິດ "${asset.type}" ບໍ່ກົງກັບລາຍການທີ່ຂໍ`,
+            `"${asset.assetTag}": ຊະນິດ "${asset.type}" ບໍ່ກົງກັບລາຍການ ASSET ທີ່ຂໍ`,
           );
           continue;
         }
@@ -707,7 +770,11 @@ export class SupplyRequestsService {
           ip,
           ctx,
           isDepartmentRequest
-            ? { departmentId: requestDepartmentId, receivedById }
+            ? {
+                departmentId: requestDepartmentId,
+                branchId: requestDepartmentBranchId!,
+                receivedById,
+              }
             : undefined,
         );
       }

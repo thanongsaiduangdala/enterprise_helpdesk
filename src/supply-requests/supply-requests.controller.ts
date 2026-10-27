@@ -46,10 +46,18 @@ export class SupplyRequestsController {
     return this.requestsService.create(dto, req.user.userId, req.ip);
   }
 
+  /** Own requests + requests in departments where the caller is a registered manager. */
   @Get('my')
   @RequirePermission('supplies', 'read')
   findMine(@Req() req: any) {
     return this.requestsService.findMine(req.user.userId);
+  }
+
+  /** Departments the current requester may select for a department supply request. */
+  @Get('requestable-departments')
+  @RequirePermission('supplies', 'create')
+  findRequestableDepartments(@Req() req: any) {
+    return this.requestsService.findRequestableDepartments(req.user.userId);
   }
 
   @Get()
