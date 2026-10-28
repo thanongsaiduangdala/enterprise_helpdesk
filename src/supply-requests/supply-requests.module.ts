@@ -11,6 +11,7 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { AssetsModule } from '../assets/assets.module';
 import { UsersModule } from '../users/users.module';
 import { DepartmentsModule } from '../departments/departments.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { DepartmentsModule } from '../departments/departments.module';
     AssetsModule,
     UsersModule,
     DepartmentsModule,
+    NotificationsModule,
   ],
   controllers: [SupplyRequestsController],
   providers: [SupplyRequestsService],

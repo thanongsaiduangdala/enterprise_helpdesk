@@ -40,6 +40,7 @@ describe('SupplyRequestsService.findMine department-manager visibility', () => {
       departmentsService as any,
       {} as any,
       {} as any,
+      {} as any,
     );
   });
 
@@ -71,6 +72,7 @@ describe('SupplyRequestsService.findMine department-manager visibility', () => {
       $or: [
         { requestedBy: 'manager-1' },
         { custodianId: 'manager-1' },
+        { delegateId: 'manager-1' },
         { departmentId: { $in: ['DEPT-01', 'DEPT-02'] } },
       ],
     });
@@ -86,6 +88,7 @@ describe('SupplyRequestsService.findMine department-manager visibility', () => {
       $or: [
         { requestedBy: 'employee-1' },
         { custodianId: 'employee-1' },
+        { delegateId: 'employee-1' },
       ],
     });
   });

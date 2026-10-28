@@ -35,6 +35,19 @@ class SupplyRequestItem {
   reason?: string;
 }
 
+/** ບັນທຶກເມື່ອເຈົ້າໜ້າທີ່ສາງຮັບເຄື່ອງແທນ ໂດຍບໍ່ແມ່ນຜູ້ຂໍ/ຜູ້ຮັບແທນທີ່ກຳນົດໄວ້ (override) */
+@Schema({ _id: false })
+class SupplyRequestReceiveOverride {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  by!: Types.ObjectId;
+
+  @Prop({ required: true })
+  reason!: string;
+
+  @Prop({ required: true })
+  at!: Date;
+}
+
 @Schema({ timestamps: true })
 export class SupplyRequest {
   @Prop({ type: String })
@@ -75,6 +88,23 @@ export class SupplyRequest {
   @Prop({ type: Types.ObjectId, ref: 'User' })
   receivedBy?: Types.ObjectId;
 
+  /**
+   * ຜູ້ຮັບແທນ (delegate) — ຄົນດຽວ. ຜູ້ຂໍ (ຫຼືຜູ້ຮັບຜິດຊອບ/ຫົວໜ້າແຜນກ) ກຳນົດ ຫຼືປ່ຽນໄດ້ຕະຫຼອດ
+   * ຕັ້ງແຕ່ສ້າງໃບຂໍຈົນຮັບເຄື່ອງ. ຊັບສິນຍັງບັນທຶກໃຫ້ຜູ້ຂໍ/ແຜນກຄືເກົ່າ.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  delegateId?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  delegateSetBy?: Types.ObjectId;
+
+  @Prop()
+  delegateSetAt?: Date;
+
+  /** ມີຄ່າ = ເຈົ້າໜ້າທີ່ສາງໃຊ້ override ຮັບເຄື່ອງແທນ (ມີເຫດຜົນ ແລະ audit log) */
+  @Prop({ type: SupplyRequestReceiveOverride })
+  receiveOverride?: SupplyRequestReceiveOverride;
+
   /** ຊັບສິນ (_id) ທີ່ຮັບໄປແລ້ວຕາມໃບນີ້ — ໃຊ້ນັບໂຄຕ້າ ບໍ່ໃຫ້ claim/ຮັບເກີນຈຳນວນທີ່ຂໍ */
   @Prop({ type: [String], default: [] })
   receivedAssetIds!: string[];
@@ -84,3 +114,4 @@ export const SupplyRequestSchema = SchemaFactory.createForClass(SupplyRequest);
 SupplyRequestSchema.index({ requestedBy: 1, status: 1 });
 SupplyRequestSchema.index({ departmentId: 1, status: 1 });
 SupplyRequestSchema.index({ status: 1 });
+SupplyRequestSchema.index({ delegateId: 1, status: 1 });

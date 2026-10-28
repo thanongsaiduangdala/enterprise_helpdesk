@@ -230,6 +230,48 @@ export class UsersService {
     return this.userModel.find(query).populate('role').exec();
   }
 
+  /**
+   * ຄົ້ນຫາພະນັກງານທີ່ຍັງໃຊ້ງານ ດ້ວຍຂໍ້ມູນຂັ້ນຕ່ຳ (ລະຫັດ, ຊື່, ແຜນກ) ສຳລັບ picker ເລືອກຜູ້ຮັບແທນ.
+   * ບໍ່ສົ່ງ email/ເບີໂທ/ຂໍ້ມູນລະອຽດ. q ແຍກເປັນຄຳ — ທຸກຄຳຕ້ອງກົງກັບ ຊື່/ນາມສະກຸນ/ລະຫັດ.
+   */
+  async searchForPicker(opts: {
+    q?: string;
+    departmentId?: string;
+    restrictToDepartmentId?: string;
+    alsoUserIds?: string[];
+    excludeUserIds?: string[];
+    limit?: number;
+  }) {
+    const and: any[] = [{ isActive: { $ne: false } }];
+    if (opts.excludeUserIds?.length) {
+      and.push({ _id: { $nin: opts.excludeUserIds } });
+    }
+    if (opts.departmentId) and.push({ departmentId: opts.departmentId });
+    if (opts.restrictToDepartmentId) {
+      and.push({
+        $or: [
+          { departmentId: opts.restrictToDepartmentId },
+          { _id: { $in: opts.alsoUserIds ?? [] } },
+        ],
+      });
+    }
+    const tokens = (opts.q ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 5);
+    for (const token of tokens) {
+      const re = new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      and.push({
+        $or: [{ firstName: re }, { lastName: re }, { employeeCode: re }],
+      });
+    }
+    return this.userModel
+      .find({ $and: and })
+      .select('employeeCode firstName lastName departmentId')
+      .populate('departmentId', 'name')
+      .sort({ firstName: 1, lastName: 1 })
+      .limit(Math.min(opts.limit ?? 20, 50))
+      .lean()
+      .exec();
+  }
+
   /** Active users in a branch + department whose role name is in `roleNames` (role populated). */
   async findAssignmentCandidates(
     branchId: string,

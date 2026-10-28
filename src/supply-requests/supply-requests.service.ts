@@ -13,10 +13,12 @@ import {
 } from './schemas/supply-request.schema';
 import { CreateSupplyRequestDto } from './dto/create-supply-request.dto';
 import { ReceiveSupplyRequestDto } from './dto/receive-supply-request.dto';
+import { SetSupplyRequestDelegateDto } from './dto/set-supply-request-delegate.dto';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { UsersService } from '../users/users.service';
 import { DepartmentsService } from '../departments/departments.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AssetsService } from '../assets/assets.service';
 import { AssetDocument, AssetStatus } from '../assets/schemas/asset.schema';
 import {
@@ -53,6 +55,7 @@ export class SupplyRequestsService {
     private departmentsService: DepartmentsService,
     private assetsService: AssetsService,
     @InjectConnection() private connection: Connection,
+    private notificationsService: NotificationsService,
   ) {}
 
   private async generateId(): Promise<string> {
@@ -128,11 +131,55 @@ export class SupplyRequestsService {
     };
   }
 
+  /**
+   * ກວດ ແລະ ແປງລະຫັດພະນັກງານຂອງຜູ້ຮັບແທນ (delegate) ເປັນ users._id.
+   * - ຕ້ອງມີຢູ່ ແລະ ຍັງໃຊ້ງານ; ຜູ້ຂໍບໍ່ຕ້ອງຕັ້ງຕົນເອງເປັນຜູ້ຮັບແທນ
+   * - ໃບຂອງແຜນກ: ຜູ້ຮັບແທນຕ້ອງເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງແຜນກ (ກົດດຽວກັບ assigneeCode)
+   */
+  private async resolveDelegate(
+    code: string,
+    requesterId: string,
+    departmentId?: string,
+  ): Promise<string> {
+    const delegate = await this.usersService.findByEmployeeCode(code.trim());
+    if (!delegate) {
+      throw new BadRequestException(`Employee code "${code}" not found`);
+    }
+    if (delegate.isActive === false) {
+      throw new BadRequestException(`Employee code "${code}" is inactive`);
+    }
+    const delegateId = String(delegate._id);
+    if (delegateId === requesterId) {
+      throw new BadRequestException(
+        'The requester cannot be their own delegate — the requester can already collect',
+      );
+    }
+    if (departmentId) {
+      const department = await this.departmentsService.findOne(departmentId);
+      const managerIds = (department?.managerIds ?? []).map(String);
+      const inDepartment = String(delegate.departmentId ?? '') === departmentId;
+      if (!inDepartment && !managerIds.includes(delegateId)) {
+        throw new BadRequestException(
+          'ຜູ້ຮັບແທນຕ້ອງເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງພະແນກນີ້',
+        );
+      }
+    }
+    return delegateId;
+  }
+
   async create(dto: CreateSupplyRequestDto, requestedBy: string, ip?: string) {
     const departmentAssignment = await this.resolveDepartmentAssignment(
       dto,
       requestedBy,
     );
+    const delegateCode = dto.delegateCode?.trim();
+    const delegateId = delegateCode
+      ? await this.resolveDelegate(
+          delegateCode,
+          requestedBy,
+          departmentAssignment?.departmentId,
+        )
+      : undefined;
     for (const item of dto.items) {
       if (item.catalogItemId) {
         await this.catalogService.findOne(item.catalogItemId);
@@ -146,6 +193,13 @@ export class SupplyRequestsService {
       requestedBy,
       items: dto.items,
       ...(departmentAssignment ?? {}),
+      ...(delegateId
+        ? {
+            delegateId,
+            delegateSetBy: requestedBy,
+            delegateSetAt: new Date(),
+          }
+        : {}),
     }).save();
     await this.auditLogsService.log(
       requestedBy,
@@ -177,6 +231,7 @@ export class SupplyRequestsService {
     const scope: any[] = [
       { requestedBy: userId },
       { custodianId: userId },
+      { delegateId: userId },
     ];
     if (managedDepartmentIds.length > 0) {
       scope.push({ departmentId: { $in: managedDepartmentIds } });
@@ -188,6 +243,11 @@ export class SupplyRequestsService {
       .populate('requestedBy', 'firstName lastName email employeeCode')
       .populate('departmentId', 'name')
       .populate('custodianId', 'firstName lastName employeeCode')
+      .populate('delegateId', 'firstName lastName employeeCode')
+      .populate('approvedBy', 'firstName lastName employeeCode')
+      .populate('fulfilledBy', 'firstName lastName employeeCode')
+      .populate('receivedBy', 'firstName lastName employeeCode')
+      .populate('receiveOverride.by', 'firstName lastName employeeCode')
       .exec();
   }
 
@@ -219,6 +279,7 @@ export class SupplyRequestsService {
       .populate('requestedBy', 'firstName lastName email employeeCode')
       .populate('departmentId', 'name')
       .populate('custodianId', 'firstName lastName employeeCode')
+      .populate('delegateId', 'firstName lastName employeeCode')
       .exec();
   }
 
@@ -408,6 +469,146 @@ export class SupplyRequestsService {
     return saved;
   }
 
+  /** ຜູ້ຂໍ, ຜູ້ຮັບຜິດຊອບ ຫຼື ຫົວໜ້າແຜນກ (ໃບຂອງແຜນກ) ເທົ່ານັ້ນທີ່ກຳນົດຜູ້ຮັບແທນໄດ້ */
+  private async assertCanNameDelegate(
+    request: SupplyRequestDocument,
+    actorId: string,
+  ) {
+    const requestDepartmentId = request.departmentId
+      ? String(request.departmentId)
+      : undefined;
+    const isRequester = actorId === request.requestedBy.toString();
+    const isCustodian =
+      !!request.custodianId && String(request.custodianId) === actorId;
+    const isDepartmentManager =
+      !!requestDepartmentId &&
+      (
+        await this.departmentsService.findManagedDepartmentIds(actorId)
+      ).includes(requestDepartmentId);
+    if (!isRequester && !isCustodian && !isDepartmentManager) {
+      throw new ForbiddenException(
+        'Only the requester (or the department custodian/manager) can name the person who collects this request',
+      );
+    }
+  }
+
+  /**
+   * ລາຍຊື່ຄົນທີ່ເລືອກເປັນຜູ້ຮັບແທນໄດ້ (ຄົ້ນຫາ + ກັ່ນຕອງຕາມແຜນກ) — ຂໍ້ມູນຂັ້ນຕ່ຳເທົ່ານັ້ນ.
+   * ໃບຂອງແຜນກ: ຈຳກັດສະເພາະສະມາຊິກ/ຫົວໜ້າຂອງແຜນກນັ້ນ (ກົດດຽວກັບ resolveDelegate).
+   */
+  async findDelegateCandidates(
+    id: string,
+    query: { q?: string; departmentId?: string },
+    user: PermissionUser,
+  ) {
+    const actorId = user.userId;
+    if (!actorId) throw new BadRequestException('Not authenticated');
+    const request = await this.requestModel.findById(id).exec();
+    if (!request) throw new NotFoundException('Supply request not found');
+    this.assertStatusIn(request, OPEN_STATUSES);
+    await this.assertCanNameDelegate(request, actorId);
+
+    const requestDepartmentId = request.departmentId
+      ? String(request.departmentId)
+      : undefined;
+    let managerIds: string[] = [];
+    let departments: Array<{ _id: string; name: string }>;
+    if (requestDepartmentId) {
+      const department =
+        await this.departmentsService.findOne(requestDepartmentId);
+      managerIds = (department?.managerIds ?? []).map(String);
+      departments = [
+        { _id: requestDepartmentId, name: department?.name ?? requestDepartmentId },
+      ];
+    } else {
+      const all = await this.departmentsService.findAll();
+      departments = all
+        .filter((d) => d.isActive !== false)
+        .map((d) => ({ _id: String(d._id), name: d.name }));
+    }
+
+    const users = await this.usersService.searchForPicker({
+      q: query.q,
+      departmentId: query.departmentId || undefined,
+      restrictToDepartmentId: requestDepartmentId,
+      alsoUserIds: managerIds,
+      excludeUserIds: [request.requestedBy.toString()],
+    });
+    return { users, departments };
+  }
+
+  /**
+   * ກຳນົດ/ປ່ຽນ/ລຶບ ຜູ້ຮັບແທນ (delegate, 1 ຄົນ) ຫຼັງອະນຸມັດ ຈົນກວ່າຈະຮັບເຄື່ອງ.
+   * ເຮັດໄດ້ສະເພາະຜູ້ຂໍ, ຜູ້ຮັບຜິດຊອບ ຫຼື ຫົວໜ້າຂອງແຜນກ (ໃບຂອງແຜນກ).
+   */
+  async setDelegate(
+    id: string,
+    dto: SetSupplyRequestDelegateDto,
+    user: PermissionUser,
+    ip?: string,
+  ) {
+    const actorId = user.userId;
+    if (!actorId) throw new BadRequestException('Not authenticated');
+    const request = await this.requestModel.findById(id).exec();
+    if (!request) throw new NotFoundException('Supply request not found');
+    this.assertStatusIn(request, OPEN_STATUSES);
+
+    const requesterId = request.requestedBy.toString();
+    const requestDepartmentId = request.departmentId
+      ? String(request.departmentId)
+      : undefined;
+    await this.assertCanNameDelegate(request, actorId);
+
+    const code = dto.delegateCode?.trim();
+    const newDelegateId = code
+      ? await this.resolveDelegate(code, requesterId, requestDepartmentId)
+      : undefined;
+    const previousDelegateId = request.delegateId
+      ? String(request.delegateId)
+      : undefined;
+    if (newDelegateId === previousDelegateId) return request;
+
+    const before = request.toObject();
+    if (newDelegateId) {
+      request.delegateId = newDelegateId as any;
+      request.delegateSetBy = actorId as any;
+      request.delegateSetAt = new Date();
+    } else {
+      request.delegateId = undefined;
+      request.delegateSetBy = undefined;
+      request.delegateSetAt = undefined;
+    }
+    const saved = await request.save();
+
+    await this.auditLogsService.log(
+      actorId,
+      newDelegateId
+        ? 'SUPPLY_REQUEST_DELEGATE_SET'
+        : 'SUPPLY_REQUEST_DELEGATE_CLEARED',
+      'SupplyRequest',
+      id,
+      before,
+      saved.toObject(),
+      ip,
+    );
+
+    if (newDelegateId) {
+      try {
+        await this.notificationsService.notify(
+          newDelegateId,
+          'SUPPLY_REQUEST_DELEGATE_SET',
+          id,
+          'SupplyRequest',
+          `ທ່ານຖືກກຳນົດໃຫ້ຮັບເຄື່ອງແທນ: ${id}`,
+          `ທ່ານຖືກກຳນົດເປັນຜູ້ຮັບເຄື່ອງແທນຕາມໃບຂໍ ${id} — ເປີດໃບຮັບເຄື່ອງເພື່ອຢືນຢັນເມື່ອມາຮັບ`,
+        );
+      } catch {
+        // the delegate is saved; a failed notification must not undo it
+      }
+    }
+    return saved;
+  }
+
   /**
    * ໃບຮັບເຄື່ອງ (ເປີດຈາກ QR ຂອງໃບຂໍ) — ຜູ້ຂໍ, ຜູ້ຮັບຜິດຊອບ/ຫົວໜ້າແຜນກ,
    * ຫຼື ຜູ້ມີສິດ supplies.* ເທົ່ານັ້ນ
@@ -418,6 +619,7 @@ export class SupplyRequestsService {
       .populate('requestedBy', 'firstName lastName employeeCode branchId')
       .populate('departmentId', 'name managerIds branchId')
       .populate('custodianId', 'firstName lastName employeeCode branchId')
+      .populate('delegateId', 'firstName lastName employeeCode')
       .exec();
     if (!request) throw new NotFoundException('Supply request not found');
 
@@ -429,12 +631,17 @@ export class SupplyRequestsService {
     const custodianId = custodianRef
       ? String(custodianRef._id ?? custodianRef)
       : undefined;
+    const delegateRef: any = request.delegateId;
+    const delegateId = delegateRef
+      ? String(delegateRef._id ?? delegateRef)
+      : undefined;
     const managerIds: string[] =
       departmentId && typeof deptRef === 'object'
         ? (deptRef.managerIds ?? []).map(String)
         : [];
     const isRequester = requesterId === user.userId;
     const isCustodian = !!custodianId && custodianId === user.userId;
+    const isDelegate = !!delegateId && delegateId === user.userId;
     const isDepartmentManager =
       !!departmentId && !!user.userId && managerIds.includes(user.userId);
     const elevated = hasAnyPermission(user, 'supplies', [
@@ -442,9 +649,22 @@ export class SupplyRequestsService {
       'fulfill',
       'manage',
     ]);
-    if (!elevated && !isRequester && !isCustodian && !isDepartmentManager) {
+    if (
+      !elevated &&
+      !isRequester &&
+      !isCustodian &&
+      !isDelegate &&
+      !isDepartmentManager
+    ) {
       throw new NotFoundException('Supply request not found');
     }
+    const isOpen = OPEN_STATUSES.includes(request.status);
+    const isAuthorizedCollector =
+      isRequester || isDelegate || isCustodian || isDepartmentManager;
+    // ເຈົ້າໜ້າທີ່ສາງທີ່ບໍ່ແມ່ນຜູ້ຂໍ/ຜູ້ຮັບແທນ ຕ້ອງໃຊ້ override (supplies.fulfill + assets.assign + ເຫດຜົນ)
+    const canOverride =
+      hasPermission(user, 'supplies', 'fulfill') &&
+      hasPermission(user, 'assets', 'assign');
 
     const flags = await Promise.all(
       request.items.map((i) =>
@@ -461,19 +681,21 @@ export class SupplyRequestsService {
       isDepartmentRequest: !!departmentId,
       isRequester,
       isCustodian,
+      isDelegate,
       isDepartmentManager,
-      canConfirm:
-        OPEN_STATUSES.includes(request.status) &&
-        (isRequester ||
-          isCustodian ||
-          isDepartmentManager ||
-          hasPermission(user, 'supplies', 'fulfill')),
+      canConfirm: isOpen && (isAuthorizedCollector || canOverride),
+      /** true = ການຢືນຢັນຂອງຜູ້ເປີດຈະເປັນ override — ຕ້ອງໃສ່ເຫດຜົນ */
+      requiresOverride: isOpen && !isAuthorizedCollector && canOverride,
+      canSetDelegate:
+        isOpen && (isRequester || isCustodian || isDepartmentManager),
     };
   }
 
   /**
    * ຢືນຢັນຮັບເຄື່ອງທັງໃບໃນຄັ້ງດຽວ — ທຸກຢ່າງຢູ່ໃນ transaction ດຽວ (ສຳເລັດທັງໝົດ ຫຼືບໍ່ມີຫຍັງປ່ຽນ):
-   * - ຜູ້ເຮັດ: ຜູ້ຂໍເອງ ຫຼື ຜູ້ມີ supplies.fulfill (ຜູ້ດູແລສາງ)
+   * - ຜູ້ເຮັດ: ຜູ້ຂໍ, ຜູ້ຮັບແທນ (delegate) ທີ່ຖືກກຳນົດ, ຜູ້ຮັບຜິດຊອບ/ຫົວໜ້າແຜນກ (ໃບແຜນກ)
+   *   ຫຼື ເຈົ້າໜ້າທີ່ສາງ (supplies.fulfill) ຜ່ານ override: ຕ້ອງມີ assets.assign + overrideReason,
+   *   ບັນທຶກໃນ audit log + ໃບຂໍ ແລະແຈ້ງເຕືອນຜູ້ຂໍ
    * - ຂອງມີ Asset Tag (catalog ທີ່ມີຊັບສິນຜູກຢູ່): ຕ້ອງສະແກນຄົບຕາມຈຳນວນທີ່ຂໍ (ນັບລວມທີ່ເຄີຍຮັບແລ້ວຜ່ານການສະແກນ)
    * - ສະຕ໊ອກ Catalog ຂອງຂອງມີ Asset Tag ຂະຫຍັບອັດຕະໂນມັດຕາມຊັບສິນ (ເບິ່ງ AssetsService.syncStock)
    * - ຂອງໃຊ້ສິ້ນເປືອງ: ຕ້ອງ confirmConsumables = true ແລະລະບົບຕັດສະຕ໊ອກ
@@ -551,10 +773,29 @@ export class SupplyRequestsService {
         !!departmentCustodianId && actorId === departmentCustodianId;
       const isDepartmentManager =
         isDepartmentRequest && departmentManagerIds.includes(actorId);
-      if (!isRequester && !canFulfill && !isCustodian && !isDepartmentManager) {
-        throw new ForbiddenException(
-          'Only the requester, the department custodian/manager (or warehouse staff with supplies.fulfill) can confirm receipt of this request',
-        );
+      const isDelegate =
+        !!request.delegateId && String(request.delegateId) === actorId;
+      const isAuthorizedCollector =
+        isRequester || isDelegate || isCustodian || isDepartmentManager;
+      let overrideReason: string | undefined;
+      if (!isAuthorizedCollector) {
+        if (!canFulfill) {
+          throw new ForbiddenException(
+            'Only the requester, the named delegate, the department custodian/manager (or warehouse staff using the override) can confirm receipt of this request',
+          );
+        }
+        // ເຈົ້າໜ້າທີ່ສາງຮັບແທນ = override: ຕ້ອງມີສິດ assets.assign + ເຫດຜົນເປັນລາຍລັກອັກສອນ
+        if (!canAssign) {
+          throw new ForbiddenException(
+            'Collecting on behalf of the requester (override) requires the "assets.assign" permission',
+          );
+        }
+        overrideReason = dto.overrideReason?.trim();
+        if (!overrideReason || overrideReason.length < 5) {
+          throw new BadRequestException(
+            'A written reason (overrideReason, at least 5 characters) is required when confirming receipt on behalf of the requester',
+          );
+        }
       }
       if (
         (await sodEnforced()) &&
@@ -610,20 +851,26 @@ export class SupplyRequestsService {
         isDepartmentRequest &&
         !receivedById &&
         actorId !== departmentCustodianId &&
-        (isRequester || isDepartmentManager)
+        (isRequester || isDepartmentManager || isDelegate)
       ) {
         receivedById = actorId;
       }
       const proxyReceiver = isDepartmentRequest && !!receivedById;
       const allowedAssignee = isDepartmentRequest
         ? proxyReceiver
-          ? isRequester || isCustodian || isDepartmentManager || canAssign
+          ? isRequester ||
+            isDelegate ||
+            isCustodian ||
+            isDepartmentManager ||
+            canAssign
           : isRequester ||
+            isDelegate ||
             isCustodian ||
             isDepartmentManager ||
             canFulfill ||
             canAssign
         : (isRequester && assigneeId === actorId) ||
+          (isDelegate && assigneeId === requesterId) ||
           canAssign ||
           (canFulfill && assigneeId === requesterId);
       if (!allowedAssignee) {
@@ -797,6 +1044,13 @@ export class SupplyRequestsService {
       request.fulfilledBy = actorId as any;
       request.fulfilledAt = new Date();
       request.receivedBy = (receivedById ?? assigneeId) as any;
+      if (overrideReason) {
+        request.receiveOverride = {
+          by: actorId as any,
+          reason: overrideReason,
+          at: new Date(),
+        };
+      }
       const savedRequest = await request.save({ session });
 
       audits.push({
@@ -808,12 +1062,61 @@ export class SupplyRequestsService {
         after: savedRequest.toObject(),
         ip,
       });
+      if (overrideReason) {
+        audits.push({
+          actorId,
+          action: 'SUPPLY_REQUEST_RECEIVE_OVERRIDE',
+          entityType: 'SupplyRequest',
+          entityId: id,
+          after: {
+            reason: overrideReason,
+            requesterId,
+            delegateId: request.delegateId
+              ? String(request.delegateId)
+              : undefined,
+          },
+          ip,
+        });
+      }
       return savedRequest;
     });
 
     // audit ບັນທຶກຫຼັງ commit ສຳເລັດເທົ່ານັ້ນ
     await this.assetsService.flushAudits(audits);
+    if (saved.receiveOverride && String(saved.receiveOverride.by) === user.userId) {
+      await this.notifyReceiveOverride(saved, user.userId!);
+    }
     return saved;
+  }
+
+  /** ແຈ້ງເຕືອນຜູ້ຂໍ (ແລະຜູ້ຮັບແທນທີ່ຖືກຂ້າມ) ວ່າມີຄົນອື່ນຮັບເຄື່ອງແທນ — ລົ້ມເຫລວກໍ່ບໍ່ກະທົບການຮັບເຄື່ອງ */
+  private async notifyReceiveOverride(
+    request: SupplyRequestDocument,
+    actorId: string,
+  ) {
+    try {
+      const actor = await this.usersService.findOneRaw(actorId);
+      const actorName =
+        `${actor.firstName ?? ''} ${actor.lastName ?? ''}`.trim() ||
+        actor.employeeCode ||
+        actorId;
+      const reason = request.receiveOverride?.reason ?? '';
+      const recipients = new Set<string>([String(request.requestedBy)]);
+      if (request.delegateId) recipients.add(String(request.delegateId));
+      recipients.delete(actorId);
+      for (const userId of recipients) {
+        await this.notificationsService.notify(
+          userId,
+          'SUPPLY_REQUEST_RECEIVE_OVERRIDE',
+          String(request._id),
+          'SupplyRequest',
+          `ມີຄົນຮັບເຄື່ອງແທນ: ${request._id}`,
+          `${actorName} (ເຈົ້າໜ້າທີ່ສາງ) ໄດ້ຢືນຢັນຮັບເຄື່ອງຕາມໃບຂໍ ${request._id} ແທນ — ເຫດຜົນ: ${reason}`,
+        );
+      }
+    } catch {
+      // the receipt is already committed; a failed notification must not fail it
+    }
   }
 
   async bulkFulfill(ids: string[], fulfilledById: string, ip?: string) {

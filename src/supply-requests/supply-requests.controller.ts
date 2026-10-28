@@ -15,6 +15,7 @@ import { CreateSupplyRequestDto } from './dto/create-supply-request.dto';
 import { RejectSupplyRequestDto } from './dto/reject-supply-request.dto';
 import { BulkFulfillDto } from './dto/bulk-fulfill.dto';
 import { ReceiveSupplyRequestDto } from './dto/receive-supply-request.dto';
+import { SetSupplyRequestDelegateDto } from './dto/set-supply-request-delegate.dto';
 import { SupplyRequestStatus } from './schemas/supply-request.schema';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -77,6 +78,24 @@ export class SupplyRequestsController {
     return this.requestsService.getReceipt(id, req.user);
   }
 
+  /** ຄົ້ນຫາ/ກັ່ນຕອງຄົນທີ່ເລືອກເປັນຜູ້ຮັບແທນໄດ້ — ສະເພາະຜູ້ມີສິດກຳນົດຜູ້ຮັບແທນຂອງໃບນີ້ */
+  @Get(':id/delegate-candidates')
+  @RequirePermission('supplies', 'read')
+  @ApiQuery({ name: 'q', required: false })
+  @ApiQuery({ name: 'departmentId', required: false })
+  delegateCandidates(
+    @Param('id') id: string,
+    @Query('q') q: string | undefined,
+    @Query('departmentId') departmentId: string | undefined,
+    @Req() req: any,
+  ) {
+    return this.requestsService.findDelegateCandidates(
+      id,
+      { q, departmentId },
+      req.user,
+    );
+  }
+
   @Get(':id')
   @RequirePermission('supplies', 'read')
   findOne(@Param('id') id: string, @Req() req: any) {
@@ -103,6 +122,19 @@ export class SupplyRequestsController {
   @RequirePermission('supplies', 'fulfill')
   fulfill(@Param('id') id: string, @Req() req: any) {
     return this.requestsService.fulfill(id, req.user.userId, req.ip);
+  }
+
+  /**
+   * ຜູ້ຂໍ (ຫຼືຜູ້ຮັບຜິດຊອບ/ຫົວໜ້າແຜນກ) ກຳນົດ/ປ່ຽນ/ລຶບ ຜູ້ຮັບແທນ (1 ຄົນ) — service ກວດສິດ ແລະສະຖານະ
+   */
+  @Patch(':id/delegate')
+  @RequirePermission('supplies', 'read')
+  setDelegate(
+    @Param('id') id: string,
+    @Body() dto: SetSupplyRequestDelegateDto,
+    @Req() req: any,
+  ) {
+    return this.requestsService.setDelegate(id, dto, req.user, req.ip);
   }
 
   // ຜູ້ຂໍ (supplies.read) ຢືນຢັນຮັບເອງໄດ້ — service ກວດວ່າເປັນຜູ້ຂໍ ຫຼື ມີສິດ supplies.fulfill

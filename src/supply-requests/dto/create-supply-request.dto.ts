@@ -72,4 +72,13 @@ export class CreateSupplyRequestDto {
   @IsOptional()
   @IsMongoId()
   custodianId?: string;
+
+  @ApiPropertyOptional({
+    example: 'EMP002',
+    description:
+      'Optional: employee code of the one person who will collect the items. Can also be set or changed later via PATCH /supply-requests/:id/delegate',
+  })
+  @IsOptional()
+  @IsString()
+  delegateCode?: string;
 }
