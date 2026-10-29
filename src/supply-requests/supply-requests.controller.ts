@@ -61,6 +61,23 @@ export class SupplyRequestsController {
     return this.requestsService.findRequestableDepartments(req.user.userId);
   }
 
+  /** ຄົ້ນຫາຄົນທີ່ເລືອກເປັນຜູ້ຮັບຜິດຊອບ ຕອນສ້າງໃບຂໍໃນນາມແຜນກ (ສະມາຊິກ/ຫົວໜ້າຂອງແຜນກນັ້ນ) */
+  @Get('custodian-candidates')
+  @RequirePermission('supplies', 'create')
+  @ApiQuery({ name: 'departmentId', required: true })
+  @ApiQuery({ name: 'q', required: false })
+  findCustodianCandidates(
+    @Query('departmentId') departmentId: string,
+    @Query('q') q: string | undefined,
+    @Req() req: any,
+  ) {
+    return this.requestsService.findCustodianCandidates(
+      departmentId,
+      q,
+      req.user.userId,
+    );
+  }
+
   @Get()
   @RequirePermission('supplies', 'read')
   @ApiQuery({ name: 'status', required: false, enum: SupplyRequestStatus })

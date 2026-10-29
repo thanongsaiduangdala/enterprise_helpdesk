@@ -405,6 +405,34 @@ export class SupplyRequestsService {
     );
   }
 
+  /**
+   * ລາຍຊື່ຄົນທີ່ເລືອກເປັນ "ຜູ້ຮັບຜິດຊອບ" ຕອນສ້າງໃບຂໍໃນນາມແຜນກ (ຄົ້ນຫາຕາມຊື່/ລະຫັດ).
+   * - ຜູ້ເອີ້ນຕ້ອງຂໍໃນນາມແຜນກນີ້ໄດ້ (ສະມາຊິກ ຫຼື ຫົວໜ້າ) — ກົດດຽວກັບ resolveDepartmentAssignment
+   * - ຜົນລັບຈຳກັດສະເພາະສະມາຊິກ/ຫົວໜ້າຂອງແຜນກນັ້ນ ແລະ ຍັງໃຊ້ງານ — ຂໍ້ມູນຂັ້ນຕ່ຳເທົ່ານັ້ນ
+   */
+  async findCustodianCandidates(
+    departmentId: string,
+    q: string | undefined,
+    userId: string,
+  ) {
+    if (!departmentId) throw new BadRequestException('departmentId is required');
+    const requestable = await this.findRequestableDepartments(userId);
+    if (!requestable.some((d) => String(d._id) === String(departmentId))) {
+      throw new ForbiddenException(
+        'ທ່ານບໍ່ມີສິດຂໍໃນນາມແຜນກນີ້',
+      );
+    }
+    const department = await this.departmentsService.findOne(departmentId);
+    const managerIds = (department?.managerIds ?? []).map(String);
+    const users = await this.usersService.searchForPicker({
+      q,
+      restrictToDepartmentId: String(departmentId),
+      alsoUserIds: managerIds,
+      limit: 30,
+    });
+    return { users };
+  }
+
   async findMine(userId: string) {
     // Keep the existing personal scope, but include department requests for
     // users explicitly listed as managers. This matches getReceipt()'s
