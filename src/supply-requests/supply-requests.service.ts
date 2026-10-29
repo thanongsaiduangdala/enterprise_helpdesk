@@ -482,11 +482,11 @@ export class SupplyRequestsService {
    * `supplies.read` alone only covers a requester's own rows. Callers that
    * can approve/fulfill/manage the catalog see every request.
    */
-  findAll(status?: SupplyRequestStatus, requestedBy?: string) {
+  async findAll(status?: SupplyRequestStatus, requestedBy?: string) {
     const filter: Record<string, unknown> = {};
     if (status) filter.status = status;
     if (requestedBy) filter.requestedBy = requestedBy;
-    return this.requestModel
+    const docs = await this.requestModel
       .find(filter)
       .sort({ createdAt: -1 })
       .populate('requestedBy', 'firstName lastName email employeeCode')
@@ -494,6 +494,8 @@ export class SupplyRequestsService {
       .populate('custodianId', 'firstName lastName employeeCode')
       .populate('delegateId', 'firstName lastName employeeCode')
       .exec();
+    // ໃສ່ purchaseStatus ໃຫ້ລາຍການທີ່ຜູກໃບສະເໜີຊື້ — ໜ້າອະນຸມັດໃຊ້ສະແດງສະຖານະໃບສະເໜີຊື້
+    return this.attachPurchaseStatus(docs);
   }
 
   async findOne(id: string, requestedBy?: string) {
