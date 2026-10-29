@@ -167,6 +167,37 @@ export class SupplyRequestsService {
     );
   }
 
+  async lookupCustodian(employeeCode: string, departmentId?: string) {
+    const user = await this.usersService.findByEmployeeCode(
+      String(employeeCode ?? '').trim(),
+    );
+    if (!user) return { found: false as const };
+    let eligible = true;
+    let reason: string | undefined;
+    if (user.isActive === false) {
+      eligible = false;
+      reason = 'ບັນຊີນີ້ຖືກປິດໃຊ້ງານ';
+    } else if (departmentId) {
+      const department = await this.departmentsService.findOne(departmentId);
+      const inDept =
+        String(user.departmentId ?? '') === String(department?._id ?? '');
+      const isManager = (department?.managerIds ?? [])
+        .map(String)
+        .includes(String(user._id));
+      if (!inDept && !isManager) {
+        eligible = false;
+        reason = `ບໍ່ແມ່ນສະມາຊິກ ຫຼືຫົວໜ້າຂອງພະແນກ "${department?.name ?? departmentId}"`;
+      }
+    }
+    return {
+      found: true as const,
+      employeeCode: user.employeeCode,
+      name: [user.firstName, user.lastName].filter(Boolean).join(' '),
+      eligible,
+      reason,
+    };
+  }
+
   async findMine(userId: string) {
     // Keep the existing personal scope, but include department requests for
     // users explicitly listed as managers. This matches getReceipt()'s
