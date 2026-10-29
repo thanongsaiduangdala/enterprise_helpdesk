@@ -116,6 +116,12 @@ export class AssetsController {
     return this.assetsService.findOverdueReturns();
   }
 
+  @Get(':id/timeline')
+  @RequirePermission('assets', 'read')
+  timeline(@Param('id') id: string) {
+    return this.assetsService.getTimeline(id);
+  }
+
   @Get(':id')
   @RequirePermission('assets', 'read')
   findOne(@Param('id') id: string) {

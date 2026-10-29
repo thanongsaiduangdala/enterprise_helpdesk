@@ -9,6 +9,7 @@ import { UsersModule } from '../users/users.module';
 import { Counter, CounterSchema } from '../roles/schemas/counter.schema';
 import { BranchesModule } from '../branches/branches.module';
 import { PurchaseRequestsModule } from '../purchase-requests/purchase-requests.module';
+import { SupplyRequestsModule } from '../supply-requests/supply-requests.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { PurchaseRequestsModule } from '../purchase-requests/purchase-requests.m
     UsersModule,
     BranchesModule,
     PurchaseRequestsModule,
+    SupplyRequestsModule,
   ],
   controllers: [GoodsReceiptController],
   providers: [GoodsReceiptService],

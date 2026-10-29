@@ -5,6 +5,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -63,4 +64,15 @@ export class CreateSupplyCatalogItemDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    example: '/api/uploads/0123456789abcdef0123456789abcdef.jpg',
+    description: 'ຮູບລາຍການ (ອັບໂຫຼດຜ່ານ /api/uploads) — ສົ່ງຄ່າວ່າງເພື່ອລຶບຮູບ',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^(\/api\/uploads\/[a-f0-9]{32}\.(png|jpe?g|gif|webp))?$/i, {
+    message: 'ຮູບລາຍການບໍ່ຖືກຕ້ອງ (ຮອງຮັບ png, jpg, gif, webp)',
+  })
+  imageUrl?: string;
 }

@@ -408,6 +408,207 @@ export class AssetsService {
     return asset;
   }
 
+  /**
+   * ໄທມ໌ໄລນ໌ປະຫວັດຂອງຊັບສິນໜຶ່ງຊິ້ນ: ຮັບເຂົ້າສາງ → ມອບໝາຍ/ຮັບຄືນ → ສ້ອມແປງ/ປ່ຽນສະຖານະ
+   * (ຮວມຊື່ຜູ້ດຳເນີນການ + ຜູ້ຮັບ). ອ່ານຢ່າງດຽວ — ບໍ່ແກ້ໄຂຂໍ້ມູນ.
+   */
+  async getTimeline(id: string) {
+    const asset = await this.findOne(id);
+    const obj = asset.toObject() as any;
+
+    const toId = (v: any) =>
+      v && typeof v === 'object' ? String(v._id ?? v.id ?? v) : v ? String(v) : '';
+
+    // ── 1) ຂໍ້ມູນດິບ ──
+    const GoodsReceiptModel: Model<any> | undefined =
+      this.connection.models['GoodsReceipt'];
+    const receipts = GoodsReceiptModel
+      ? await GoodsReceiptModel.find({ assetIds: id }).sort({ receivedDate: 1 }).lean().exec()
+      : [];
+    const audits = (await this.auditLogsService.findAll({
+      entityType: 'Asset',
+      entityId: id,
+    })) as any[];
+    const maintenance = (await this.maintenanceHistoryService.findByAssetId(id)) as any[];
+    const history: any[] = obj.assignmentHistory ?? [];
+
+    // ── 2) ແປງລະຫັດຜູ້ໃຊ້/ພະແນກ → ຊື່ (ຄັ້ງດຽວ) ──
+    const userIds = new Set<string>();
+    const addUser = (v: any) => {
+      const u = toId(v);
+      if (u) userIds.add(u);
+    };
+    history.forEach((h) => {
+      addUser(h.assigneeId);
+      addUser(h.receivedById);
+    });
+    receipts.forEach((r: any) => addUser(r.createdBy));
+    addUser(obj.currentAssigneeId);
+    audits.forEach((a) => addUser(a.actorId));
+    const UserModel: Model<any> | undefined = this.connection.models['User'];
+    const users = UserModel && userIds.size
+      ? await UserModel.find({ _id: { $in: [...userIds] } })
+          .select('firstName lastName employeeCode')
+          .lean()
+          .exec()
+      : [];
+    const userMap = new Map<string, { id: string; name: string; code?: string }>(
+      (users as any[]).map((u): [string, { id: string; name: string; code?: string }] => [
+        String(u._id),
+        {
+          id: String(u._id),
+          name: `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || String(u._id),
+          code: u.employeeCode,
+        },
+      ]),
+    );
+    const who = (v: any) => {
+      const key = toId(v);
+      return key ? (userMap.get(key) ?? { id: key, name: key }) : undefined;
+    };
+    const deptIds = [...new Set(history.map((h) => h.departmentId).filter(Boolean))];
+    if (obj.departmentId) deptIds.push(obj.departmentId);
+    const depts = deptIds.length
+      ? await this.departmentModel.find({ _id: { $in: deptIds } }).select('name').lean().exec()
+      : [];
+    const deptMap = new Map<string, string>((depts as any[]).map((d): [string, string] => [String(d._id), d.name]));
+    const deptName = (v?: string) => (v ? (deptMap.get(String(v)) ?? String(v)) : undefined);
+
+    // ── 3) ຈັບຄູ່ audit log ທີ່ໃກ້ເວລາທີ່ສຸດ ເພື່ອຮູ້ວ່າ "ໃຜເປັນຄົນດຳເນີນການ" ──
+    const WINDOW_MS = 2 * 60 * 1000;
+    const actorNear = (actions: string[], at?: Date | string) => {
+      if (!at) return undefined;
+      const t = new Date(at).getTime();
+      let best: any;
+      let bestDiff = Infinity;
+      for (const a of audits) {
+        if (!actions.includes(a.action)) continue;
+        const diff = Math.abs(new Date(a.timestamp).getTime() - t);
+        if (diff < bestDiff) {
+          best = a;
+          bestDiff = diff;
+        }
+      }
+      return best && bestDiff <= WINDOW_MS ? who(best.actorId) : undefined;
+    };
+
+    type Ev = {
+      type: string;
+      at: Date | string;
+      actor?: { id: string; name: string; code?: string };
+      holder?: { id: string; name: string; code?: string };
+      receivedBy?: { id: string; name: string; code?: string };
+      department?: string;
+      note?: string;
+      detail?: Record<string, any>;
+    };
+    const events: Ev[] = [];
+
+    // ຮັບເຂົ້າສາງ
+    for (const r of receipts as any[]) {
+      events.push({
+        type: 'RECEIVED',
+        at: r.receivedDate ?? r.createdAt,
+        actor: who(r.createdBy),
+        note: r.note || undefined,
+        detail: {
+          receiptNo: r.receiptNo,
+          vendor: r.vendor,
+          invoiceNo: r.invoiceNo,
+          unitPrice: r.unitPrice,
+          purchaseRequestNo: r.purchaseRequestNo,
+          storageRoom: r.storageRoom,
+          mode: r.mode,
+        },
+      });
+    }
+    if (receipts.length === 0) {
+      const created = [...audits].reverse().find((a) => a.action === 'ASSET_CREATED');
+      events.push({
+        type: 'CREATED',
+        at: created?.timestamp ?? obj.createdAt,
+        actor: created ? who(created.actorId) : undefined,
+        detail: {
+          purchaseDate: obj.purchaseDate,
+          purchasePrice: obj.purchasePrice,
+        },
+      });
+    }
+
+    // ມອບໝາຍ / ຮັບຄືນ (ຈາກ assignmentHistory + ຈັບຄູ່ຜູ້ດຳເນີນການຈາກ audit)
+    for (const h of history) {
+      events.push({
+        type: h.departmentId ? 'ASSIGNED_DEPT' : 'ASSIGNED',
+        at: h.assignedAt,
+        actor: actorNear(
+          ['ASSET_ASSIGNED', 'ASSET_REASSIGNED', 'ASSET_ASSIGNED_DEPT', 'ASSET_CLAIMED'],
+          h.assignedAt,
+        ),
+        holder: who(h.assigneeId),
+        receivedBy: who(h.receivedById),
+        department: deptName(h.departmentId),
+        note: h.note || undefined,
+      });
+      if (h.returnedAt) {
+        events.push({
+          type: 'RETURNED',
+          at: h.returnedAt,
+          actor: actorNear(['ASSET_RETURNED', 'ASSET_REASSIGNED'], h.returnedAt),
+          holder: who(h.assigneeId),
+          department: deptName(h.departmentId),
+        });
+      }
+    }
+
+    // ສ້ອມແປງ
+    for (const m of maintenance) {
+      events.push({
+        type: 'REPAIR',
+        at: m.maintenanceDate ?? m.createdAt,
+        actor: who(m.recordedBy),
+        detail: {
+          status: m.status,
+          issue: m.issue,
+          description: m.description,
+          repairNotes: m.repairNotes,
+          cost: m.cost,
+          completionDate: m.completionDate,
+          technician: m.technicianId
+            ? `${m.technicianId.firstName ?? ''} ${m.technicianId.lastName ?? ''}`.trim()
+            : undefined,
+        },
+      });
+    }
+
+    // ປ່ຽນສະຖານະ (ຂ້າມ ສ່ງຊ້ອມ/ສ້ອມແລ້ວ ຖ້າມີບັນທຶກສ້ອມແປງສະແດງແລ້ວ)
+    for (const a of audits) {
+      if (a.action !== 'ASSET_STATUS_CHANGED') continue;
+      const from = a.before?.status;
+      const to = a.after?.status;
+      if (maintenance.length > 0 && (to === 'UNDER_REPAIR' || from === 'UNDER_REPAIR')) continue;
+      events.push({
+        type: 'STATUS_CHANGED',
+        at: a.timestamp,
+        actor: who(a.actorId),
+        detail: { from, to },
+      });
+    }
+
+    events.sort((x, y) => new Date(y.at).getTime() - new Date(x.at).getTime());
+
+    return {
+      assetId: obj._id,
+      assetTag: obj.assetTag,
+      status: obj.status,
+      currentHolder: who(obj.currentAssigneeId),
+      currentDepartment: deptName(obj.departmentId),
+      firstReceivedAt: receipts[0]
+        ? ((receipts[0] as any).receivedDate ?? (receipts[0] as any).createdAt)
+        : obj.createdAt,
+      events,
+    };
+  }
+
   findManyByIds(ids: string[], session?: ClientSession) {
     if (!ids || ids.length === 0) return Promise.resolve([] as AssetDocument[]);
     return this.assetModel
@@ -800,6 +1001,12 @@ export class AssetsService {
       const auditNote = targetIsOther
         ? `${note ? note + ' — ' : ''}Handed over by ${actorId} to employee ${code}`
         : note;
+      const reservedFor =
+        asset.reservedForRequestId &&
+        hit &&
+        String(hit.request._id) === asset.reservedForRequestId
+          ? asset.reservedForRequestId
+          : undefined;
       const saved = await this.performAssign(
         asset,
         targetId,
@@ -807,6 +1014,8 @@ export class AssetsService {
         actorId,
         ip,
         ctx,
+        undefined,
+        reservedFor,
       );
       if (hit) {
         await this.recordReceipt(
@@ -847,6 +1056,14 @@ export class AssetsService {
       .session(session ?? null)
       .exec();
     for (const r of requests) {
+      // ຄຳຂໍທີ່ຜູກກັບໃບສະເໜີຊື້ ແລະຂອງຍັງມາບໍ່ຄົບ = ຍັງບໍ່ "ພ້ອມມາຮັບ" — ຍັງ claim ບໍ່ໄດ້
+      if (
+        r.items.some(
+          (i) => !!i.purchaseRequestId && (i.arrivedQty ?? 0) < (i.purchaseQty ?? 0),
+        )
+      ) {
+        continue;
+      }
       const prior = await this.findManyByIds(r.receivedAssetIds ?? [], session);
       const counts = r.items.map(() => 0);
       prior.forEach((p) => {
@@ -917,8 +1134,58 @@ export class AssetsService {
     ip: string | undefined,
     ctx: TxCtx,
     dept?: { departmentId: string; branchId: string; receivedById?: string },
+    reservedFor?: string,
   ) {
-    return this.performAssign(asset, assigneeId, note, actorId, ip, ctx, dept);
+    return this.performAssign(
+      asset,
+      assigneeId,
+      note,
+      actorId,
+      ip,
+      ctx,
+      dept,
+      reservedFor,
+    );
+  }
+
+  /** ຈອງຊັບສິນ (ທີ່ຍັງວ່າງ) ໄວ້ໃຫ້ຄຳຂໍເບີກ — ໃຊ້ຕອນຮັບເຄື່ອງຕາມໃບສະເໜີຊື້ທີ່ຜູກກັບຄຳຂໍ */
+  async reserveForRequestInTx(
+    assetIds: string[],
+    requestId: string,
+    session?: ClientSession,
+  ) {
+    if (assetIds.length === 0) return 0;
+    const res = await this.assetModel
+      .updateMany(
+        {
+          _id: { $in: assetIds },
+          status: AssetStatus.AVAILABLE,
+          reservedForRequestId: { $exists: false },
+        },
+        { $set: { reservedForRequestId: requestId } },
+        { session },
+      )
+      .exec();
+    return res.modifiedCount ?? 0;
+  }
+
+  /** ປົດການຈອງທັງໝົດຂອງຄຳຂໍ (ເຊັ່ນ ຄຳຂໍຖືກປະຕິເສດ) — ຊັບສິນກັບຄືນເປັນສະຕ໊ອກທົ່ວໄປ */
+  async releaseReservationsForRequest(requestId: string, session?: ClientSession) {
+    await this.assetModel
+      .updateMany(
+        { reservedForRequestId: requestId },
+        { $unset: { reservedForRequestId: 1 } },
+        { session },
+      )
+      .exec();
+  }
+
+  /** ຊັບສິນທີ່ຈອງໄວ້ໃຫ້ຄຳຂໍນີ້ (ຍັງບໍ່ໄດ້ມອບ) */
+  countReservedForRequest(requestId: string, session?: ClientSession) {
+    return this.assetModel
+      .countDocuments({ reservedForRequestId: requestId, status: AssetStatus.AVAILABLE })
+      .session(session ?? null)
+      .exec();
   }
 
   private async performAssign(
@@ -929,9 +1196,16 @@ export class AssetsService {
     ip: string | undefined,
     ctx: TxCtx,
     dept?: { departmentId: string; branchId: string; receivedById?: string },
+    reservedFor?: string,
   ) {
     if (asset.status === AssetStatus.RETIRED) {
       throw new BadRequestException('Cannot assign a retired asset');
+    }
+    // ຊັບສິນທີ່ຈອງໄວ້ໃຫ້ຄຳຂໍເບີກ ມອບໄດ້ສະເພາະຜ່ານຄຳຂໍນັ້ນ (ສະແກນຮັບ)
+    if (asset.reservedForRequestId && asset.reservedForRequestId !== reservedFor) {
+      throw new BadRequestException(
+        `ຊັບສິນ ${asset.assetTag} ຖືກຈອງໄວ້ສຳລັບຄຳຂໍເບີກ ${asset.reservedForRequestId} — ມອບໃຫ້ຄົນອື່ນບໍ່ໄດ້`,
+      );
     }
     // ມອບໄດ້ສະເພາະຊັບສິນ "ວ່າງ" — ຫ້າມມອບຊ້ຳໃຫ້ຄົນອື່ນ ຫຼື ມອບຕອນກຳລັງສ້ອມ
     if (asset.status !== AssetStatus.AVAILABLE) {
@@ -975,6 +1249,7 @@ export class AssetsService {
     asset.holderType = dept ? HolderType.DEPARTMENT : HolderType.PERSON;
     asset.departmentId = dept ? dept.departmentId : undefined;
     asset.status = AssetStatus.ASSIGNED;
+    asset.reservedForRequestId = undefined;
     const saved = await asset.save({ session: ctx.session });
 
     await this.syncStock(

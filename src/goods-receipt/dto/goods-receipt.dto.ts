@@ -117,6 +117,25 @@ export class ReceiveCommonDto {
   @ArrayMaxSize(1000)
   @IsString({ each: true })
   serialNumbers?: string[];
+
+  @ApiPropertyOptional({
+    example: '2027-10-29',
+    description: 'ວັນໝົດປະກັນ — ໃຊ້ກັບທຸກຊິ້ນທີ່ຮັບ (ສະເພາະອຸປະກອນ)',
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'ວັນໝົດປະກັນບໍ່ຖືກຕ້ອງ' })
+  warrantyExpiry?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'ວັນໝົດປະກັນຕໍ່ຊິ້ນ ຈັບຄູ່ຕາມລຳດັບ (ຄ່າວ່າງ = ໃຊ້ warrantyExpiry ລວມ)',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @IsString({ each: true })
+  warrantyExpiries?: string[];
 }
 
 export class RestockDto extends ReceiveCommonDto {
@@ -149,6 +168,14 @@ export class NewItemInfoDto {
   @IsNotEmpty({ message: 'ກະລຸນາໃສ່ໜ່ວຍນັບ' })
   @IsString()
   unit!: string;
+
+  @ApiPropertyOptional({ description: 'ຮູບລາຍການ (/api/uploads/...)' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^(\/api\/uploads\/[a-f0-9]{32}\.(png|jpe?g|gif|webp))?$/i, {
+    message: 'ຮູບລາຍການບໍ່ຖືກຕ້ອງ (ຮອງຮັບ png, jpg, gif, webp)',
+  })
+  imageUrl?: string;
 
   @ApiProperty({ enum: NewItemKind })
   @IsEnum(NewItemKind, {

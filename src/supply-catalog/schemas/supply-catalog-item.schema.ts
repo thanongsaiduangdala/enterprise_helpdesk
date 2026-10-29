@@ -40,6 +40,10 @@ export class SupplyCatalogItem {
 
   @Prop({ default: true })
   isActive!: boolean;
+
+  /** ຮູບຂອງລາຍການ (URL ຈາກ /api/uploads) — ທາງເລືອກ */
+  @Prop()
+  imageUrl?: string;
 }
 
 export const SupplyCatalogItemSchema =

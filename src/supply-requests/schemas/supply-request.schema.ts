@@ -33,6 +33,24 @@ class SupplyRequestItem {
 
   @Prop()
   reason?: string;
+
+  /**
+   * ໃບສະເໜີຊື້ (PurchaseRequest._id) ທີ່ຊື້ສ່ວນທີ່ສະຕັອກບໍ່ພໍ ຂອງລາຍການນີ້.
+   * ຕັ້ງໂດຍ backend ຕອນສ້າງຄຳຂໍ (ບໍ່ຮັບຄ່າຈາກ client ໂດຍກົງນອກຈາກ id).
+   */
+  @Prop({ type: String })
+  purchaseRequestId?: string;
+
+  @Prop()
+  purchaseRequestNo?: string;
+
+  /** ຈຳນວນທີ່ຂໍຊື້ (ສ່ວນທີ່ຂາດ). ສ່ວນທີ່ເຫຼືອ (quantity - purchaseQty) ມາຈາກສະຕັອກເດີມ */
+  @Prop({ min: 1 })
+  purchaseQty?: number;
+
+  /** ຈຳນວນ (ໃນ purchaseQty) ທີ່ຂອງມາຮອດຄັງແລ້ວ ຜ່ານໃບຮັບເຄື່ອງ */
+  @Prop({ min: 0, default: 0 })
+  arrivedQty?: number;
 }
 
 /** ບັນທຶກເມື່ອເຈົ້າໜ້າທີ່ສາງຮັບເຄື່ອງແທນ ໂດຍບໍ່ແມ່ນຜູ້ຂໍ/ຜູ້ຮັບແທນທີ່ກຳນົດໄວ້ (override) */
@@ -104,6 +122,10 @@ export class SupplyRequest {
   /** ມີຄ່າ = ເຈົ້າໜ້າທີ່ສາງໃຊ້ override ຮັບເຄື່ອງແທນ (ມີເຫດຜົນ ແລະ audit log) */
   @Prop({ type: SupplyRequestReceiveOverride })
   receiveOverride?: SupplyRequestReceiveOverride;
+
+  /** ມີຄ່າ = ຂອງທີ່ຕ້ອງຊື້ມາຄົບແລ້ວ ແລະຈອງໄວ້ — ພ້ອມໃຫ້ຜູ້ຂໍ/ຜູ້ຮັບແທນມາສະແກນຮັບ */
+  @Prop()
+  readyToCollectAt?: Date;
 
   /** ຊັບສິນ (_id) ທີ່ຮັບໄປແລ້ວຕາມໃບນີ້ — ໃຊ້ນັບໂຄຕ້າ ບໍ່ໃຫ້ claim/ຮັບເກີນຈຳນວນທີ່ຂໍ */
   @Prop({ type: [String], default: [] })

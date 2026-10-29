@@ -20,6 +20,7 @@ import { AssetsService } from '../assets/assets.service';
 import { UsersService } from '../users/users.service';
 import { BranchesService } from '../branches/branches.service';
 import { PurchaseRequestsService } from '../purchase-requests/purchase-requests.service';
+import { SupplyRequestsService } from '../supply-requests/supply-requests.service';
 import { PurchaseRequestMode } from '../purchase-requests/schemas/purchase-request.schema';
 import { Counter, CounterDocument } from '../roles/schemas/counter.schema';
 import { bumpCounterTo, nextSequence } from '../common/utils/counter.util';
@@ -52,6 +53,8 @@ type ReceiveInput = {
   exceptionReason?: string;
   note?: string;
   serialNumbers?: string[];
+  warrantyExpiry?: string;
+  warrantyExpiries?: string[];
   expectedQuantity?: number;
   countNote?: string;
   branchId?: string;
@@ -74,6 +77,7 @@ export class GoodsReceiptService {
     private purchaseRequests: PurchaseRequestsService,
     @InjectModel(Counter.name) private counterModel: Model<CounterDocument>,
     @InjectConnection() private connection: Connection,
+    private supplyRequests: SupplyRequestsService,
   ) {}
 
   /** ເພີ່ມເຄື່ອງເຂົ້າສະຕັອກ: ລາຍການຕ້ອງມີໃນ catalog ແລ້ວ */
@@ -163,8 +167,13 @@ export class GoodsReceiptService {
     }
 
     const audits: AuditEvent[] = [];
+    // ຜົນການຈອງໃຫ້ຄຳຂໍເບີກທີ່ຜູກກັບໃບສະເໜີ (ຖ້າມີ) — ແຈ້ງເຕືອນຫຼັງ commit
+    type Handover = Awaited<ReturnType<SupplyRequestsService['applyArrivalInTx']>>;
+    // (cast ກັນ TS narrow ເປັນ null ເພາະຄ່າຖືກຕັ້ງພາຍໃນ callback ຂອງ transaction)
+    let handover = null as Handover;
     const saved = await runInTransaction(this.connection, async (session) => {
       audits.length = 0;
+      handover = null;
       const ctx: TxCtx = { session, audits };
 
       // 1) ຫາ/ສ້າງລາຍການ catalog
@@ -176,6 +185,7 @@ export class GoodsReceiptService {
             name: newItem.name.trim(),
             category: newItem.category.trim(),
             unit: newItem.unit.trim(),
+            imageUrl: newItem.imageUrl || undefined,
             itemType: isConsumable
               ? CatalogItemType.CONSUMABLE
               : CatalogItemType.ASSET,
@@ -235,6 +245,11 @@ export class GoodsReceiptService {
       if (tracking === 'SERIAL' || tracking === 'TAG') {
         const serialFor = (index: number) =>
           tracking === 'TAG' ? undefined : serials[index];
+        // ວັນໝົດປະກັນຕໍ່ຊິ້ນ (ຖ້າມີ) ຊະນະຄ່າລວມ
+        const warrantyFor = (index: number) =>
+          input.warrantyExpiries?.[index]?.trim() ||
+          input.warrantyExpiry?.trim() ||
+          undefined;
 
         if (tracking === 'SERIAL') {
           // S/N ເປັນທາງເລືອກຕອນຮັບ — ຕື່ມພາຍຫຼັງໄດ້ຢູ່ທະບຽນຊັບສິນ. ຖ້າໃສ່ ຈັບຄູ່ຕາມລຳດັບ ແລະ ຕ້ອງບໍ່ເກີນຈຳນວນທີ່ຮັບ
@@ -285,6 +300,7 @@ export class GoodsReceiptService {
               serialNumber: serialFor(i),
               purchaseDate: input.receivedDate,
               purchasePrice: unitPrice,
+              warrantyExpiry: warrantyFor(i),
               note: `ຮັບເຄື່ອງເຂົ້າຄັງ (${input.mode})`,
             },
             ctx,
@@ -369,6 +385,24 @@ export class GoodsReceiptService {
           String(item._id),
           session,
         );
+        // ໃບສະເໜີນີ້ຜູກກັບຄຳຂໍເບີກ → ຈອງເຄື່ອງທີ່ຮັບໃຫ້ຜູ້ຂໍ (ຍັງຕ້ອງສະແກນຮັບຕາມປົກກະຕິ)
+        handover = await this.supplyRequests.applyArrivalInTx(
+          pr,
+          input.quantity,
+          assetIds,
+          session,
+        );
+        if (handover) {
+          audits.push({
+            actorId,
+            action: 'SUPPLY_REQUEST_GOODS_ARRIVED',
+            entityType: 'SupplyRequest',
+            entityId: handover.requestId,
+            before: handover.before,
+            after: handover.after,
+            ip,
+          });
+        }
       }
       audits.push({
         actorId,
@@ -394,9 +428,20 @@ export class GoodsReceiptService {
         assets: createdAssets,
         stockBefore,
         stockAfter,
+        handover: handover
+          ? {
+              requestId: handover.requestId,
+              itemName: handover.itemName,
+              arrivedQty: handover.arrivedQty,
+              purchaseQty: handover.purchaseQty,
+              awaitingApproval: handover.awaitingApproval,
+              readyToCollect: handover.becameReady,
+            }
+          : undefined,
       };
     });
     await this.assetsService.flushAudits(audits);
+    if (handover) await this.supplyRequests.notifyArrival(handover);
     return saved;
   }
 

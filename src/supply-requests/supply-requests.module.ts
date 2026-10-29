@@ -4,6 +4,10 @@ import {
   SupplyRequest,
   SupplyRequestSchema,
 } from './schemas/supply-request.schema';
+import {
+  PurchaseRequest,
+  PurchaseRequestSchema,
+} from '../purchase-requests/schemas/purchase-request.schema';
 import { SupplyRequestsService } from './supply-requests.service';
 import { SupplyRequestsController } from './supply-requests.controller';
 import { SupplyCatalogModule } from '../supply-catalog/supply-catalog.module';
@@ -17,6 +21,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
   imports: [
     MongooseModule.forFeature([
       { name: SupplyRequest.name, schema: SupplyRequestSchema },
+      { name: PurchaseRequest.name, schema: PurchaseRequestSchema },
     ]),
     SupplyCatalogModule,
     AuditLogsModule,

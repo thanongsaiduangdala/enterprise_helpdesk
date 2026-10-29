@@ -86,12 +86,20 @@ export class Asset {
 
   @Prop({ type: [AssignmentHistoryEntry], default: [] })
   assignmentHistory!: AssignmentHistoryEntry[];
+
+  /**
+   * ຈອງໄວ້ໃຫ້ຄຳຂໍເບີກ (SupplyRequest._id) — ຊັບສິນທີ່ມາຈາກໃບສະເໜີຊື້ທີ່ຜູກກັບຄຳຂໍເບີກ.
+   * ສະຖານະຍັງເປັນ AVAILABLE ແຕ່ມອບ/claim ໄດ້ສະເພາະຜ່ານຄຳຂໍນັ້ນ (ສະແກນຮັບຕາມປົກກະຕິ).
+   */
+  @Prop({ type: String, ref: 'SupplyRequest' })
+  reservedForRequestId?: string;
 }
 
 export const AssetSchema = SchemaFactory.createForClass(Asset);
 AssetSchema.index({ branchId: 1, status: 1 });
 AssetSchema.index({ currentAssigneeId: 1 });
 AssetSchema.index({ departmentId: 1 });
+AssetSchema.index({ reservedForRequestId: 1 }, { sparse: true });
 // S/N ຕ້ອງບໍ່ຊ້ຳ — ຂ້າມຄ່າຫວ່າງ/ບໍ່ມີ (ໃຊ້ $gt '' ແທນ sparse ເພາະ sparse ບໍ່ຂ້າມ '')
 AssetSchema.index(
   { serialNumber: 1 },

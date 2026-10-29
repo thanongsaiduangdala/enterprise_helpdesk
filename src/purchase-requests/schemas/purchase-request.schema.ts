@@ -87,6 +87,14 @@ export class PurchaseRequest {
   @Prop({ type: [String], default: [] })
   receiptIds!: string[];
 
+  /** ຄຳຂໍເບີກ (SupplyRequest._id) ທີ່ໃບນີ້ຊື້ສ່ວນທີ່ຂາດໃຫ້ — ເຄື່ອງທີ່ຮັບຈະຖືກຈອງໃຫ້ຜູ້ຂໍຄົນນັ້ນ */
+  @Prop({ type: String, ref: 'SupplyRequest' })
+  supplyRequestId?: string;
+
+  /** ລຳດັບລາຍການໃນຄຳຂໍເບີກ (items[index]) ທີ່ຜູກກັບໃບນີ້ */
+  @Prop({ min: 0 })
+  supplyRequestItemIndex?: number;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -95,3 +103,4 @@ export const PurchaseRequestSchema =
   SchemaFactory.createForClass(PurchaseRequest);
 PurchaseRequestSchema.index({ status: 1, createdAt: -1 });
 PurchaseRequestSchema.index({ requestedBy: 1, createdAt: -1 });
+PurchaseRequestSchema.index({ supplyRequestId: 1 }, { sparse: true });
