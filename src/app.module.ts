@@ -33,6 +33,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { SettingsModule } from './settings/organization-settings.module';
 import { MaintenanceHistoryModule } from './maintenance-history/maintenance-history.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { MaintenanceHistoryModule } from './maintenance-history/maintenance-hist
     UploadsModule,
     SettingsModule,
     MaintenanceHistoryModule,
+    RealtimeModule,
   ],
 
   providers: [

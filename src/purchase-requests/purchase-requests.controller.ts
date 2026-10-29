@@ -12,6 +12,7 @@ import {
 import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { PurchaseRequestsService } from './purchase-requests.service';
 import {
+  ApprovePurchaseRequestDto,
   CreatePurchaseRequestDto,
   RejectPurchaseRequestDto,
 } from './dto/purchase-request.dto';
@@ -52,6 +53,13 @@ export class PurchaseRequestsController {
     return this.service.findAll(status, this.scopingUserId(req), q);
   }
 
+  @Get('price-suggestion')
+  @RequirePermission('supplies', 'create')
+  @ApiQuery({ name: 'catalogItemId', required: true })
+  suggestPrice(@Query('catalogItemId') catalogItemId: string) {
+    return this.service.suggestPrice(catalogItemId);
+  }
+
   @Get(':id')
   @RequirePermission('supplies', 'read')
   findOne(@Param('id') id: string, @Req() req: any) {
@@ -60,8 +68,17 @@ export class PurchaseRequestsController {
 
   @Patch(':id/approve')
   @RequirePermission('supplies', 'approve')
-  approve(@Param('id') id: string, @Req() req: any) {
-    return this.service.approve(id, req.user.userId, req.ip);
+  approve(
+    @Param('id') id: string,
+    @Body() dto: ApprovePurchaseRequestDto,
+    @Req() req: any,
+  ) {
+    return this.service.approve(
+      id,
+      req.user.userId,
+      req.ip,
+      dto?.confirmLinkedApproval === true,
+    );
   }
 
   @Patch(':id/reject')

@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
@@ -64,6 +65,16 @@ export class CreatePurchaseRequestDto {
   @IsOptional()
   @IsDateString({}, { message: 'ວັນທີຕ້ອງການບໍ່ຖືກຕ້ອງ' })
   neededBy?: string;
+}
+
+export class ApprovePurchaseRequestDto {
+  @ApiPropertyOptional({
+    description:
+      'ຕ້ອງເປັນ true ເມື່ອໃບນີ້ຜູກກັບຄຳຂໍເບີກທີ່ລໍອະນຸມັດ — ຢືນຢັນວ່າຈະອະນຸມັດຄຳຂໍເບີກພ້ອມກັນ',
+  })
+  @IsOptional()
+  @IsBoolean()
+  confirmLinkedApproval?: boolean;
 }
 
 export class RejectPurchaseRequestDto {

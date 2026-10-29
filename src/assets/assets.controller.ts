@@ -87,12 +87,14 @@ export class AssetsController {
   @ApiQuery({ name: 'assigneeId', required: false })
   @ApiQuery({ name: 'departmentId', required: false })
   @ApiQuery({ name: 'holderType', required: false, enum: HolderType })
+  @ApiQuery({ name: 'catalogItemId', required: false })
   findAll(
     @Query('branchId') branchId?: string,
     @Query('status') status?: AssetStatus,
     @Query('assigneeId') assigneeId?: string,
     @Query('departmentId') departmentId?: string,
     @Query('holderType') holderType?: HolderType,
+    @Query('catalogItemId') catalogItemId?: string,
   ) {
     const ht =
       holderType && Object.values(HolderType).includes(holderType)
@@ -104,6 +106,7 @@ export class AssetsController {
       assigneeId,
       departmentId,
       holderType: ht,
+      catalogItemId,
     });
   }
 
@@ -111,6 +114,12 @@ export class AssetsController {
   @RequirePermission('assets', 'read')
   findOverdue() {
     return this.assetsService.findOverdueReturns();
+  }
+
+  @Get(':id/timeline')
+  @RequirePermission('assets', 'read')
+  timeline(@Param('id') id: string) {
+    return this.assetsService.getTimeline(id);
   }
 
   @Get(':id')

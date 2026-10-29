@@ -37,6 +37,14 @@ class SupplyRequestItemDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Purchase request (users own, same catalog item) that buys the shortage of this item. Quantities are validated and stored by the server.',
+  })
+  @IsOptional()
+  @IsMongoId({ message: 'purchaseRequestId ບໍ່ຖືກຕ້ອງ' })
+  purchaseRequestId?: string;
 }
 
 export class CreateSupplyRequestDto {
@@ -72,4 +80,13 @@ export class CreateSupplyRequestDto {
   @IsOptional()
   @IsMongoId()
   custodianId?: string;
+
+  @ApiPropertyOptional({
+    example: 'EMP002',
+    description:
+      'Optional: employee code of the one person who will collect the items. Can also be set or changed later via PATCH /supply-requests/:id/delegate',
+  })
+  @IsOptional()
+  @IsString()
+  delegateCode?: string;
 }

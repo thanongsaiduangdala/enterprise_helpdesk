@@ -1,4 +1,10 @@
-import { IsArray, IsBoolean, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ReceiveSupplyRequestDto {
@@ -27,4 +33,14 @@ export class ReceiveSupplyRequestDto {
   @IsOptional()
   @IsString()
   assigneeCode?: string;
+
+  @ApiPropertyOptional({
+    example: 'Requester on leave, items needed for the audit today',
+    description:
+      'Required when storeroom staff confirm receipt but are not the requester, the named delegate or (for department requests) the custodian/manager. Needs the "assets.assign" permission; recorded in the audit log and the requester is notified.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  overrideReason?: string;
 }

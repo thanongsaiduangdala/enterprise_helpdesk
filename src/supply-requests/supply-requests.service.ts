@@ -5,18 +5,25 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection, Model } from 'mongoose';
+import { ClientSession, Connection, Model } from 'mongoose';
 import {
   SupplyRequest,
   SupplyRequestDocument,
   SupplyRequestStatus,
 } from './schemas/supply-request.schema';
+import {
+  PurchaseRequest,
+  PurchaseRequestDocument,
+  PurchaseRequestStatus,
+} from '../purchase-requests/schemas/purchase-request.schema';
 import { CreateSupplyRequestDto } from './dto/create-supply-request.dto';
 import { ReceiveSupplyRequestDto } from './dto/receive-supply-request.dto';
+import { SetSupplyRequestDelegateDto } from './dto/set-supply-request-delegate.dto';
 import { SupplyCatalogService } from '../supply-catalog/supply-catalog.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { UsersService } from '../users/users.service';
 import { DepartmentsService } from '../departments/departments.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AssetsService } from '../assets/assets.service';
 import { AssetDocument, AssetStatus } from '../assets/schemas/asset.schema';
 import {
@@ -53,7 +60,151 @@ export class SupplyRequestsService {
     private departmentsService: DepartmentsService,
     private assetsService: AssetsService,
     @InjectConnection() private connection: Connection,
+    private notificationsService: NotificationsService,
+    @InjectModel(PurchaseRequest.name)
+    private purchaseModel: Model<PurchaseRequestDocument>,
   ) {}
+
+  // ───────────── ຜູກກັບໃບສະເໜີຊື້ (ຂອງບໍ່ພໍສະຕັອກ) ─────────────
+
+  /** ລາຍການທີ່ຜູກກັບໃບສະເໜີຊື້ ແລະຂອງຍັງມາບໍ່ຄົບ */
+  private hasPendingPurchase(request: {
+    items: Array<{
+      purchaseRequestId?: string;
+      purchaseQty?: number;
+      arrivedQty?: number;
+    }>;
+  }) {
+    return request.items.some(
+      (i) => !!i.purchaseRequestId && (i.arrivedQty ?? 0) < (i.purchaseQty ?? 0),
+    );
+  }
+
+  /**
+   * ກວດ ແລະ ຕັ້ງຄ່າການຜູກ item -> ໃບສະເໜີຊື້ ຕອນສ້າງຄຳຂໍ.
+   * - ໃບສະເໜີຕ້ອງເປັນຂອງຜູ້ຂໍເອງ, ລາຍການ catalog ດຽວກັນ, ຍັງບໍ່ຖືກຜູກກັບຄຳຂໍອື່ນ,
+   *   ສະຖານະ PENDING/APPROVED ແລະຍັງບໍ່ຮັບເຄື່ອງ
+   * - ຈຳນວນຊື້ ຕ້ອງຄຸມສ່ວນທີ່ສະຕັອກບໍ່ພໍ (quantity - stock) ແລະບໍ່ເກີນຈຳນວນທີ່ຂໍ
+   * ຄືນລາຍຊື່ໃບສະເໜີ [prId, itemIndex] ເພື່ອໄປຕັ້ງ supplyRequestId ພາຍຫຼັງ
+   */
+  private async prepareLinks(
+    items: Array<{
+      catalogItemId?: string;
+      name: string;
+      quantity: number;
+      purchaseRequestId?: string;
+      purchaseRequestNo?: string;
+      purchaseQty?: number;
+      arrivedQty?: number;
+    }>,
+    requestedBy: string,
+  ): Promise<Array<{ prId: string; itemIndex: number }>> {
+    const links: Array<{ prId: string; itemIndex: number }> = [];
+    const seen = new Set<string>();
+    for (let k = 0; k < items.length; k++) {
+      const item = items[k];
+      if (!item.purchaseRequestId) continue;
+      const prId = String(item.purchaseRequestId);
+      if (seen.has(prId)) {
+        throw new BadRequestException(
+          'ໃບສະເໜີຊື້ໃບດຽວຜູກໄດ້ກັບລາຍການດຽວເທົ່ານັ້ນ',
+        );
+      }
+      seen.add(prId);
+      if (!item.catalogItemId) {
+        throw new BadRequestException(
+          `"${item.name}": ຜູກກັບໃບສະເໜີຊື້ໄດ້ສະເພາະລາຍການທີ່ມີໃນ Catalog`,
+        );
+      }
+      const pr = await this.purchaseModel.findById(prId).exec();
+      if (!pr) throw new BadRequestException('ບໍ່ພົບໃບສະເໜີຊື້ທີ່ຜູກ');
+      if (String(pr.requestedBy) !== requestedBy) {
+        throw new ForbiddenException(
+          `ໃບສະເໜີ ${pr.prNo} ບໍ່ແມ່ນຂອງທ່ານ — ຜູກໄດ້ສະເພາະໃບທີ່ຕົນເອງສະເໜີ`,
+        );
+      }
+      if (
+        pr.status !== PurchaseRequestStatus.PENDING &&
+        pr.status !== PurchaseRequestStatus.APPROVED
+      ) {
+        throw new BadRequestException(
+          `ໃບສະເໜີ ${pr.prNo} ຢູ່ໃນສະຖານະ ${pr.status} — ຜູກກັບຄຳຂໍເບີກບໍ່ໄດ້`,
+        );
+      }
+      if ((pr.receivedQuantity ?? 0) > 0) {
+        throw new BadRequestException(
+          `ໃບສະເໜີ ${pr.prNo} ມີການຮັບເຄື່ອງແລ້ວ — ຜູກກັບຄຳຂໍເບີກບໍ່ໄດ້`,
+        );
+      }
+      if (pr.supplyRequestId) {
+        throw new BadRequestException(
+          `ໃບສະເໜີ ${pr.prNo} ຖືກຜູກກັບຄຳຂໍເບີກ ${pr.supplyRequestId} ແລ້ວ`,
+        );
+      }
+      if (!pr.catalogItemId || pr.catalogItemId !== item.catalogItemId) {
+        throw new BadRequestException(
+          `ໃບສະເໜີ ${pr.prNo} (${pr.itemName}) ບໍ່ກົງກັບລາຍການ "${item.name}"`,
+        );
+      }
+      const catalogItem = await this.catalogService.findOne(item.catalogItemId);
+      const shortage = Math.max(item.quantity - (catalogItem.stockQty ?? 0), 0);
+      if (pr.quantity > item.quantity) {
+        throw new BadRequestException(
+          `ໃບສະເໜີ ${pr.prNo} ຂໍຊື້ ${pr.quantity} ເກີນຈຳນວນທີ່ຂໍເບີກ (${item.quantity})`,
+        );
+      }
+      if (pr.quantity < shortage) {
+        throw new BadRequestException(
+          `ໃບສະເໜີ ${pr.prNo} ຂໍຊື້ ${pr.quantity} ບໍ່ພໍກັບສ່ວນທີ່ສະຕັອກບໍ່ພໍ (ຂາດ ${shortage})`,
+        );
+      }
+      item.purchaseRequestId = prId;
+      item.purchaseRequestNo = pr.prNo;
+      item.purchaseQty = pr.quantity;
+      item.arrivedQty = 0;
+      links.push({ prId, itemIndex: k });
+    }
+    return links;
+  }
+
+  /** ເພີ່ມສະຖານະໃບສະເໜີຊື້ (purchaseStatus) ໃສ່ລາຍການທີ່ຜູກ — ສຳລັບສະແດງໃນໜ້າຈໍ */
+  private async attachPurchaseStatus<T extends { items?: any[] }>(
+    docs: T[],
+  ): Promise<any[]> {
+    const ids = new Set<string>();
+    for (const d of docs) {
+      for (const i of d.items ?? []) {
+        if (i.purchaseRequestId) ids.add(String(i.purchaseRequestId));
+      }
+    }
+    if (ids.size === 0) return docs as any[];
+    const prs = await this.purchaseModel
+      .find({ _id: { $in: [...ids] } }, { status: 1, prNo: 1, receivedQuantity: 1 })
+      .lean()
+      .exec();
+    const byId = new Map(prs.map((p: any) => [String(p._id), p]));
+    return docs.map((d: any) => {
+      const obj = typeof d.toObject === 'function' ? d.toObject() : d;
+      return {
+        ...obj,
+        items: (obj.items ?? []).map((i: any) => {
+          if (!i.purchaseRequestId) return i;
+          const pr: any = byId.get(String(i.purchaseRequestId));
+          return { ...i, purchaseStatus: pr?.status };
+        }),
+      };
+    });
+  }
+
+  private async releasePurchaseLinks(prIds: string[]) {
+    if (prIds.length === 0) return;
+    await this.purchaseModel
+      .updateMany(
+        { _id: { $in: prIds } },
+        { $unset: { supplyRequestId: 1, supplyRequestItemIndex: 1 } },
+      )
+      .exec();
+  }
 
   private async generateId(): Promise<string> {
     // ຈັບ id ທັງໝົດ (SR001, SR1000, ...) — regex ທີ່ລະດັບ 3 ຫລຢາງເຮັດໃຫ້ id ຊ່ຳໃນເວລາ SR1000+
@@ -128,11 +279,55 @@ export class SupplyRequestsService {
     };
   }
 
+  /**
+   * ກວດ ແລະ ແປງລະຫັດພະນັກງານຂອງຜູ້ຮັບແທນ (delegate) ເປັນ users._id.
+   * - ຕ້ອງມີຢູ່ ແລະ ຍັງໃຊ້ງານ; ຜູ້ຂໍບໍ່ຕ້ອງຕັ້ງຕົນເອງເປັນຜູ້ຮັບແທນ
+   * - ໃບຂອງແຜນກ: ຜູ້ຮັບແທນຕ້ອງເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງແຜນກ (ກົດດຽວກັບ assigneeCode)
+   */
+  private async resolveDelegate(
+    code: string,
+    requesterId: string,
+    departmentId?: string,
+  ): Promise<string> {
+    const delegate = await this.usersService.findByEmployeeCode(code.trim());
+    if (!delegate) {
+      throw new BadRequestException(`Employee code "${code}" not found`);
+    }
+    if (delegate.isActive === false) {
+      throw new BadRequestException(`Employee code "${code}" is inactive`);
+    }
+    const delegateId = String(delegate._id);
+    if (delegateId === requesterId) {
+      throw new BadRequestException(
+        'The requester cannot be their own delegate — the requester can already collect',
+      );
+    }
+    if (departmentId) {
+      const department = await this.departmentsService.findOne(departmentId);
+      const managerIds = (department?.managerIds ?? []).map(String);
+      const inDepartment = String(delegate.departmentId ?? '') === departmentId;
+      if (!inDepartment && !managerIds.includes(delegateId)) {
+        throw new BadRequestException(
+          'ຜູ້ຮັບແທນຕ້ອງເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງພະແນກນີ້',
+        );
+      }
+    }
+    return delegateId;
+  }
+
   async create(dto: CreateSupplyRequestDto, requestedBy: string, ip?: string) {
     const departmentAssignment = await this.resolveDepartmentAssignment(
       dto,
       requestedBy,
     );
+    const delegateCode = dto.delegateCode?.trim();
+    const delegateId = delegateCode
+      ? await this.resolveDelegate(
+          delegateCode,
+          requestedBy,
+          departmentAssignment?.departmentId,
+        )
+      : undefined;
     for (const item of dto.items) {
       if (item.catalogItemId) {
         await this.catalogService.findOne(item.catalogItemId);
@@ -140,13 +335,56 @@ export class SupplyRequestsService {
     }
     // ຜູກກັບ catalog ຕາມຊື່ໃຫ້ທັນທີ — ກັນໃບຄົງຈະ REQUESTED ແບບຜູກບໍ່ໄດ້ (approve ປະຕິເສດລາຍການບໍ່ຜູກ)
     await this.autoLinkCatalog(dto.items);
+    // ຜູກກັບໃບສະເໜີຊື້ (ສ່ວນທີ່ສະຕັອກບໍ່ພໍ) — ຄ່າ purchaseQty/arrivedQty ຕັ້ງໂດຍ backend ເທົ່ານັ້ນ
+    const items = dto.items.map((i) => ({
+      catalogItemId: i.catalogItemId,
+      name: i.name,
+      quantity: i.quantity,
+      reason: i.reason,
+      purchaseRequestId: i.purchaseRequestId,
+    })) as Array<any>;
+    const links = await this.prepareLinks(items, requestedBy);
     const _id = await this.generateId();
-    const saved = await new this.requestModel({
+    // ຈອງໃບສະເໜີ (ກັນຜູກຊ້ຳ) ກ່ອນບັນທຶກຄຳຂໍ; ຖ້າບັນທຶກບໍ່ສຳເລັດ ຄືນຄ່າຄືນ
+    const claimed: string[] = [];
+    try {
+      for (const l of links) {
+        const res = await this.purchaseModel
+          .updateOne(
+            { _id: l.prId, supplyRequestId: { $exists: false } },
+            { $set: { supplyRequestId: _id, supplyRequestItemIndex: l.itemIndex } },
+          )
+          .exec();
+        if (res.modifiedCount !== 1) {
+          throw new BadRequestException(
+            'ໃບສະເໜີຊື້ຖືກຜູກກັບຄຳຂໍອື່ນແລ້ວ — ກະລຸນາລອງໃໝ່',
+          );
+        }
+        claimed.push(l.prId);
+      }
+    } catch (err) {
+      await this.releasePurchaseLinks(claimed);
+      throw err;
+    }
+    let saved: SupplyRequestDocument;
+    try {
+      saved = await new this.requestModel({
       _id,
       requestedBy,
-      items: dto.items,
+      items,
       ...(departmentAssignment ?? {}),
-    }).save();
+      ...(delegateId
+        ? {
+            delegateId,
+            delegateSetBy: requestedBy,
+            delegateSetAt: new Date(),
+          }
+        : {}),
+      }).save();
+    } catch (err) {
+      await this.releasePurchaseLinks(claimed);
+      throw err;
+    }
     await this.auditLogsService.log(
       requestedBy,
       'SUPPLY_REQUEST_CREATED',
@@ -167,6 +405,7 @@ export class SupplyRequestsService {
     );
   }
 
+<<<<<<< HEAD
   async lookupCustodian(employeeCode: string, departmentId?: string) {
     const user = await this.usersService.findByEmployeeCode(
       String(employeeCode ?? '').trim(),
@@ -196,6 +435,34 @@ export class SupplyRequestsService {
       eligible,
       reason,
     };
+=======
+  /**
+   * ລາຍຊື່ຄົນທີ່ເລືອກເປັນ "ຜູ້ຮັບຜິດຊອບ" ຕອນສ້າງໃບຂໍໃນນາມແຜນກ (ຄົ້ນຫາຕາມຊື່/ລະຫັດ).
+   * - ຜູ້ເອີ້ນຕ້ອງຂໍໃນນາມແຜນກນີ້ໄດ້ (ສະມາຊິກ ຫຼື ຫົວໜ້າ) — ກົດດຽວກັບ resolveDepartmentAssignment
+   * - ຜົນລັບຈຳກັດສະເພາະສະມາຊິກ/ຫົວໜ້າຂອງແຜນກນັ້ນ ແລະ ຍັງໃຊ້ງານ — ຂໍ້ມູນຂັ້ນຕ່ຳເທົ່ານັ້ນ
+   */
+  async findCustodianCandidates(
+    departmentId: string,
+    q: string | undefined,
+    userId: string,
+  ) {
+    if (!departmentId) throw new BadRequestException('departmentId is required');
+    const requestable = await this.findRequestableDepartments(userId);
+    if (!requestable.some((d) => String(d._id) === String(departmentId))) {
+      throw new ForbiddenException(
+        'ທ່ານບໍ່ມີສິດຂໍໃນນາມແຜນກນີ້',
+      );
+    }
+    const department = await this.departmentsService.findOne(departmentId);
+    const managerIds = (department?.managerIds ?? []).map(String);
+    const users = await this.usersService.searchForPicker({
+      q,
+      restrictToDepartmentId: String(departmentId),
+      alsoUserIds: managerIds,
+      limit: 30,
+    });
+    return { users };
+>>>>>>> 075e5b7106ac66286e35363ce9bd1ff56679fb81
   }
 
   async findMine(userId: string) {
@@ -208,18 +475,25 @@ export class SupplyRequestsService {
     const scope: any[] = [
       { requestedBy: userId },
       { custodianId: userId },
+      { delegateId: userId },
     ];
     if (managedDepartmentIds.length > 0) {
       scope.push({ departmentId: { $in: managedDepartmentIds } });
     }
 
-    return this.requestModel
+    const docs = await this.requestModel
       .find({ $or: scope })
       .sort({ createdAt: -1 })
       .populate('requestedBy', 'firstName lastName email employeeCode')
       .populate('departmentId', 'name')
       .populate('custodianId', 'firstName lastName employeeCode')
+      .populate('delegateId', 'firstName lastName employeeCode')
+      .populate('approvedBy', 'firstName lastName employeeCode')
+      .populate('fulfilledBy', 'firstName lastName employeeCode')
+      .populate('receivedBy', 'firstName lastName employeeCode')
+      .populate('receiveOverride.by', 'firstName lastName employeeCode')
       .exec();
+    return this.attachPurchaseStatus(docs);
   }
 
   /**
@@ -240,17 +514,20 @@ export class SupplyRequestsService {
    * `supplies.read` alone only covers a requester's own rows. Callers that
    * can approve/fulfill/manage the catalog see every request.
    */
-  findAll(status?: SupplyRequestStatus, requestedBy?: string) {
+  async findAll(status?: SupplyRequestStatus, requestedBy?: string) {
     const filter: Record<string, unknown> = {};
     if (status) filter.status = status;
     if (requestedBy) filter.requestedBy = requestedBy;
-    return this.requestModel
+    const docs = await this.requestModel
       .find(filter)
       .sort({ createdAt: -1 })
       .populate('requestedBy', 'firstName lastName email employeeCode')
       .populate('departmentId', 'name')
       .populate('custodianId', 'firstName lastName employeeCode')
+      .populate('delegateId', 'firstName lastName employeeCode')
       .exec();
+    // ໃສ່ purchaseStatus ໃຫ້ລາຍການທີ່ຜູກໃບສະເໜີຊື້ — ໜ້າອະນຸມັດໃຊ້ສະແດງສະຖານະໃບສະເໜີຊື້
+    return this.attachPurchaseStatus(docs);
   }
 
   async findOne(id: string, requestedBy?: string) {
@@ -306,6 +583,57 @@ export class SupplyRequestsService {
   async approve(id: string, approverId: string, ip?: string) {
     const request = await this.findOne(id);
     this.assertStatus(request, SupplyRequestStatus.REQUESTED);
+    await this.checkApprovable(request, approverId, ip);
+    // ຄຳຂໍທີ່ຜູກກັບໃບສະເໜີຊື້: ຕ້ອງອະນຸມັດຜ່ານໃບສະເໜີຊື້ (ອະນຸມັດພ້ອມກັນ) ຫຼືໃບສະເໜີຖືກອະນຸມັດແລ້ວ
+    await this.assertLinkedPurchasesApproved(request);
+    return this.applyApproval(request, approverId, ip);
+  }
+
+  /** ໃຊ້ໂດຍ PurchaseRequestsService ກ່ອນອະນຸມັດໃບສະເໜີ — ກວດວ່າຄຳຂໍທີ່ຜູກຢູ່ອະນຸມັດໄດ້ແທ້ */
+  async assertApprovableWithPurchase(id: string, approverId: string, ip?: string) {
+    const request = await this.findOne(id);
+    this.assertStatus(request, SupplyRequestStatus.REQUESTED);
+    await this.checkApprovable(request, approverId, ip);
+    return request;
+  }
+
+  /** ອະນຸມັດຄຳຂໍພ້ອມໃບສະເໜີຊື້ທີ່ຜູກ (ໃບສະເໜີຖືກອະນຸມັດໄປແລ້ວ) */
+  async approveWithPurchase(id: string, approverId: string, ip?: string) {
+    const request = await this.findOne(id);
+    this.assertStatus(request, SupplyRequestStatus.REQUESTED);
+    await this.checkApprovable(request, approverId, ip);
+    return this.applyApproval(request, approverId, ip);
+  }
+
+  /** ໃບສະເໜີຊື້ທີ່ຜູກຕ້ອງຢູ່ໃນສະຖານະທີ່ຍັງຊື້ໄດ້ (ອະນຸມັດ/ຮັບບາງສ່ວນ/ຮັບຄົບ) */
+  private async assertLinkedPurchasesApproved(request: SupplyRequestDocument) {
+    for (const item of request.items) {
+      if (!item.purchaseRequestId) continue;
+      const pr = await this.purchaseModel.findById(item.purchaseRequestId).exec();
+      const no = item.purchaseRequestNo ?? item.purchaseRequestId;
+      if (!pr || pr.status === PurchaseRequestStatus.PENDING) {
+        throw new BadRequestException(
+          `ອະນຸມັດຄຳຂໍນີ້ໂດຍກົງບໍ່ໄດ້: ຜູກກັບໃບສະເໜີຊື້ ${no} ທີ່ຍັງລໍອະນຸມັດ — ກະລຸນາອະນຸມັດທີ່ໃບສະເໜີຊື້ (ຈະອະນຸມັດຄຳຂໍນີ້ພ້ອມກັນ)`,
+        );
+      }
+      if (
+        pr.status === PurchaseRequestStatus.REJECTED ||
+        pr.status === PurchaseRequestStatus.CANCELLED
+      ) {
+        throw new BadRequestException(
+          `ອະນຸມັດບໍ່ໄດ້: ໃບສະເໜີຊື້ ${no} ຖືກ${pr.status === PurchaseRequestStatus.REJECTED ? 'ປະຕິເສດ' : 'ຍົກເລີກ'}ແລ້ວ — ສ່ວນທີ່ສະຕັອກບໍ່ພໍຍັງບໍ່ມີທາງຈັດຫາ (ຄຳຂໍຍັງລໍຖ້າ ຫຼືປະຕິເສດຄຳຂໍນີ້)`,
+        );
+      }
+    }
+  }
+
+  /** ກວດແຍກໜ້າທີ່ + ຜູກ Catalog ກ່ອນອະນຸມັດ */
+  private async checkApprovable(
+    request: SupplyRequestDocument,
+    approverId: string,
+    ip?: string,
+  ) {
+    const id = String(request._id);
     // ແຍກໜ້າທີ່: ຜູ້ຂໍອະນຸມັດໃບຂອງຕົນເອງບໍ່ໄດ້
     if (
       (await sodEnforced()) &&
@@ -333,9 +661,23 @@ export class SupplyRequestsService {
         `ອະນຸມັດບໍ່ໄດ້: ລາຍການຍັງບໍ່ຜູກກັບ Catalog (${unlinked.map((i) => i.name).join(', ')})`,
       );
     }
+  }
+
+  private async applyApproval(
+    request: SupplyRequestDocument,
+    approverId: string,
+    ip?: string,
+  ) {
+    const id = String(request._id);
     const before = request.toObject();
 
-    request.status = SupplyRequestStatus.APPROVED;
+    // ມີລາຍການຜູກໃບສະເໜີຊື້ ແລະຂອງຍັງມາບໍ່ຄົບ → ORDERED (ລໍຂອງເຂົ້າສາງ); ຄົບແລ້ວ → APPROVED + ພ້ອມມາຮັບ
+    const hasLinked = request.items.some((i) => !!i.purchaseRequestId);
+    const waiting = this.hasPendingPurchase(request);
+    request.status = waiting
+      ? SupplyRequestStatus.ORDERED
+      : SupplyRequestStatus.APPROVED;
+    if (hasLinked && !waiting) request.readyToCollectAt = new Date();
     request.approvedBy = approverId as any;
     request.approvedAt = new Date();
     const saved = await request.save();
@@ -350,7 +692,129 @@ export class SupplyRequestsService {
       ip,
     );
 
+    if (hasLinked) await this.notifyLinkedApproval(request);
     return saved;
+  }
+
+  // ───────────── ຮັບເຄື່ອງເຂົ້າຄັງ → ຈອງໃຫ້ຜູ້ຂໍ (ຕົວເລືອກ b: ຍັງຕ້ອງສະແກນຮັບຕາມປົກກະຕິ) ─────────────
+
+  /**
+   * ເອີ້ນຈາກ GoodsReceiptService ໃນ transaction ດຽວກັນກັບການຮັບເຄື່ອງ:
+   * - ເພີ່ມຈຳນວນທີ່ມາຮອດ (arrivedQty) ຂອງລາຍການທີ່ຜູກ
+   * - ຈອງຊັບສິນທີ່ຫາກໍຮັບເຂົ້າ (ຖ້າມີ Asset Tag) ໃຫ້ຄຳຂໍນີ້ — ບໍ່ມອບໃຫ້ອັດຕະໂນມັດ
+   * - ເມື່ອຂອງມາຄົບທຸກລາຍການທີ່ຜູກ ແລະຄຳຂໍອະນຸມັດແລ້ວ → ສະຖານະ \"ພ້ອມມາຮັບ\" (APPROVED + readyToCollectAt)
+   * ຄືນ null ຖ້າບໍ່ມີຄຳຂໍທີ່ຕ້ອງຈັດການ (ບໍ່ຜູກ/ປິດແລ້ວ/ຖືກປະຕິເສດ) — ເຄື່ອງເຂົ້າສະຕ໊ອກທົ່ວໄປ
+   */
+  async applyArrivalInTx(
+    pr: PurchaseRequestDocument,
+    quantity: number,
+    assetIds: string[],
+    session?: ClientSession,
+  ) {
+    if (!pr.supplyRequestId) return null;
+    const request = await this.requestModel
+      .findById(pr.supplyRequestId)
+      .session(session ?? null)
+      .exec();
+    if (!request) return null;
+    const handoverStatuses = [
+      SupplyRequestStatus.REQUESTED,
+      SupplyRequestStatus.APPROVED,
+      SupplyRequestStatus.ORDERED,
+      SupplyRequestStatus.PARTIALLY_RECEIVED,
+    ];
+    if (!handoverStatuses.includes(request.status)) return null;
+    const item = request.items[pr.supplyRequestItemIndex ?? -1];
+    if (!item || String(item.purchaseRequestId) !== String(pr._id)) return null;
+
+    const before = request.toObject();
+    const room = Math.max((item.purchaseQty ?? 0) - (item.arrivedQty ?? 0), 0);
+    const arrive = Math.min(quantity, room);
+    if (arrive <= 0) return null;
+    item.arrivedQty = (item.arrivedQty ?? 0) + arrive;
+    await this.assetsService.reserveForRequestInTx(
+      assetIds.slice(0, arrive),
+      String(request._id),
+      session,
+    );
+
+    const awaitingApproval = request.status === SupplyRequestStatus.REQUESTED;
+    let becameReady = false;
+    if (
+      !awaitingApproval &&
+      request.status === SupplyRequestStatus.ORDERED &&
+      !this.hasPendingPurchase(request)
+    ) {
+      request.status = SupplyRequestStatus.APPROVED;
+      request.readyToCollectAt = new Date();
+      becameReady = true;
+    }
+    request.markModified('items');
+    const saved = await request.save({ session });
+    return {
+      requestId: String(request._id),
+      requesterId: String(request.requestedBy),
+      delegateId: request.delegateId ? String(request.delegateId) : undefined,
+      itemName: item.name,
+      purchaseRequestNo: pr.prNo,
+      arrived: arrive,
+      arrivedQty: item.arrivedQty ?? 0,
+      purchaseQty: item.purchaseQty ?? 0,
+      status: saved.status,
+      awaitingApproval,
+      becameReady,
+      before,
+      after: saved.toObject(),
+    };
+  }
+
+  /** ແຈ້ງຜູ້ຂໍ (ແລະຜູ້ຮັບແທນ) ເມື່ອຂອງມາຮອດຄັງ — ເອີ້ນຫຼັງ commit; ລົ້ມເຫລວບໍ່ກະທົບການຮັບເຄື່ອງ */
+  async notifyArrival(info: NonNullable<Awaited<ReturnType<SupplyRequestsService['applyArrivalInTx']>>>) {
+    if (info.awaitingApproval) return;
+    try {
+      const recipients = new Set<string>([info.requesterId]);
+      if (info.delegateId) recipients.add(info.delegateId);
+      const progress = `${info.arrivedQty}/${info.purchaseQty}`;
+      const title = info.becameReady
+        ? `ພ້ອມມາຮັບເຄື່ອງ: ${info.requestId}`
+        : `ຂອງມາແລ້ວບາງສ່ວນ: ${info.requestId}`;
+      const body = info.becameReady
+        ? `ຂອງຕາມຄຳຂໍ ${info.requestId} ມາຮອດຄັງຄົບແລ້ວ ແລະຖືກຈອງໄວ້ໃຫ້ — ມາສະແກນຮັບໄດ້ເລີຍ`
+        : `${info.itemName} ຕາມຄຳຂໍ ${info.requestId} (${info.purchaseRequestNo}) ມາຮອດແລ້ວ ${progress} — ຍັງລໍສ່ວນທີ່ເຫຼືອ`;
+      for (const userId of recipients) {
+        await this.notificationsService.notify(
+          userId,
+          info.becameReady
+            ? 'SUPPLY_REQUEST_READY_TO_COLLECT'
+            : 'SUPPLY_REQUEST_PARTIAL_ARRIVAL',
+          info.requestId,
+          'SupplyRequest',
+          title,
+          body,
+        );
+      }
+    } catch {
+      // the goods receipt is committed; a failed notification must not undo it
+    }
+  }
+
+  /** ແຈ້ງຜູ້ຂໍຫຼັງຄຳຂໍທີ່ຜູກກັບໃບສະເໜີຊື້ຖືກອະນຸມັດ (ລໍຂອງ ຫຼື ພ້ອມມາຮັບ) */
+  private async notifyLinkedApproval(request: SupplyRequestDocument) {
+    try {
+      const waiting = this.hasPendingPurchase(request);
+      await this.notificationsService.notify(
+        String(request.requestedBy),
+        'SUPPLY_REQUEST_APPROVED',
+        String(request._id),
+        'SupplyRequest',
+        `ຄຳຂໍເບີກໄດ້ຮັບອະນຸມັດ: ${request._id}`,
+        waiting
+          ? `ຄຳຂໍ ${request._id} ໄດ້ຮັບອະນຸມັດພ້ອມໃບສະເໜີຊື້ — ລໍຂອງເຂົ້າຄັງ ຈະແຈ້ງອີກຄັ້ງເມື່ອພ້ອມມາຮັບ`
+          : `ຄຳຂໍ ${request._id} ໄດ້ຮັບອະນຸມັດ ແລະຂອງມາຄົບແລ້ວ — ມາສະແກນຮັບໄດ້ເລີຍ`,
+      );
+    } catch {
+      // approval is saved; a failed notification must not undo it
+    }
   }
 
   async reject(id: string, approverId: string, reason: string, ip?: string) {
@@ -363,6 +827,15 @@ export class SupplyRequestsService {
     request.approvedAt = new Date();
     request.rejectionReason = reason;
     const saved = await request.save();
+
+    // ປົດການຈອງຊັບສິນ ແລະ ປົດໃບສະເໜີຊື້ທີ່ຜູກ (ໃບສະເໜີຍັງຢູ່ ແຕ່ບໍ່ເຮັດຫຍັງກັບຄຳຂໍນີ້ອີກ)
+    await this.assetsService.releaseReservationsForRequest(id);
+    await this.purchaseModel
+      .updateMany(
+        { supplyRequestId: id },
+        { $unset: { supplyRequestId: 1, supplyRequestItemIndex: 1 } },
+      )
+      .exec();
 
     await this.auditLogsService.log(
       approverId,
@@ -380,6 +853,11 @@ export class SupplyRequestsService {
   async fulfill(id: string, fulfilledById: string, ip?: string) {
     const request = await this.findOne(id);
     this.assertStatusIn(request, OPEN_STATUSES);
+    if (this.hasPendingPurchase(request)) {
+      throw new BadRequestException(
+        'ຂອງຍັງມາບໍ່ຄົບຕາມໃບສະເໜີຊື້ທີ່ຜູກ — ເບີກຈ່າຍບໍ່ໄດ້ຈົນກວ່າຈະ \"ພ້ອມມາຮັບ\"',
+      );
+    }
     const before = request.toObject();
 
     // ລາຍການທີ່ມີ Asset Tag ຕ້ອງຮັບຜ່ານການສະແກນ (receive) ເພື່ອໃຫ້ທະບຽນຊັບສິນມີຜູ້ຮັບຜິດຊອບ — fulfill ປິດໃບແບບບໍ່ມີຄົນຮັບບໍ່ໄດ້
@@ -439,6 +917,146 @@ export class SupplyRequestsService {
     return saved;
   }
 
+  /** ຜູ້ຂໍ, ຜູ້ຮັບຜິດຊອບ ຫຼື ຫົວໜ້າແຜນກ (ໃບຂອງແຜນກ) ເທົ່ານັ້ນທີ່ກຳນົດຜູ້ຮັບແທນໄດ້ */
+  private async assertCanNameDelegate(
+    request: SupplyRequestDocument,
+    actorId: string,
+  ) {
+    const requestDepartmentId = request.departmentId
+      ? String(request.departmentId)
+      : undefined;
+    const isRequester = actorId === request.requestedBy.toString();
+    const isCustodian =
+      !!request.custodianId && String(request.custodianId) === actorId;
+    const isDepartmentManager =
+      !!requestDepartmentId &&
+      (
+        await this.departmentsService.findManagedDepartmentIds(actorId)
+      ).includes(requestDepartmentId);
+    if (!isRequester && !isCustodian && !isDepartmentManager) {
+      throw new ForbiddenException(
+        'Only the requester (or the department custodian/manager) can name the person who collects this request',
+      );
+    }
+  }
+
+  /**
+   * ລາຍຊື່ຄົນທີ່ເລືອກເປັນຜູ້ຮັບແທນໄດ້ (ຄົ້ນຫາ + ກັ່ນຕອງຕາມແຜນກ) — ຂໍ້ມູນຂັ້ນຕ່ຳເທົ່ານັ້ນ.
+   * ໃບຂອງແຜນກ: ຈຳກັດສະເພາະສະມາຊິກ/ຫົວໜ້າຂອງແຜນກນັ້ນ (ກົດດຽວກັບ resolveDelegate).
+   */
+  async findDelegateCandidates(
+    id: string,
+    query: { q?: string; departmentId?: string },
+    user: PermissionUser,
+  ) {
+    const actorId = user.userId;
+    if (!actorId) throw new BadRequestException('Not authenticated');
+    const request = await this.requestModel.findById(id).exec();
+    if (!request) throw new NotFoundException('Supply request not found');
+    this.assertStatusIn(request, OPEN_STATUSES);
+    await this.assertCanNameDelegate(request, actorId);
+
+    const requestDepartmentId = request.departmentId
+      ? String(request.departmentId)
+      : undefined;
+    let managerIds: string[] = [];
+    let departments: Array<{ _id: string; name: string }>;
+    if (requestDepartmentId) {
+      const department =
+        await this.departmentsService.findOne(requestDepartmentId);
+      managerIds = (department?.managerIds ?? []).map(String);
+      departments = [
+        { _id: requestDepartmentId, name: department?.name ?? requestDepartmentId },
+      ];
+    } else {
+      const all = await this.departmentsService.findAll();
+      departments = all
+        .filter((d) => d.isActive !== false)
+        .map((d) => ({ _id: String(d._id), name: d.name }));
+    }
+
+    const users = await this.usersService.searchForPicker({
+      q: query.q,
+      departmentId: query.departmentId || undefined,
+      restrictToDepartmentId: requestDepartmentId,
+      alsoUserIds: managerIds,
+      excludeUserIds: [request.requestedBy.toString()],
+    });
+    return { users, departments };
+  }
+
+  /**
+   * ກຳນົດ/ປ່ຽນ/ລຶບ ຜູ້ຮັບແທນ (delegate, 1 ຄົນ) ຫຼັງອະນຸມັດ ຈົນກວ່າຈະຮັບເຄື່ອງ.
+   * ເຮັດໄດ້ສະເພາະຜູ້ຂໍ, ຜູ້ຮັບຜິດຊອບ ຫຼື ຫົວໜ້າຂອງແຜນກ (ໃບຂອງແຜນກ).
+   */
+  async setDelegate(
+    id: string,
+    dto: SetSupplyRequestDelegateDto,
+    user: PermissionUser,
+    ip?: string,
+  ) {
+    const actorId = user.userId;
+    if (!actorId) throw new BadRequestException('Not authenticated');
+    const request = await this.requestModel.findById(id).exec();
+    if (!request) throw new NotFoundException('Supply request not found');
+    this.assertStatusIn(request, OPEN_STATUSES);
+
+    const requesterId = request.requestedBy.toString();
+    const requestDepartmentId = request.departmentId
+      ? String(request.departmentId)
+      : undefined;
+    await this.assertCanNameDelegate(request, actorId);
+
+    const code = dto.delegateCode?.trim();
+    const newDelegateId = code
+      ? await this.resolveDelegate(code, requesterId, requestDepartmentId)
+      : undefined;
+    const previousDelegateId = request.delegateId
+      ? String(request.delegateId)
+      : undefined;
+    if (newDelegateId === previousDelegateId) return request;
+
+    const before = request.toObject();
+    if (newDelegateId) {
+      request.delegateId = newDelegateId as any;
+      request.delegateSetBy = actorId as any;
+      request.delegateSetAt = new Date();
+    } else {
+      request.delegateId = undefined;
+      request.delegateSetBy = undefined;
+      request.delegateSetAt = undefined;
+    }
+    const saved = await request.save();
+
+    await this.auditLogsService.log(
+      actorId,
+      newDelegateId
+        ? 'SUPPLY_REQUEST_DELEGATE_SET'
+        : 'SUPPLY_REQUEST_DELEGATE_CLEARED',
+      'SupplyRequest',
+      id,
+      before,
+      saved.toObject(),
+      ip,
+    );
+
+    if (newDelegateId) {
+      try {
+        await this.notificationsService.notify(
+          newDelegateId,
+          'SUPPLY_REQUEST_DELEGATE_SET',
+          id,
+          'SupplyRequest',
+          `ທ່ານຖືກກຳນົດໃຫ້ຮັບເຄື່ອງແທນ: ${id}`,
+          `ທ່ານຖືກກຳນົດເປັນຜູ້ຮັບເຄື່ອງແທນຕາມໃບຂໍ ${id} — ເປີດໃບຮັບເຄື່ອງເພື່ອຢືນຢັນເມື່ອມາຮັບ`,
+        );
+      } catch {
+        // the delegate is saved; a failed notification must not undo it
+      }
+    }
+    return saved;
+  }
+
   /**
    * ໃບຮັບເຄື່ອງ (ເປີດຈາກ QR ຂອງໃບຂໍ) — ຜູ້ຂໍ, ຜູ້ຮັບຜິດຊອບ/ຫົວໜ້າແຜນກ,
    * ຫຼື ຜູ້ມີສິດ supplies.* ເທົ່ານັ້ນ
@@ -449,6 +1067,7 @@ export class SupplyRequestsService {
       .populate('requestedBy', 'firstName lastName employeeCode branchId')
       .populate('departmentId', 'name managerIds branchId')
       .populate('custodianId', 'firstName lastName employeeCode branchId')
+      .populate('delegateId', 'firstName lastName employeeCode')
       .exec();
     if (!request) throw new NotFoundException('Supply request not found');
 
@@ -460,12 +1079,17 @@ export class SupplyRequestsService {
     const custodianId = custodianRef
       ? String(custodianRef._id ?? custodianRef)
       : undefined;
+    const delegateRef: any = request.delegateId;
+    const delegateId = delegateRef
+      ? String(delegateRef._id ?? delegateRef)
+      : undefined;
     const managerIds: string[] =
       departmentId && typeof deptRef === 'object'
         ? (deptRef.managerIds ?? []).map(String)
         : [];
     const isRequester = requesterId === user.userId;
     const isCustodian = !!custodianId && custodianId === user.userId;
+    const isDelegate = !!delegateId && delegateId === user.userId;
     const isDepartmentManager =
       !!departmentId && !!user.userId && managerIds.includes(user.userId);
     const elevated = hasAnyPermission(user, 'supplies', [
@@ -473,16 +1097,31 @@ export class SupplyRequestsService {
       'fulfill',
       'manage',
     ]);
-    if (!elevated && !isRequester && !isCustodian && !isDepartmentManager) {
+    if (
+      !elevated &&
+      !isRequester &&
+      !isCustodian &&
+      !isDelegate &&
+      !isDepartmentManager
+    ) {
       throw new NotFoundException('Supply request not found');
     }
+    const isOpen = OPEN_STATUSES.includes(request.status);
+    const isAuthorizedCollector =
+      isRequester || isDelegate || isCustodian || isDepartmentManager;
+    // ເຈົ້າໜ້າທີ່ສາງທີ່ບໍ່ແມ່ນຜູ້ຂໍ/ຜູ້ຮັບແທນ ຕ້ອງໃຊ້ override (supplies.fulfill + assets.assign + ເຫດຜົນ)
+    const canOverride =
+      hasPermission(user, 'supplies', 'fulfill') &&
+      hasPermission(user, 'assets', 'assign');
 
     const flags = await Promise.all(
       request.items.map((i) =>
         this.assetsService.requiresAssetTagForCatalog(i.catalogItemId),
       ),
     );
-    const obj: any = request.toObject();
+    const [obj] = await this.attachPurchaseStatus([request.toObject()]);
+    // ຂອງຍັງມາບໍ່ຄົບ (ລໍໃບສະເໜີຊື້) → ຍັງຢືນຢັນຮັບບໍ່ໄດ້
+    const waitingForPurchase = isOpen && this.hasPendingPurchase(request);
     return {
       ...obj,
       items: obj.items.map((it: any, k: number) => ({
@@ -492,19 +1131,24 @@ export class SupplyRequestsService {
       isDepartmentRequest: !!departmentId,
       isRequester,
       isCustodian,
+      isDelegate,
       isDepartmentManager,
+      waitingForPurchase,
+      readyToCollect: isOpen && !waitingForPurchase && !!obj.readyToCollectAt,
       canConfirm:
-        OPEN_STATUSES.includes(request.status) &&
-        (isRequester ||
-          isCustodian ||
-          isDepartmentManager ||
-          hasPermission(user, 'supplies', 'fulfill')),
+        isOpen && !waitingForPurchase && (isAuthorizedCollector || canOverride),
+      /** true = ການຢືນຢັນຂອງຜູ້ເປີດຈະເປັນ override — ຕ້ອງໃສ່ເຫດຜົນ */
+      requiresOverride: isOpen && !isAuthorizedCollector && canOverride,
+      canSetDelegate:
+        isOpen && (isRequester || isCustodian || isDepartmentManager),
     };
   }
 
   /**
    * ຢືນຢັນຮັບເຄື່ອງທັງໃບໃນຄັ້ງດຽວ — ທຸກຢ່າງຢູ່ໃນ transaction ດຽວ (ສຳເລັດທັງໝົດ ຫຼືບໍ່ມີຫຍັງປ່ຽນ):
-   * - ຜູ້ເຮັດ: ຜູ້ຂໍເອງ ຫຼື ຜູ້ມີ supplies.fulfill (ຜູ້ດູແລສາງ)
+   * - ຜູ້ເຮັດ: ຜູ້ຂໍ, ຜູ້ຮັບແທນ (delegate) ທີ່ຖືກກຳນົດ, ຜູ້ຮັບຜິດຊອບ/ຫົວໜ້າແຜນກ (ໃບແຜນກ)
+   *   ຫຼື ເຈົ້າໜ້າທີ່ສາງ (supplies.fulfill) ຜ່ານ override: ຕ້ອງມີ assets.assign + overrideReason,
+   *   ບັນທຶກໃນ audit log + ໃບຂໍ ແລະແຈ້ງເຕືອນຜູ້ຂໍ
    * - ຂອງມີ Asset Tag (catalog ທີ່ມີຊັບສິນຜູກຢູ່): ຕ້ອງສະແກນຄົບຕາມຈຳນວນທີ່ຂໍ (ນັບລວມທີ່ເຄີຍຮັບແລ້ວຜ່ານການສະແກນ)
    * - ສະຕ໊ອກ Catalog ຂອງຂອງມີ Asset Tag ຂະຫຍັບອັດຕະໂນມັດຕາມຊັບສິນ (ເບິ່ງ AssetsService.syncStock)
    * - ຂອງໃຊ້ສິ້ນເປືອງ: ຕ້ອງ confirmConsumables = true ແລະລະບົບຕັດສະຕ໊ອກ
@@ -530,6 +1174,19 @@ export class SupplyRequestsService {
       const actorId = user.userId;
       if (!actorId) {
         throw new BadRequestException('Not authenticated');
+      }
+      if (this.hasPendingPurchase(request)) {
+        const waiting = request.items
+          .filter(
+            (i) => !!i.purchaseRequestId && (i.arrivedQty ?? 0) < (i.purchaseQty ?? 0),
+          )
+          .map(
+            (i) =>
+              `${i.name} (${i.purchaseRequestNo}: ມາແລ້ວ ${i.arrivedQty ?? 0}/${i.purchaseQty})`,
+          );
+        throw new BadRequestException(
+          `ຂອງຍັງມາບໍ່ຄົບ — ຍັງຮັບບໍ່ໄດ້ຈົນກວ່າຈະມີສະຖານະ \"ພ້ອມມາຮັບ\": ${waiting.join(', ')}`,
+        );
       }
 
       const requesterId = request.requestedBy.toString();
@@ -582,10 +1239,29 @@ export class SupplyRequestsService {
         !!departmentCustodianId && actorId === departmentCustodianId;
       const isDepartmentManager =
         isDepartmentRequest && departmentManagerIds.includes(actorId);
-      if (!isRequester && !canFulfill && !isCustodian && !isDepartmentManager) {
-        throw new ForbiddenException(
-          'Only the requester, the department custodian/manager (or warehouse staff with supplies.fulfill) can confirm receipt of this request',
-        );
+      const isDelegate =
+        !!request.delegateId && String(request.delegateId) === actorId;
+      const isAuthorizedCollector =
+        isRequester || isDelegate || isCustodian || isDepartmentManager;
+      let overrideReason: string | undefined;
+      if (!isAuthorizedCollector) {
+        if (!canFulfill) {
+          throw new ForbiddenException(
+            'Only the requester, the named delegate, the department custodian/manager (or warehouse staff using the override) can confirm receipt of this request',
+          );
+        }
+        // ເຈົ້າໜ້າທີ່ສາງຮັບແທນ = override: ຕ້ອງມີສິດ assets.assign + ເຫດຜົນເປັນລາຍລັກອັກສອນ
+        if (!canAssign) {
+          throw new ForbiddenException(
+            'Collecting on behalf of the requester (override) requires the "assets.assign" permission',
+          );
+        }
+        overrideReason = dto.overrideReason?.trim();
+        if (!overrideReason || overrideReason.length < 5) {
+          throw new BadRequestException(
+            'A written reason (overrideReason, at least 5 characters) is required when confirming receipt on behalf of the requester',
+          );
+        }
       }
       if (
         (await sodEnforced()) &&
@@ -641,20 +1317,26 @@ export class SupplyRequestsService {
         isDepartmentRequest &&
         !receivedById &&
         actorId !== departmentCustodianId &&
-        (isRequester || isDepartmentManager)
+        (isRequester || isDepartmentManager || isDelegate)
       ) {
         receivedById = actorId;
       }
       const proxyReceiver = isDepartmentRequest && !!receivedById;
       const allowedAssignee = isDepartmentRequest
         ? proxyReceiver
-          ? isRequester || isCustodian || isDepartmentManager || canAssign
+          ? isRequester ||
+            isDelegate ||
+            isCustodian ||
+            isDepartmentManager ||
+            canAssign
           : isRequester ||
+            isDelegate ||
             isCustodian ||
             isDepartmentManager ||
             canFulfill ||
             canAssign
         : (isRequester && assigneeId === actorId) ||
+          (isDelegate && assigneeId === requesterId) ||
           canAssign ||
           (canFulfill && assigneeId === requesterId);
       if (!allowedAssignee) {
@@ -693,6 +1375,12 @@ export class SupplyRequestsService {
         seenAssetIds.add(String(asset._id));
         if (asset.status !== AssetStatus.AVAILABLE) {
           issues.push(`"${tag}": ສະຖານະ ${asset.status} — ບໍ່ວ່າງ`);
+          continue;
+        }
+        if (asset.reservedForRequestId && asset.reservedForRequestId !== id) {
+          issues.push(
+            `"${tag}": ຖືກຈອງໄວ້ສຳລັບຄຳຂໍເບີກ ${asset.reservedForRequestId} — ໃຊ້ກັບຄຳຂໍນີ້ບໍ່ໄດ້`,
+          );
           continue;
         }
         // ຖ້າ Asset Record ເກົ່າຜູກກັບ Catalog ປະເພດ CONSUMABLE, ຫ້າມຮັບມັນເປັນຊັບສິນ.
@@ -807,6 +1495,7 @@ export class SupplyRequestsService {
                 receivedById,
               }
             : undefined,
+          id,
         );
       }
       for (const k of consumableIdx) {
@@ -820,6 +1509,9 @@ export class SupplyRequestsService {
         }
       }
 
+      // ຊັບສິນທີ່ຈອງໄວ້ແຕ່ບໍ່ໄດ້ຖືກສະແກນ (ຮັບຊິ້ນອື່ນແທນ) → ປົດການຈອງ ກັບຄືນເປັນສະຕ໊ອກທົ່ວໄປ
+      await this.assetsService.releaseReservationsForRequest(id, session);
+
       request.receivedAssetIds = [
         ...(request.receivedAssetIds ?? []),
         ...resolved.map((a) => String(a._id)),
@@ -828,6 +1520,13 @@ export class SupplyRequestsService {
       request.fulfilledBy = actorId as any;
       request.fulfilledAt = new Date();
       request.receivedBy = (receivedById ?? assigneeId) as any;
+      if (overrideReason) {
+        request.receiveOverride = {
+          by: actorId as any,
+          reason: overrideReason,
+          at: new Date(),
+        };
+      }
       const savedRequest = await request.save({ session });
 
       audits.push({
@@ -839,12 +1538,61 @@ export class SupplyRequestsService {
         after: savedRequest.toObject(),
         ip,
       });
+      if (overrideReason) {
+        audits.push({
+          actorId,
+          action: 'SUPPLY_REQUEST_RECEIVE_OVERRIDE',
+          entityType: 'SupplyRequest',
+          entityId: id,
+          after: {
+            reason: overrideReason,
+            requesterId,
+            delegateId: request.delegateId
+              ? String(request.delegateId)
+              : undefined,
+          },
+          ip,
+        });
+      }
       return savedRequest;
     });
 
     // audit ບັນທຶກຫຼັງ commit ສຳເລັດເທົ່ານັ້ນ
     await this.assetsService.flushAudits(audits);
+    if (saved.receiveOverride && String(saved.receiveOverride.by) === user.userId) {
+      await this.notifyReceiveOverride(saved, user.userId!);
+    }
     return saved;
+  }
+
+  /** ແຈ້ງເຕືອນຜູ້ຂໍ (ແລະຜູ້ຮັບແທນທີ່ຖືກຂ້າມ) ວ່າມີຄົນອື່ນຮັບເຄື່ອງແທນ — ລົ້ມເຫລວກໍ່ບໍ່ກະທົບການຮັບເຄື່ອງ */
+  private async notifyReceiveOverride(
+    request: SupplyRequestDocument,
+    actorId: string,
+  ) {
+    try {
+      const actor = await this.usersService.findOneRaw(actorId);
+      const actorName =
+        `${actor.firstName ?? ''} ${actor.lastName ?? ''}`.trim() ||
+        actor.employeeCode ||
+        actorId;
+      const reason = request.receiveOverride?.reason ?? '';
+      const recipients = new Set<string>([String(request.requestedBy)]);
+      if (request.delegateId) recipients.add(String(request.delegateId));
+      recipients.delete(actorId);
+      for (const userId of recipients) {
+        await this.notificationsService.notify(
+          userId,
+          'SUPPLY_REQUEST_RECEIVE_OVERRIDE',
+          String(request._id),
+          'SupplyRequest',
+          `ມີຄົນຮັບເຄື່ອງແທນ: ${request._id}`,
+          `${actorName} (ເຈົ້າໜ້າທີ່ສາງ) ໄດ້ຢືນຢັນຮັບເຄື່ອງຕາມໃບຂໍ ${request._id} ແທນ — ເຫດຜົນ: ${reason}`,
+        );
+      }
+    } catch {
+      // the receipt is already committed; a failed notification must not fail it
+    }
   }
 
   async bulkFulfill(ids: string[], fulfilledById: string, ip?: string) {

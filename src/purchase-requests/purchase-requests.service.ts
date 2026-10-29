@@ -21,6 +21,14 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { Counter, CounterDocument } from '../roles/schemas/counter.schema';
 import { bumpCounterTo, nextSequence } from '../common/utils/counter.util';
 import { sodEnforced } from '../common/utils/sod.util';
+import { GoodsReceipt, GoodsReceiptDocument } from '../goods-receipt/schemas/goods-receipt.schema';
+import {
+  SupplyRequest,
+  SupplyRequestDocument,
+  SupplyRequestStatus,
+} from '../supply-requests/schemas/supply-request.schema';
+import { SupplyRequestsService } from '../supply-requests/supply-requests.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /** ສະຖານະທີ່ຍັງຮັບເຄື່ອງຕາມໃບນີ້ໄດ້ */
 export const RECEIVABLE_STATUSES = [
@@ -39,9 +47,79 @@ export class PurchaseRequestsService {
     @InjectModel(PurchaseRequest.name)
     private model: Model<PurchaseRequestDocument>,
     @InjectModel(Counter.name) private counterModel: Model<CounterDocument>,
+    @InjectModel(GoodsReceipt.name) private receiptModel: Model<GoodsReceiptDocument>,
     private catalogService: SupplyCatalogService,
     private auditLogsService: AuditLogsService,
+    @InjectModel(SupplyRequest.name)
+    private supplyModel: Model<SupplyRequestDocument>,
+    private supplyRequests: SupplyRequestsService,
+    private notifications: NotificationsService,
   ) {}
+
+  /**
+   * ເພີ່ມຂໍ້ມູນຄຳຂໍເບີກທີ່ຜູກ (linkedSupplyRequest) ໃສ່ໃບສະເໜີ — ສຳລັບສະແດງໃນໜ້າຈໍ ແລະໜ້າຮັບເຄື່ອງ:
+   * ຜູ້ຂໍ, ສະຖານະ, ຈຳນວນຊື້/ມາແລ້ວ.
+   */
+  private async attachLinked(docs: PurchaseRequestDocument[]): Promise<any[]> {
+    const ids = [
+      ...new Set(docs.map((d) => d.supplyRequestId).filter(Boolean) as string[]),
+    ];
+    if (ids.length === 0) return docs;
+    const srs = await this.supplyModel
+      .find({ _id: { $in: ids } })
+      .populate('requestedBy', 'firstName lastName employeeCode')
+      .lean()
+      .exec();
+    const byId = new Map(srs.map((s: any) => [String(s._id), s]));
+    return docs.map((d) => {
+      const obj: any = d.toObject();
+      const sr: any = obj.supplyRequestId ? byId.get(obj.supplyRequestId) : undefined;
+      if (!sr) return obj;
+      const item = sr.items?.[obj.supplyRequestItemIndex ?? -1];
+      return {
+        ...obj,
+        linkedSupplyRequest: {
+          _id: sr._id,
+          status: sr.status,
+          requestedBy: sr.requestedBy,
+          itemName: item?.name,
+          requestedQty: item?.quantity,
+          purchaseQty: item?.purchaseQty,
+          arrivedQty: item?.arrivedQty ?? 0,
+          readyToCollectAt: sr.readyToCollectAt,
+          rejectionReason: sr.rejectionReason,
+        },
+      };
+    });
+  }
+
+  /** ຄຳຂໍເບີກທີ່ຜູກ ແລະຍັງລໍອະນຸມັດ (ຖ້າມີ) */
+  private async pendingLinkedRequest(doc: PurchaseRequestDocument) {
+    if (!doc.supplyRequestId) return null;
+    const sr = await this.supplyModel.findById(doc.supplyRequestId).exec();
+    return sr && sr.status === SupplyRequestStatus.REQUESTED ? sr : null;
+  }
+
+  /** ແຈ້ງຜູ້ຂໍວ່າໃບສະເໜີທີ່ຜູກຖືກປະຕິເສດ/ຍົກເລີກ ແລະຄຳຂໍເບີກຍັງຄ້າງ — ລົ້ມເຫລວບໍ່ກະທົບ */
+  private async notifyLinkedStalled(
+    doc: PurchaseRequestDocument,
+    what: 'ປະຕິເສດ' | 'ຍົກເລີກ',
+  ) {
+    try {
+      const sr = await this.pendingLinkedRequest(doc);
+      if (!sr) return;
+      await this.notifications.notify(
+        String(sr.requestedBy),
+        'SUPPLY_REQUEST_PURCHASE_STALLED',
+        String(sr._id),
+        'SupplyRequest',
+        `ໃບສະເໜີຊື້ຖືກ${what}: ${doc.prNo}`,
+        `ໃບສະເໜີຊື້ ${doc.prNo} ທີ່ຜູກກັບຄຳຂໍເບີກ ${sr._id} ຖືກ${what} — ສ່ວນທີ່ສະຕັອກບໍ່ພໍຍັງບໍ່ໄດ້ຮັບການຈັດຫາ ຄຳຂໍຈຶ່ງຍັງຄ້າງລໍຖ້າ`,
+      );
+    } catch {
+      // the decision is saved; a failed notification must not undo it
+    }
+  }
 
   private async nextPrNo(): Promise<string> {
     const last = await this.model
@@ -128,7 +206,7 @@ export class PurchaseRequestsService {
   }
 
   /** scopeUserId = ສະເພາະໃບຂອງຜູ້ນັ້ນ; undefined = ເຫັນທັງໝົດ */
-  findAll(status?: PurchaseRequestStatus, scopeUserId?: string, q?: string) {
+  async findAll(status?: PurchaseRequestStatus, scopeUserId?: string, q?: string) {
     const query: Record<string, any> = {};
     if (status && Object.values(PurchaseRequestStatus).includes(status)) {
       query.status = status;
@@ -138,12 +216,86 @@ export class PurchaseRequestsService {
       const rx = new RegExp(q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       query.$or = [{ prNo: rx }, { itemName: rx }, { vendor: rx }];
     }
-    return this.model
+    const docs = await this.model
       .find(query)
       .sort({ createdAt: -1 })
       .limit(500)
       .populate(POPULATE)
       .exec();
+    return this.attachLinked(docs);
+  }
+
+  async suggestPrice(catalogItemId: string) {
+    const id = catalogItemId?.trim();
+    if (!id) return { found: false };
+
+    const [receipt] = await this.receiptModel
+      .find(
+        { catalogItemId: id, unitPrice: { $gt: 0 } },
+        { unitPrice: 1, vendor: 1, receivedDate: 1, receiptNo: 1 },
+      )
+      .sort({ unitPrice: 1, receivedDate: -1 })
+      .limit(1)
+      .lean()
+      .exec();
+
+    const [request] = await this.model
+      .find(
+        {
+          catalogItemId: id,
+          estimatedUnitPrice: { $gt: 0 },
+          status: {
+            $in: [
+              PurchaseRequestStatus.APPROVED,
+              PurchaseRequestStatus.PARTIALLY_RECEIVED,
+              PurchaseRequestStatus.RECEIVED,
+            ],
+          },
+        },
+        { estimatedUnitPrice: 1, vendor: 1, createdAt: 1, prNo: 1 },
+      )
+      .sort({ estimatedUnitPrice: 1, createdAt: -1 })
+      .limit(1)
+      .lean()
+      .exec();
+
+    const candidates: {
+      unitPrice: number;
+      vendor?: string;
+      date?: Date;
+      refNo?: string;
+      source: string;
+    }[] = [];
+    if (receipt) {
+      candidates.push({
+        unitPrice: receipt.unitPrice as number,
+        vendor: receipt.vendor,
+        date: receipt.receivedDate,
+        refNo: receipt.receiptNo,
+        source: 'RECEIPT',
+      });
+    }
+    if (request) {
+      candidates.push({
+        unitPrice: request.estimatedUnitPrice as number,
+        vendor: request.vendor,
+        date: request.createdAt,
+        refNo: request.prNo,
+        source: 'REQUEST',
+      });
+    }
+
+    if (candidates.length === 0) return { found: false };
+    candidates.sort((a, b) => a.unitPrice - b.unitPrice);
+    const best = candidates[0];
+    return {
+      found: true,
+      unitPrice: best.unitPrice,
+      vendor: best.vendor || null,
+      date: best.date || null,
+      refNo: best.refNo || null,
+      source: best.source,
+    };
   }
 
   async findOne(id: string, scopeUserId?: string) {
@@ -156,7 +308,8 @@ export class PurchaseRequestsService {
         throw new NotFoundException('ບໍ່ພົບໃບສະເໜີ');
       }
     }
-    return doc;
+    const [withLink] = await this.attachLinked([doc]);
+    return withLink;
   }
 
   private async load(id: string) {
@@ -187,23 +340,61 @@ export class PurchaseRequestsService {
     );
   }
 
-  async approve(id: string, approverId: string, ip?: string) {
+  /**
+   * ອະນຸມັດໃບສະເໜີ. ຖ້າຜູກກັບຄຳຂໍເບີກທີ່ລໍອະນຸມັດ ຕ້ອງ confirmLinked = true (ຜູ້ອະນຸມັດຮັບຮູ້ແລ້ວ)
+   * ແລະຄຳຂໍເບີກຈະຖືກອະນຸມັດພ້ອມກັນ (ສະຖານະ ORDERED ຈົນກວ່າຂອງຈະມາຄົບ).
+   */
+  async approve(id: string, approverId: string, ip?: string, confirmLinked = false) {
     const doc = await this.load(id);
     this.assertPending(doc);
     if ((await sodEnforced()) && String(doc.requestedBy) === approverId) {
       await this.blockSelf('PR_APPROVE_SELF', id, approverId, ip);
     }
+    const linked = await this.pendingLinkedRequest(doc);
+    if (linked) {
+      if (!confirmLinked) {
+        throw new BadRequestException(
+          `ໃບນີ້ຜູກກັບຄຳຂໍເບີກ ${linked._id} — ການອະນຸມັດຈະອະນຸມັດຄຳຂໍເບີກພ້ອມກັນ ກະລຸນາຢືນຢັນກ່ອນ`,
+        );
+      }
+      // ກວດຄຳຂໍເບີກວ່າອະນຸມັດໄດ້ແທ້ ກ່ອນປ່ຽນສະຖານະໃບສະເໜີ (ແຍກໜ້າທີ່, ຜູກ Catalog)
+      await this.supplyRequests.assertApprovableWithPurchase(
+        String(linked._id),
+        approverId,
+        ip,
+      );
+    }
     doc.status = PurchaseRequestStatus.APPROVED;
     doc.approvedBy = new Types.ObjectId(approverId);
     doc.approvedAt = new Date();
     await doc.save();
+    if (linked) {
+      try {
+        await this.supplyRequests.approveWithPurchase(
+          String(linked._id),
+          approverId,
+          ip,
+        );
+      } catch (err) {
+        // ບໍ່ໃຫ້ຄ້າງເຄິ່ງທາງ: ຄືນໃບສະເໜີເປັນລໍອະນຸມັດ
+        doc.status = PurchaseRequestStatus.PENDING;
+        doc.approvedBy = undefined;
+        doc.approvedAt = undefined;
+        await doc.save();
+        throw err;
+      }
+    }
     await this.auditLogsService.log(
       approverId,
       'PR_APPROVED',
       'PurchaseRequest',
       id,
       { status: PurchaseRequestStatus.PENDING },
-      { status: doc.status, prNo: doc.prNo },
+      {
+        status: doc.status,
+        prNo: doc.prNo,
+        ...(linked ? { approvedSupplyRequestId: String(linked._id) } : {}),
+      },
       ip,
     );
     return this.findOne(id);
@@ -229,6 +420,7 @@ export class PurchaseRequestsService {
       { status: doc.status, reason: doc.rejectReason, prNo: doc.prNo },
       ip,
     );
+    await this.notifyLinkedStalled(doc, 'ປະຕິເສດ');
     return this.findOne(id);
   }
 
@@ -250,6 +442,7 @@ export class PurchaseRequestsService {
       { status: doc.status, prNo: doc.prNo },
       ip,
     );
+    await this.notifyLinkedStalled(doc, 'ຍົກເລີກ');
     return this.findOne(id);
   }
 

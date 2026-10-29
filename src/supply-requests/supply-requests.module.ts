@@ -4,6 +4,10 @@ import {
   SupplyRequest,
   SupplyRequestSchema,
 } from './schemas/supply-request.schema';
+import {
+  PurchaseRequest,
+  PurchaseRequestSchema,
+} from '../purchase-requests/schemas/purchase-request.schema';
 import { SupplyRequestsService } from './supply-requests.service';
 import { SupplyRequestsController } from './supply-requests.controller';
 import { SupplyCatalogModule } from '../supply-catalog/supply-catalog.module';
@@ -11,17 +15,20 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { AssetsModule } from '../assets/assets.module';
 import { UsersModule } from '../users/users.module';
 import { DepartmentsModule } from '../departments/departments.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: SupplyRequest.name, schema: SupplyRequestSchema },
+      { name: PurchaseRequest.name, schema: PurchaseRequestSchema },
     ]),
     SupplyCatalogModule,
     AuditLogsModule,
     AssetsModule,
     UsersModule,
     DepartmentsModule,
+    NotificationsModule,
   ],
   controllers: [SupplyRequestsController],
   providers: [SupplyRequestsService],
