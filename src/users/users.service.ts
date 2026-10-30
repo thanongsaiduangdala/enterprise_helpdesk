@@ -16,6 +16,7 @@ import { RolesService } from '../roles/roles.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { MailService } from '../mail/mail.service';
 import { SessionsService } from '../sessions/sessions.service';
+import { DepartmentsService } from '../departments/departments.service';
 import { getEnabledMethods } from '../common/utils/mfa-methods.util';
 
 const SENSITIVE_FIELDS = ['passwordHash', 'password'];
@@ -46,15 +47,27 @@ export class UsersService {
     private auditLogsService: AuditLogsService,
     private mailService: MailService,
     private sessionsService: SessionsService,
+    private departmentsService: DepartmentsService,
   ) {}
 
   async create(dto: CreateUserDto, actorId: string, ip?: string) {
     await this.rolesService.findOne(dto.role);
 
+    // ກວດພະແນກກ່ອນສ້າງຜູ້ໃຊ້ — ຫຼີກລ້ຽງສ້າງແລ້ວຈຶ່ງຮູ້ວ່າກຳນົດຫົວໜ້າບໍ່ໄດ້
+    if (dto.isDepartmentManager) {
+      if (!dto.departmentId) {
+        throw new BadRequestException(
+          'ຕ້ອງເລືອກພະແນກ ກ່ອນກຳນົດໃຫ້ເປັນຫົວໜ້າພະແນກ',
+        );
+      }
+      await this.departmentsService.findOne(dto.departmentId);
+    }
+
     try {
       const passwordHash = await bcrypt.hash(dto.password, 10);
       const rest: Partial<CreateUserDto> = { ...dto };
       delete rest.password;
+      delete rest.isDepartmentManager;
       const user = new this.userModel({ ...rest, passwordHash });
       const saved = await user.save();
 
@@ -67,6 +80,16 @@ export class UsersService {
         sanitize(saved),
         ip,
       );
+
+      if (dto.isDepartmentManager && dto.departmentId) {
+        await this.departmentsService.setManagerMembership(
+          dto.departmentId,
+          String(saved._id),
+          true,
+          actorId,
+          ip,
+        );
+      }
 
       return saved;
     } catch (error: any) {
@@ -332,8 +355,23 @@ export class UsersService {
     const before = await this.userModel.findById(id).populate('role').exec();
     if (!before) throw new NotFoundException('User not found');
 
+    // isDepartmentManager ບໍ່ແມ່ນ field ຂອງ user — ໄປປັບ departments.managerIds ແທນ
+    const { isDepartmentManager, ...changes } = dto;
+    const targetDepartmentId =
+      changes.departmentId !== undefined
+        ? changes.departmentId
+        : before.departmentId;
+    if (isDepartmentManager === true) {
+      if (!targetDepartmentId) {
+        throw new BadRequestException(
+          'ຕ້ອງເລືອກພະແນກ ກ່ອນກຳນົດໃຫ້ເປັນຫົວໜ້າພະແນກ',
+        );
+      }
+      await this.departmentsService.findOne(targetDepartmentId);
+    }
+
     const user = await this.userModel
-      .findByIdAndUpdate(id, dto, { new: true })
+      .findByIdAndUpdate(id, changes, { new: true })
       .populate('role')
       .exec();
     if (!user) throw new NotFoundException('User not found');
@@ -352,6 +390,16 @@ export class UsersService {
       sanitize(user),
       ip,
     );
+
+    if (isDepartmentManager !== undefined && targetDepartmentId) {
+      await this.departmentsService.setManagerMembership(
+        targetDepartmentId,
+        id,
+        isDepartmentManager,
+        actorId,
+        ip,
+      );
+    }
 
     return user;
   }

@@ -159,6 +159,44 @@ export class DepartmentsService {
     }));
   }
 
+  /**
+   * ເພີ່ມ / ເອົາ user ອອກຈາກ managerIds ຂອງພະແນກ (ໃຊ້ຈາກໜ້າຈັດການຜູ້ໃຊ້).
+   * ບໍ່ປ່ຽນຫຍັງຖ້າສະຖານະຢູ່ແລ້ວ — ບັນທຶກ audit ສະເພາະຕອນປ່ຽນແທ້.
+   */
+  async setManagerMembership(
+    departmentId: string,
+    userId: string,
+    isManager: boolean,
+    actorId: string,
+    ip?: string,
+  ): Promise<void> {
+    const before = await this.departmentModel.findById(departmentId).exec();
+    if (!before) throw new NotFoundException('Department not found');
+    const already = (before.managerIds ?? []).map(String).includes(String(userId));
+    if (already === isManager) return;
+
+    const after = await this.departmentModel
+      .findByIdAndUpdate(
+        departmentId,
+        isManager
+          ? { $addToSet: { managerIds: String(userId) } }
+          : { $pull: { managerIds: String(userId) } },
+        { new: true },
+      )
+      .exec();
+    if (!after) throw new NotFoundException('Department not found');
+
+    await this.auditLogsService.log(
+      actorId,
+      'DEPARTMENT_MANAGER_CHANGED',
+      'Department',
+      departmentId,
+      before.toObject(),
+      after.toObject(),
+      ip,
+    );
+  }
+
   /** Return department IDs where the given user is explicitly listed as a manager. */
   async findManagedDepartmentIds(userId: string): Promise<string[]> {
     const departments = await this.departmentModel
@@ -171,9 +209,10 @@ export class DepartmentsService {
   }
 
   /**
-   * Departments the user may request supplies for: only active departments
-   * that explicitly list them as a manager. Return only picker fields;
-   * authorization is still re-checked on POST.
+   * Departments the user may request supplies for on behalf of the department:
+   * only active departments that explicitly list them as a manager.
+   * Regular members request personally and go through manager approval.
+   * Return only picker fields; authorization is still re-checked on POST.
    */
   async findRequestableForUser(
     userId: string,

@@ -7,6 +7,7 @@ import { RolesModule } from '../roles/roles.module';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { MailModule } from '../mail/mail.module';
 import { SessionsModule } from '../sessions/sessions.module';
+import { DepartmentsModule } from '../departments/departments.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { SessionsModule } from '../sessions/sessions.module';
     AuditLogsModule,
     MailModule,
     SessionsModule,
+    DepartmentsModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

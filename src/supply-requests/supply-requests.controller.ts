@@ -95,6 +95,26 @@ export class SupplyRequestsController {
     return this.requestsService.findManagerQueue(req.user);
   }
 
+  /** ປະຫວັດຂັ້ນທີ 1: ໃບທີ່ຫົວໜ້າຕັດສິນແລ້ວ (ສິດດຽວກັບ manager-queue) — ຕ້ອງຢູ່ກ່ອນ :id */
+  @Get('manager-history')
+  @RequirePermission('supplies', 'read')
+  managerHistory(@Query('limit') limit: string | undefined, @Req() req: any) {
+    return this.requestsService.findManagerHistory(
+      req.user,
+      limit ? Number(limit) : undefined,
+    );
+  }
+
+  /** ປະຫວັດຝັ່ງຝ່າຍສາງ: ໃບທີ່ອອກຈາກຄິວລໍຖ້າອະນຸມັດແລ້ວ — ຕ້ອງຢູ່ກ່ອນ :id */
+  @Get('history')
+  @RequirePermission('supplies', 'read')
+  history(@Query('limit') limit: string | undefined, @Req() req: any) {
+    return this.requestsService.findWarehouseHistory(
+      this.scopingUserId(req),
+      limit ? Number(limit) : undefined,
+    );
+  }
+
   /** ໃບຮັບເຄື່ອງ: ຂໍ້ມູນໃບຂໍ + ລາຍການທີ່ຕ້ອງສະແກນ Asset Tag + ສິດຢືນຢັນຂອງຜູ້ເປີດ */
   @Get(':id/receipt')
   @RequirePermission('supplies', 'read')

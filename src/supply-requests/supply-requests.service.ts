@@ -224,8 +224,7 @@ export class SupplyRequestsService {
 
   /**
    * ກວດ ແລະ ແປງຂໍ້ມູນພະແນກ/ຜູ້ຮັບຜິດຊອບ ສຳລັບໃບຂໍທີ່ຂໍໃນນາມພະແນກ.
-   * ຜູ້ຂໍ ຕ້ອງເປັນຫົວໜ້າພະແນກ (managerIds) ເທົ່ານັ້ນ;
-   * ຜູ້ຮັບຜິດຊອບ ຕ້ອງເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງພະແນກນັ້ນ.
+   * ຜູ້ຂໍຕ້ອງເປັນຫົວໜ້າພະແນກ (managerIds) · ຜູ້ຮັບຜິດຊອບເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງພະແນກນັ້ນກໍໄດ້.
    */
   private async resolveDepartmentAssignment(
     dto: CreateSupplyRequestDto,
@@ -248,9 +247,10 @@ export class SupplyRequestsService {
     if (requester.isActive === false) {
       throw new BadRequestException('ບັນຊີຜູ້ຂໍຖືກປິດໃຊ້ງານແລ້ວ');
     }
+    // ໃບຂອງແຜນກຂ້າມຂັ້ນອະນຸມັດຫົວໜ້າ → ອະນຸຍາດສະເພາະຫົວໜ້າພະແນກ (managerIds) ເທົ່ານັ້ນ
     if (!managerIds.includes(String(requester._id))) {
-      throw new ForbiddenException(
-        `ຂໍໃນນາມພະແນກໄດ້ສະເພາະຫົວໜ້າພະແນກ "${department.name}"`,
+      throw new BadRequestException(
+        `ຂໍໃນນາມພະແນກໄດ້ສະເພາະຫົວໜ້າພະແນກ "${department.name}" — ພະນັກງານທົ່ວໄປໃຫ້ຂໍແບບສ່ວນຕົວ ແລ້ວລໍຖ້າຫົວໜ້າອະນຸມັດ`,
       );
     }
 
@@ -595,6 +595,72 @@ export class SupplyRequestsService {
     return this.attachPurchaseStatus(docs);
   }
 
+  private clampHistoryLimit(limit?: number) {
+    const n = Number(limit);
+    return Math.min(Math.max(Number.isFinite(n) && n > 0 ? Math.floor(n) : 50, 1), 200);
+  }
+
+  /**
+   * ປະຫວັດຂັ້ນທີ 1: ໃບຂໍທີ່ຫົວໜ້າ (ຫຼື SUPER_ADMIN ແທນ) ຕັດສິນແລ້ວ — ອະນຸມັດ ຫຼື ປະຕິເສດ
+   * ຂອບເຂດສິດດຽວກັບ findManagerQueue (ຫົວໜ້າເຫັນສະເພາະພະແນກທີ່ຕົນເປັນຫົວໜ້າ). ໃໝ່ສຸດກ່ອນ.
+   */
+  async findManagerHistory(user: PermissionUser, limit?: number) {
+    const actorId = user.userId;
+    if (!actorId) throw new BadRequestException('Not authenticated');
+    const substitute = user.role === SUPER_ADMIN_ROLE;
+    const managed = await this.departmentsService.findManagedDepartmentIds(actorId);
+    if (!substitute && managed.length === 0) {
+      throw new ForbiddenException('ສະເພາະຫົວໜ້າພະແນກເທົ່ານັ້ນ');
+    }
+    const filter: Record<string, unknown> = {
+      status: { $ne: SupplyRequestStatus.PENDING_MANAGER },
+      $or: [
+        { managerApprovedAt: { $exists: true } },
+        { managerRejectedAt: { $exists: true } },
+      ],
+    };
+    if (!substitute) filter.managerDepartmentId = { $in: managed };
+    const docs = await this.requestModel
+      .find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(this.clampHistoryLimit(limit))
+      .populate('requestedBy', 'firstName lastName email employeeCode')
+      .populate('departmentId', 'name')
+      .populate('managerDepartmentId', 'name')
+      .populate('managerApprovedBy', 'firstName lastName employeeCode')
+      .populate('managerRejectedBy', 'firstName lastName employeeCode')
+      .populate('approvedBy', 'firstName lastName employeeCode')
+      .exec();
+    return this.attachPurchaseStatus(docs);
+  }
+
+  /**
+   * ປະຫວັດຝັ່ງຝ່າຍສາງ: ໃບທີ່ອອກຈາກຄິວ "ລໍຖ້າອະນຸມັດ" ແລ້ວ (ອະນຸມັດ/ປະຕິເສດ/ສັ່ງຊື້/ຮັບຂອງ/ປິດ).
+   * requestedBy ຖືກຕັ້ງ = ຜູ້ໃຊ້ທົ່ວໄປເຫັນສະເພາະໃບຂອງຕົນ (ກົດດຽວກັບ findAll). ໃໝ່ສຸດກ່ອນ.
+   */
+  async findWarehouseHistory(requestedBy?: string, limit?: number) {
+    const filter: Record<string, unknown> = {
+      status: {
+        $nin: [SupplyRequestStatus.PENDING_MANAGER, SupplyRequestStatus.REQUESTED],
+      },
+    };
+    if (requestedBy) filter.requestedBy = requestedBy;
+    const docs = await this.requestModel
+      .find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(this.clampHistoryLimit(limit))
+      .populate('requestedBy', 'firstName lastName email employeeCode')
+      .populate('departmentId', 'name')
+      .populate('custodianId', 'firstName lastName employeeCode')
+      .populate('delegateId', 'firstName lastName employeeCode')
+      .populate('managerDepartmentId', 'name')
+      .populate('managerApprovedBy', 'firstName lastName employeeCode')
+      .populate('managerRejectedBy', 'firstName lastName employeeCode')
+      .populate('approvedBy', 'firstName lastName employeeCode')
+      .exec();
+    return this.attachPurchaseStatus(docs);
+  }
+
   /** ກວດສິດອະນຸມັດຂັ້ນຫົວໜ້າ: ຫົວໜ້າພະແນກຂອງຜູ້ຂໍ ຫຼື SUPER_ADMIN (ແທນ) — AGENT/ຝ່າຍສາງບໍ່ມີສິດຂັ້ນນີ້ */
   private async assertCanReviewAsManager(
     request: SupplyRequestDocument,
@@ -709,6 +775,7 @@ export class SupplyRequestsService {
   }
 
   async findRequestableDepartments(userId: string) {
+    // ຂໍໃນນາມແຜນກໄດ້ສະເພາະຫົວໜ້າ (managerIds) — ພະນັກງານທົ່ວໄປຂໍສ່ວນຕົວ ແລ້ວລໍຖ້າຫົວໜ້າອະນຸມັດ
     return this.departmentsService.findRequestableForUser(userId);
   }
 

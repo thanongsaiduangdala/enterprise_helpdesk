@@ -27,6 +27,7 @@ describe('SupplyRequestsService.findMine department-manager visibility', () => {
     departmentsService = {
       findManagedDepartmentIds: jest.fn().mockResolvedValue([]),
       findRequestableForUser: jest.fn().mockResolvedValue([
+        { _id: 'DEPT-OWN', name: 'Operations', branchId: 'BR-01' },
         { _id: 'DEPT-MANAGED', name: 'Finance', branchId: 'BR-02' },
       ]),
     };
@@ -44,8 +45,9 @@ describe('SupplyRequestsService.findMine department-manager visibility', () => {
     );
   });
 
-  it('returns requestable departments using manager memberships only', async () => {
+  it('returns requestable departments from manager memberships only (not the profile department)', async () => {
     const expected = [
+      { _id: 'DEPT-OWN', name: 'Operations', branchId: 'BR-01' },
       { _id: 'DEPT-MANAGED', name: 'Finance', branchId: 'BR-02' },
     ];
 

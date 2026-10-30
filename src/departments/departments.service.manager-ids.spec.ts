@@ -24,7 +24,7 @@ describe('DepartmentsService supply-request department access', () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it('returns only active departments where the user is a manager', async () => {
+  it('returns only active requestable department picker fields', async () => {
     const exec = jest.fn().mockResolvedValue([
       {
         _id: 'DEPT-01',
