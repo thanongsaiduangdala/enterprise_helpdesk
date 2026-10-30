@@ -22,6 +22,18 @@ import {
   AssetDocument,
   AssetStatus,
 } from '../assets/schemas/asset.schema';
+import {
+  SupplyRequest,
+  SupplyRequestDocument,
+  SupplyRequestStatus,
+  SupplyLineStatus,
+} from '../supply-requests/schemas/supply-request.schema';
+
+export type CatalogItemWithStock = Record<string, any> & {
+  reservedQty: number;
+  freeQty: number;
+  isConsumable: boolean;
+};
 
 @Injectable()
 export class SupplyCatalogService {
@@ -32,10 +44,11 @@ export class SupplyCatalogService {
     private counterModel: Model<CounterDocument>,
     @InjectModel(Asset.name)
     private assetModel: Model<AssetDocument>,
+    @InjectModel(SupplyRequest.name)
+    private requestModel: Model<SupplyRequestDocument>,
   ) {}
 
   private async generateId(session?: ClientSession): Promise<string> {
-    // seed ຈາກເລກສູງສຸດທີ່ມີຢູ່ (ຂໍ້ມູນເກົ່າ) ແລ້ວອອກເລກແບບ monotonic
     const last = await this.catalogModel
       .findOne({ _id: /^SC\d{3}$/ }, { _id: 1 })
       .sort({ _id: -1 })
@@ -49,7 +62,6 @@ export class SupplyCatalogService {
     return `SC${String(seq).padStart(3, '0')}`;
   }
 
-  /** regex ຈັບຊື່ແບບ exact ແຕ່ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່ ("Mouse" = "mouse") */
   private nameRegex(name: string) {
     const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`^${escaped}$`, 'i');
@@ -70,7 +82,6 @@ export class SupplyCatalogService {
     const name = dto.name.trim();
     await this.assertNameFree(name);
     const _id = await this.generateId();
-    // ຊັບສິນ (ASSET): ສະຕ໊ອກນັບຈາກຈຳນວນຊັບສິນວ່າງ — ບໍ່ຮັບຄ່າຈາກຜູ້ໃຊ້
     const payload = {
       ...dto,
       name,
@@ -86,7 +97,6 @@ export class SupplyCatalogService {
     }
   }
 
-  /** ຫາລາຍການ catalog ດ້ວຍຊື່ (ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່) */
   async findByName(name: string, session?: ClientSession) {
     return this.catalogModel
       .findOne({ name: this.nameRegex(name) })
@@ -94,10 +104,6 @@ export class SupplyCatalogService {
       .exec();
   }
 
-  /**
-   * ສ້າງລາຍການ catalog ພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ ຮັບເຄື່ອງເຂົ້າຄັງ).
-   * ຖ້າຊື່ຊ້ຳ (race) → ຄືນລາຍການທີ່ມີຢູ່ແລ້ວ. ຜູ້ເອີ້ນເປັນຜູ້ push audit ເອງ.
-   */
   async createInTx(dto: CreateSupplyCatalogItemDto, ctx: TxCtx) {
     const name = dto.name.trim();
     const _id = await this.generateId(ctx.session);
@@ -117,13 +123,77 @@ export class SupplyCatalogService {
     }
   }
 
-  findAll(lowStockOnly = false) {
-    if (lowStockOnly) {
-      return this.catalogModel
-        .find({ $expr: { $lte: ['$stockQty', '$lowStockThreshold'] } })
-        .exec();
-    }
-    return this.catalogModel.find().exec();
+  private async reservedByCatalog(): Promise<{
+    assets: Map<string, number>;
+    consumables: Map<string, number>;
+  }> {
+    const [assetRows, consumableRows] = await Promise.all([
+      this.assetModel
+        .aggregate([
+          {
+            $match: {
+              status: AssetStatus.AVAILABLE,
+              reservedForRequestId: { $exists: true, $ne: null },
+              catalogItemId: { $exists: true, $ne: null },
+            },
+          },
+          { $group: { _id: '$catalogItemId', qty: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.requestModel
+        .aggregate([
+          {
+            $match: {
+              status: {
+                $in: [
+                  SupplyRequestStatus.APPROVED,
+                  SupplyRequestStatus.ORDERED,
+                  SupplyRequestStatus.PARTIALLY_RECEIVED,
+                ],
+              },
+            },
+          },
+          { $unwind: '$items' },
+          {
+            $match: {
+              'items.lineStatus': SupplyLineStatus.READY,
+              'items.catalogItemId': { $exists: true, $ne: null },
+            },
+          },
+          { $group: { _id: '$items.catalogItemId', qty: { $sum: '$items.quantity' } } },
+        ])
+        .exec(),
+    ]);
+    return {
+      assets: new Map(assetRows.map((r: any) => [String(r._id), r.qty as number])),
+      consumables: new Map(
+        consumableRows.map((r: any) => [String(r._id), r.qty as number]),
+      ),
+    };
+  }
+
+  async findAll(lowStockOnly = false): Promise<CatalogItemWithStock[]> {
+    const filter = lowStockOnly
+      ? { $expr: { $lte: ['$stockQty', '$lowStockThreshold'] } }
+      : {};
+    const [items, reserved] = await Promise.all([
+      this.catalogModel.find(filter).exec(),
+      this.reservedByCatalog(),
+    ]);
+    return items.map((doc) => {
+      const obj = doc.toObject();
+      const isConsumable = obj.itemType === CatalogItemType.CONSUMABLE;
+      const reservedQty =
+        (isConsumable ? reserved.consumables : reserved.assets).get(
+          String(obj._id),
+        ) ?? 0;
+      return {
+        ...obj,
+        reservedQty,
+        freeQty: Math.max((obj.stockQty ?? 0) - reservedQty, 0),
+        isConsumable,
+      };
+    });
   }
 
   async findOne(id: string, session?: ClientSession) {
@@ -147,7 +217,6 @@ export class SupplyCatalogService {
     const changingTrack =
       patch.trackSerial !== undefined &&
       (current.trackSerial ?? true) !== patch.trackSerial;
-    // ລາຍການເກົ່າທີ່ຍັງບໍ່ມີ itemType ອະນຸຍາດໃຫ້ກຳນົດໄດ້ໜຶ່ງຄັ້ງ.
     if ((changingType || changingTrack) && current.itemType) {
       const hasAssets = await this.assetModel
         .exists({ catalogItemId: id, status: { $ne: AssetStatus.RETIRED } })
@@ -258,7 +327,6 @@ export class SupplyCatalogService {
     };
   }
 
-  /** ປັບສະຕ໊ອກແບບ atomic (ເງື່ອນໄຂ + $inc ໃນຄຳສັ່ງດຽວ) — ບໍ່ໃຫ້ຕ່ຳກວ່າ 0 ແລະບໍ່ມີ race condition */
   async adjustStock(id: string, delta: number, session?: ClientSession) {
     const filter =
       delta < 0 ? { _id: id, stockQty: { $gte: -delta } } : { _id: id };
@@ -270,7 +338,7 @@ export class SupplyCatalogService {
       )
       .exec();
     if (!updated) {
-      const item = await this.findOne(id); // NotFound ຖ້າບໍ່ມີ
+      const item = await this.findOne(id);
       throw new BadRequestException(
         `Insufficient stock for "${item.name}": have ${item.stockQty}, requested ${-delta}`,
       );
@@ -278,10 +346,6 @@ export class SupplyCatalogService {
     return updated;
   }
 
-  /**
-   * ປັບສະຕ໊ອກຕາມການເຄື່ອນໄຫວຂອງຊັບສິນ (ມອບ/ຄືນ/ສ້ອມ/ປົດ) — ບໍ່ຕັນການເຮັດວຽກ ຖ້າສະຕ໊ອກບໍ່ຕົງ:
-   * ຕັດໄດ້ເທົ່າທີ່ມີ (ບໍ່ຕ່ຳກວ່າ 0) ແລ້ວຄືນ mismatch = ຈຳນວນທີ່ຕັດບໍ່ໄດ້ ເພື່ອໃຫ້ຜູ້ເອີ້ນບັນທຶກ audit
-   */
   async adjustStockTracked(id: string, delta: number, session?: ClientSession) {
     const item = await this.catalogModel
       .findById(id)
@@ -303,11 +367,6 @@ export class SupplyCatalogService {
     };
   }
 
-  /**
-   * ຄຳນວນສະຕ໊ອກໃໝ່ຂອງລາຍການທີ່ມີຊັບສິນ: ສະຕ໊ອກ = ຈຳນວນຊັບສິນ AVAILABLE.
-   * ແກ້ຕົວເລກທີ່ເພີ້ຍ (ເຊັ່ນ ລົງທະບຽນຊັບສິນວ່າງແຕ່ສະຕ໊ອກບໍ່ຂຶ້ນ).
-   * ຄືນສະເພາະລາຍການທີ່ຕົວເລກປ່ຽນ.
-   */
   async recalculateAssetStock() {
     const ids: string[] = (
       await this.assetModel.distinct('catalogItemId')
@@ -339,10 +398,6 @@ export class SupplyCatalogService {
     return { checked: ids.length, changed: changes.length, changes };
   }
 
-  /**
-   * ປິດໃຊ້ງານ (soft-disable) ແທນການລຶບຖາວອນ — ບໍ່ລຶບ ຖ້າຍັງມີຊັບສິນອ້າງອີງລາຍການນີ້
-   * (ເພື່ອປ້ອງກັນ orphan asset) ແລະ ຮັກສາ audit/ປະຫວັດໄວ້.
-   */
   async remove(id: string) {
     const item = await this.catalogModel.findById(id).exec();
     if (!item) throw new NotFoundException('Catalog item not found');

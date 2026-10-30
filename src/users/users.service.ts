@@ -39,6 +39,9 @@ function sanitize(obj: Record<string, any> | null | undefined) {
   return clone;
 }
 
+// ຊື່ role ຂອງຫົວໜ້າພະແນກ (ໃຊ້ແບບດຽວກັບ tickets / dashboard / SLA)
+const DEPT_MANAGER_ROLE = 'DEPT_MANAGER';
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -51,13 +54,15 @@ export class UsersService {
   ) {}
 
   async create(dto: CreateUserDto, actorId: string, ip?: string) {
-    await this.rolesService.findOne(dto.role);
+    const role = await this.rolesService.findOne(dto.role);
 
+    // role DEPT_MANAGER = ເປັນຫົວໜ້າຂອງພະແນກທີ່ເລືອກອັດຕະໂນມັດ (departments.managerIds)
     // ກວດພະແນກກ່ອນສ້າງຜູ້ໃຊ້ — ຫຼີກລ້ຽງສ້າງແລ້ວຈຶ່ງຮູ້ວ່າກຳນົດຫົວໜ້າບໍ່ໄດ້
-    if (dto.isDepartmentManager) {
+    const becomesManager = role.name === DEPT_MANAGER_ROLE;
+    if (becomesManager) {
       if (!dto.departmentId) {
         throw new BadRequestException(
-          'ຕ້ອງເລືອກພະແນກ ກ່ອນກຳນົດໃຫ້ເປັນຫົວໜ້າພະແນກ',
+          `ຜູ້ໃຊ້ role ${DEPT_MANAGER_ROLE} ຕ້ອງເລືອກພະແນກ ເພື່ອເປັນຫົວໜ້າຂອງພະແນກນັ້ນ`,
         );
       }
       await this.departmentsService.findOne(dto.departmentId);
@@ -67,7 +72,6 @@ export class UsersService {
       const passwordHash = await bcrypt.hash(dto.password, 10);
       const rest: Partial<CreateUserDto> = { ...dto };
       delete rest.password;
-      delete rest.isDepartmentManager;
       const user = new this.userModel({ ...rest, passwordHash });
       const saved = await user.save();
 
@@ -81,7 +85,7 @@ export class UsersService {
         ip,
       );
 
-      if (dto.isDepartmentManager && dto.departmentId) {
+      if (becomesManager && dto.departmentId) {
         await this.departmentsService.setManagerMembership(
           dto.departmentId,
           String(saved._id),
@@ -348,30 +352,33 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateUserDto, actorId: string, ip?: string) {
-    if (dto.role) {
-      await this.rolesService.findOne(dto.role);
-    }
+    const newRole = dto.role
+      ? await this.rolesService.findOne(dto.role)
+      : undefined;
 
     const before = await this.userModel.findById(id).populate('role').exec();
     if (!before) throw new NotFoundException('User not found');
 
-    // isDepartmentManager ບໍ່ແມ່ນ field ຂອງ user — ໄປປັບ departments.managerIds ແທນ
-    const { isDepartmentManager, ...changes } = dto;
+    // role DEPT_MANAGER ⇔ ເປັນຫົວໜ້າຂອງພະແນກຂອງຕົນ (departments.managerIds) — ຊິງກ໌ທຸກຄັ້ງທີ່ບັນທຶກ
+    const wasManager = (before.role as any)?.name === DEPT_MANAGER_ROLE;
+    const willBeManager = (newRole ? newRole.name : (before.role as any)?.name) === DEPT_MANAGER_ROLE;
+    const oldDepartmentId = before.departmentId;
     const targetDepartmentId =
-      changes.departmentId !== undefined
-        ? changes.departmentId
-        : before.departmentId;
-    if (isDepartmentManager === true) {
+      dto.departmentId !== undefined ? dto.departmentId : before.departmentId;
+    if (
+      willBeManager &&
+      (dto.role !== undefined || dto.departmentId !== undefined)
+    ) {
       if (!targetDepartmentId) {
         throw new BadRequestException(
-          'ຕ້ອງເລືອກພະແນກ ກ່ອນກຳນົດໃຫ້ເປັນຫົວໜ້າພະແນກ',
+          `ຜູ້ໃຊ້ role ${DEPT_MANAGER_ROLE} ຕ້ອງເລືອກພະແນກ ເພື່ອເປັນຫົວໜ້າຂອງພະແນກນັ້ນ`,
         );
       }
       await this.departmentsService.findOne(targetDepartmentId);
     }
 
     const user = await this.userModel
-      .findByIdAndUpdate(id, changes, { new: true })
+      .findByIdAndUpdate(id, dto, { new: true })
       .populate('role')
       .exec();
     if (!user) throw new NotFoundException('User not found');
@@ -391,11 +398,26 @@ export class UsersService {
       ip,
     );
 
-    if (isDepartmentManager !== undefined && targetDepartmentId) {
+    // ເຊົາເປັນຫົວໜ້າ (ປ່ຽນ role ອອກ ຫຼື ຍ້າຍພະແນກ) → ເອົາອອກຈາກພະແນກເກົ່າ
+    if (
+      wasManager &&
+      oldDepartmentId &&
+      (!willBeManager || oldDepartmentId !== targetDepartmentId)
+    ) {
+      await this.departmentsService.setManagerMembership(
+        oldDepartmentId,
+        id,
+        false,
+        actorId,
+        ip,
+      );
+    }
+    // ເປັນຫົວໜ້າ → ໃຫ້ຢູ່ໃນ managerIds ຂອງພະແນກປັດຈຸບັນ (ແກ້ບັນຊີເກົ່າທີ່ຍັງບໍ່ຖືກເພີ່ມນຳ)
+    if (willBeManager && targetDepartmentId) {
       await this.departmentsService.setManagerMembership(
         targetDepartmentId,
         id,
-        isDepartmentManager,
+        true,
         actorId,
         ip,
       );

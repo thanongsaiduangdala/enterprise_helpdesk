@@ -33,7 +33,13 @@ import {
   SupplyRequest,
   SupplyRequestDocument,
   SupplyRequestStatus,
+  SupplyLineStatus,
 } from '../supply-requests/schemas/supply-request.schema';
+import {
+  deriveSupplyStatus,
+  isLineTracked,
+  lineStatusOf,
+} from '../common/utils/supply-line-status.util';
 import { hasPermission, PermissionUser } from '../common/utils/permission.util';
 import {
   AuditEvent,
@@ -63,7 +69,6 @@ export class AssetsService {
   ) {}
 
   private async generateId(session?: ClientSession): Promise<string> {
-    // seed ຈາກເລກສູງສຸດທີ່ມີຢູ່ ແລ້ວອອກເລກແບບ monotonic (ບໍ່ໃຊ້ເລກທີ່ຖືກປົດຄືນ)
     const last = await this.assetModel
       .findOne({ _id: /^AS\d{3}$/ }, { _id: 1 })
       .sort({ _id: -1 })
@@ -77,7 +82,6 @@ export class AssetsService {
 
   async create(dto: CreateAssetDto, actorId?: string, ip?: string) {
     const saved = await this.createInternal(dto);
-    // ສະຕ໊ອກ = ຈຳນວນຊັບສິນ AVAILABLE → ຊັບສິນໃໝ່ທີ່ວ່າງ ຕ້ອງບວກສະຕ໊ອກ +1
     if (saved.catalogItemId && saved.status === AssetStatus.AVAILABLE) {
       await this.catalogService.adjustStockTracked(saved.catalogItemId, 1);
     }
@@ -105,12 +109,8 @@ export class AssetsService {
     if (rest.serialNumber)
       await this.assertSerialFree(rest.serialNumber, session);
 
-    // An asset record may only be linked to a catalog item explicitly typed ASSET.
-    // This server-side guard also protects the API when the frontend picker is bypassed.
     if (catalogItemId) {
       const catalogItem = await this.catalogService.findOne(catalogItemId, session);
-      // Only infer type for old catalogs with existing Asset records. New/untyped
-      // catalogs must be explicitly classified to avoid stock/receipt divergence.
       const legacyHasAssets = catalogItem.itemType
         ? false
         : await this.catalogHasAssets(String(catalogItemId), session);
@@ -124,7 +124,6 @@ export class AssetsService {
       }
     }
 
-    // ຖ້າຜູ້ໃຊ້ກຣອກ Asset Tag ເອງ → ໃຊ້ຕາມນັ້ນ (ຊ້ຳ = ແຈ້ງ error ປົກກະຕິ)
     if (assetTag) {
       const existing = await this.assetModel
         .findOne({ assetTag })
@@ -143,14 +142,12 @@ export class AssetsService {
       }).save({ session: session ?? undefined });
     }
 
-    // ບໍ່ມີ tag → ຕ້ອງເລືອກ catalog ເພື່ອສ້າງອັດຕະໂນມັດ (SC002-001)
     if (!catalogItemId) {
       throw new BadRequestException(
         'Provide an assetTag or select a catalog item so the system can auto-generate one (e.g. SC002-001)',
       );
     }
 
-    // ສ້າງອັດຕະໂນມັດ + retry ເມື່ອຊົນກັນ (create ພ້ອມກັນຈະໄດ້ seq ດຽວກັນ)
     const maxAttempts = 5;
     for (let attempt = 1; ; attempt++) {
       const tag = await this.generateCatalogAssetTag(catalogItemId, session);
@@ -172,19 +169,12 @@ export class AssetsService {
     }
   }
 
-  /**
-   * ສ້າງຊັບສິນພາຍໃນ transaction ຂອງ service ອື່ນ (ເຊັ່ນ ຕອນຮັບເຄື່ອງເຂົ້າຄັງ) ແລະ
-   * ມອບໃຫ້ຜູ້ໃຊ້ໃນທັນທີ — ບໍ່ເອີ້ນ performAssign/syncStock ເພື່ອບໍ່ໃຫ້ນັບສະຕ໊ອກສອງເທື່ອ
-   * (ສະຕ໊ອກຈະບວກຄັ້ງດຽວຕອນຮັບເຄື່ອງເຂົ້າຄັງ).
-   */
   async createAssignedAssetInTx(
     input: {
       type: string;
       catalogItemId: string;
       branchId: string;
-      /** ບໍ່ໃສ່ = ເຂົ້າຄັງ (AVAILABLE, ບວກສະຕ໊ອກ); ໃສ່ = ມອບໃຫ້ຜູ້ນີ້ທັນທີ (ASSIGNED) */
       assigneeId?: string;
-      /** ສະຖານະທີ່ຕ້ອງການເປັນ — ຖ້າບໍ່ໃສ່ ຈະອີງຈາກ assigneeId */
       status?: AssetStatus;
       serialNumber?: string;
       note?: string;
@@ -198,9 +188,6 @@ export class AssetsService {
   ): Promise<AssetDocument> {
     const serial = input.serialNumber?.trim();
     if (serial) await this.assertSerialFree(serial, ctx.session);
-    // ມີ assignee = ຖືກມອບໝາຍ (ASSIGNED); ບໍ່ມີ = ວ່າງ (AVAILABLE).
-    // ຖ້າ service ອື່ນສົ່ງ status ມາ ໃຫ້ສະຖານະນັ້ນຊະນະ — ແຕ່ຫ້າມ "ວ່າງ" ໃນຂະນະທີ່ມີ assignee
-    // (ກັນຂໍ້ມູນຂັດແຍ່ງ: ມີຜູ້ຖືແຕ່ບອກວ່າວ່າງ).
     let status =
       input.status &&
       !(input.status === AssetStatus.AVAILABLE && input.assigneeId)
@@ -208,8 +195,6 @@ export class AssetsService {
         : input.assigneeId
           ? AssetStatus.ASSIGNED
           : AssetStatus.AVAILABLE;
-    // ຊັບສິນ ASSIGNED ຕ້ອງມີຜູ້ຖື ສະເພາະ — ຖ້າບໍ່ມີຜູ້ຖືໃຫ້ລົງເປັນວ່າງ (AVAILABLE)
-    // (ກັນຕາມຂໍ້ມູນຂັດແຍ່ງ: ຊັບສິນວ່າງແຕ່ບໍ່ມີຜູ້ຮັບ/ປະຫວັດການມອບ)
     if (status === AssetStatus.ASSIGNED && !input.assigneeId) {
       status = AssetStatus.AVAILABLE;
     }
@@ -334,7 +319,6 @@ export class AssetsService {
         if (!row.branchId) {
           throw new Error('Missing required field (branchId)');
         }
-        // ຖ້າບໍ່ມີ type ແຕ່ອ້າງ catalog → ໃຊ້ຊື່ລາຍການ catalog ເປັນ type
         let type = row.type;
         if (!type && hasCatalog) {
           const item = await this.catalogService.findOne(row.catalogItemId);
@@ -390,7 +374,6 @@ export class AssetsService {
     if (filters.holderType === HolderType.DEPARTMENT) {
       query.holderType = HolderType.DEPARTMENT;
     } else if (filters.holderType === HolderType.PERSON) {
-      // ເອກະສານເກົ່າບໍ່ມີ holderType — ນັບເປັນ "ບຸກຄົນ"
       query.holderType = { $ne: HolderType.DEPARTMENT };
     }
     if (filters.branchId) query.branchId = filters.branchId;
@@ -408,10 +391,6 @@ export class AssetsService {
     return asset;
   }
 
-  /**
-   * ໄທມ໌ໄລນ໌ປະຫວັດຂອງຊັບສິນໜຶ່ງຊິ້ນ: ຮັບເຂົ້າສາງ → ມອບໝາຍ/ຮັບຄືນ → ສ້ອມແປງ/ປ່ຽນສະຖານະ
-   * (ຮວມຊື່ຜູ້ດຳເນີນການ + ຜູ້ຮັບ). ອ່ານຢ່າງດຽວ — ບໍ່ແກ້ໄຂຂໍ້ມູນ.
-   */
   async getTimeline(id: string) {
     const asset = await this.findOne(id);
     const obj = asset.toObject() as any;
@@ -419,7 +398,6 @@ export class AssetsService {
     const toId = (v: any) =>
       v && typeof v === 'object' ? String(v._id ?? v.id ?? v) : v ? String(v) : '';
 
-    // ── 1) ຂໍ້ມູນດິບ ──
     const GoodsReceiptModel: Model<any> | undefined =
       this.connection.models['GoodsReceipt'];
     const receipts = GoodsReceiptModel
@@ -432,7 +410,6 @@ export class AssetsService {
     const maintenance = (await this.maintenanceHistoryService.findByAssetId(id)) as any[];
     const history: any[] = obj.assignmentHistory ?? [];
 
-    // ── 2) ແປງລະຫັດຜູ້ໃຊ້/ພະແນກ → ຊື່ (ຄັ້ງດຽວ) ──
     const userIds = new Set<string>();
     const addUser = (v: any) => {
       const u = toId(v);
@@ -474,7 +451,6 @@ export class AssetsService {
     const deptMap = new Map<string, string>((depts as any[]).map((d): [string, string] => [String(d._id), d.name]));
     const deptName = (v?: string) => (v ? (deptMap.get(String(v)) ?? String(v)) : undefined);
 
-    // ── 3) ຈັບຄູ່ audit log ທີ່ໃກ້ເວລາທີ່ສຸດ ເພື່ອຮູ້ວ່າ "ໃຜເປັນຄົນດຳເນີນການ" ──
     const WINDOW_MS = 2 * 60 * 1000;
     const actorNear = (actions: string[], at?: Date | string) => {
       if (!at) return undefined;
@@ -504,7 +480,6 @@ export class AssetsService {
     };
     const events: Ev[] = [];
 
-    // ຮັບເຂົ້າສາງ
     for (const r of receipts as any[]) {
       events.push({
         type: 'RECEIVED',
@@ -535,7 +510,6 @@ export class AssetsService {
       });
     }
 
-    // ມອບໝາຍ / ຮັບຄືນ (ຈາກ assignmentHistory + ຈັບຄູ່ຜູ້ດຳເນີນການຈາກ audit)
     for (const h of history) {
       events.push({
         type: h.departmentId ? 'ASSIGNED_DEPT' : 'ASSIGNED',
@@ -560,7 +534,6 @@ export class AssetsService {
       }
     }
 
-    // ສ້ອມແປງ
     for (const m of maintenance) {
       events.push({
         type: 'REPAIR',
@@ -580,7 +553,6 @@ export class AssetsService {
       });
     }
 
-    // ປ່ຽນສະຖານະ (ຂ້າມ ສ່ງຊ້ອມ/ສ້ອມແລ້ວ ຖ້າມີບັນທຶກສ້ອມແປງສະແດງແລ້ວ)
     for (const a of audits) {
       if (a.action !== 'ASSET_STATUS_CHANGED') continue;
       const from = a.before?.status;
@@ -617,7 +589,6 @@ export class AssetsService {
       .exec();
   }
 
-  /** ຄົ້ນຫາດ້ວຍ Asset Tag ກ່ອນ ຖ້າບໍ່ພົບລອງ _id (QR ຂອງຊັບສິນເປັນລິ້ງ /assets/<_id>) */
   async findByTagOrId(value: string, session?: ClientSession) {
     const byTag = await this.findByAssetTag(value, session);
     if (byTag) return byTag;
@@ -676,15 +647,13 @@ export class AssetsService {
     }
   }
 
-  /** ລາຍການ catalog ນີ້ມີຊັບສິນ (ທີ່ບໍ່ຖືກປົດ) ແລ້ວຫຼືບໍ່ — ໃຊ້ແຍກອຸປະກອນອອກຈາກວັດສະດຸສິ້ນເປືອງ ສຳລັບຂໍ້ມູນເກົ່າທີ່ບໍ່ມີ itemType */
   async catalogHasAssets(catalogItemId: string, session?: ClientSession) {
     const hit = await this.assetModel
-      .exists({ catalogItemId })
+      .exists({ catalogItemId, status: { $ne: AssetStatus.RETIRED } })
       .session(session ?? null);
     return !!hit;
   }
 
-  /** ຫາຊັບສິນດ້ວຍ S/N (ບໍ່ສົນຕົວພິມນ້ອຍ-ໃຫຍ່) */
   async findBySerialNumber(serial: string, session?: ClientSession) {
     const escaped = serial.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return this.assetModel
@@ -707,7 +676,6 @@ export class AssetsService {
   }
 
   async assign(id: string, dto: AssignAssetDto, actorId: string, ip?: string) {
-    // ແຍກໜ້າທີ່: ຜູ້ມີສິດ assign ມອບຊັບສິນໃຫ້ຕົນເອງບໍ່ໄດ້ (ຕ້ອງໃຫ້ຄົນອື່ນມອບ ຫຼືຜ່ານໃບຂໍທີ່ອະນຸມັດ)
     if ((await sodEnforced()) && String(dto.assigneeId) === String(actorId)) {
       await this.auditLogsService.log(
         actorId,
@@ -735,12 +703,6 @@ export class AssetsService {
     });
   }
 
-  /**
-   * ມອບຊັບສິນໃຫ້ "ພະແນກ" — ມີຜູ້ຮັບຜິດຊອບ (custodian) ໜຶ່ງຄົນກຳກັບສະເໝີ.
-   * - ຜູ້ຮັບຜິດຊອບ/ຜູ້ຮັບແທນຕ້ອງຢູ່ພະແນກນັ້ນ (ຫຼືເປັນຫົວໜ້າພະແນກ) ແລະບັນຊີຍັງໃຊ້ງານ
-   * - ແຍກໜ້າທີ່: ຜູ້ມອບບໍ່ເປັນຜູ້ຮັບຜິດຊອບ ຫຼືຜູ້ຮັບແທນຂອງຕົນເອງ
-   * - currentAssigneeId = ຜູ້ຮັບຜິດຊອບ ເພື່ອໃຫ້ການຄືນເຄື່ອງ/ເກີນກຳນົດ ທຳງານຄືເດີມ
-   */
   async assignToDepartment(
     id: string,
     dto: AssignDepartmentDto,
@@ -814,28 +776,18 @@ export class AssetsService {
     });
   }
 
-  /**
-   * ອ້າງສິດຮັບເຄື່ອງດ້ວຍຕົນເອງ — ຜູ້ໃຊ້ທີ່ກຳລັງ login ຮັບຊັບສິນທີ່ຍັງວ່າງ
-   * (ຈາກການສະແກນ QR/ບາໂຄ໊ດ ໃນໜ້າທະບຽນຊັບສິນ) ໂດຍບໍ່ຕ້ອງມີ assets.assign
-   */
-  /**
-   * ກຳນົດວ່າ Catalog item ຕ້ອງຮັບຜ່ານ Asset Tag ຫຼືບໍ່.
-   * itemType ແມ່ນຄ່າຫຼັກ; ຈຳນວນ Asset Record ໃຊ້ເປັນ fallback ສະເພາະຂໍ້ມູນເກົ່າທີ່ຍັງບໍ່ມີ itemType.
-   */
   async requiresAssetTagForCatalog(
     catalogItemId?: string,
     session?: ClientSession,
   ): Promise<boolean> {
     if (!catalogItemId) return false;
     const item = await this.catalogService.findOne(String(catalogItemId), session);
-    // An explicit itemType always wins; only untyped legacy rows need inference.
     const legacyHasAssets = item.itemType
       ? false
       : await this.catalogHasAssets(String(catalogItemId), session);
     return catalogRequiresAssetTag(item.itemType, legacyHasAssets);
   }
 
-  /** ກວດວ່າມີ Asset Record ທີ່ຍັງບໍ່ຖືກປົດຜູກກັບ Catalog ຫຼືບໍ່. */
   async hasAssetsForCatalog(catalogItemId?: string): Promise<boolean> {
     if (!catalogItemId) return false;
     const found = await this.assetModel
@@ -844,9 +796,7 @@ export class AssetsService {
     return !!found;
   }
 
-  // ───────────── Transaction helpers ─────────────
 
-  /** ຮັນໃນ transaction (ຖ້າຜູ້ເອີ້ນຍັງບໍ່ມີ ctx) ແລ້ວບັນທຶກ audit ຫຼັງ commit ສຳເລັດ */
   private async inTx<T>(
     ctx: TxCtx | undefined,
     fn: (ctx: TxCtx) => Promise<T>,
@@ -875,11 +825,6 @@ export class AssetsService {
     }
   }
 
-  /**
-   * ສະຕ໊ອກ Catalog = ຈຳນວນຊັບສິນ "ວ່າງ" ຂອງລາຍການນັ້ນ — ຂະຫຍັບຕາມສະຖານະຊັບສິນອັດຕະໂນມັດ
-   * (ມອບ −1, ຄືນ +1, ສົ່ງສ້ອມ −1, ປົດ −1 ...). ຖ້າສະຕ໊ອກບໍ່ຕົງຈົນຕັດບໍ່ໄດ້ ຈະບໍ່ຕັນການເຮັດວຽກ
-   * ແຕ່ບັນທຶກ STOCK_MISMATCH ໃນ audit log ເພື່ອໃຫ້ຜູ້ຮັບຜິດຊອບກວດ.
-   */
   private async syncStock(
     asset: { _id: any; assetTag: string; catalogItemId?: string },
     from: AssetStatus | undefined,
@@ -894,7 +839,6 @@ export class AssetsService {
       st === AssetStatus.AVAILABLE ? 1 : 0;
     const delta = contrib(to) - contrib(from);
     if (delta === 0) return;
-    // strict (ໃຊ້ຕອນມອບ): ສະຕ໊ອກຕັດບໍ່ໄດ້ = ບໍ່ມີຂອງໃນຄັງຕາມລະບົບ → ປະຕິເສດ ແທນການຜ່ານແລ້ວແຕ່ບັນທຶກເຕືອນ
     if (strict && delta < 0) {
       const item = await this.catalogService.findOne(
         asset.catalogItemId,
@@ -929,16 +873,7 @@ export class AssetsService {
     }
   }
 
-  // ───────────── Claim (ສະແກນ QR/ບາໂຄ໊ດ ໃນທະບຽນຊັບສິນ) ─────────────
 
-  /**
-   * ຮັບ/ມອບເຄື່ອງດ້ວຍການສະແກນ.
-   * - ຜູ້ມີ assets.assign ໃສ່ assigneeCode ເພື່ອມອບໃຫ້ຄົນທີ່ມາຮັບ; ບໍ່ໃສ່ = ຕົນເອງ.
-   * - ຜູ້ບໍ່ມີ assets.assign ຮັບໃຫ້ຕົນເອງເທົ່ານັ້ນ.
-   * - ຜູ້ຮັບຕ້ອງມີໃບຂໍ APPROVED ທີ່ຍັງມີໂຄຕ້າເຫຼືອສຳລັບຊັບສິນນີ້ (ນັບຕາມຈຳນວນທີ່ຂໍ — ເກີນບໍ່ໄດ້).
-   * - ເມື່ອສຳເລັດ ບັນທຶກເຂົ້າໃບຂໍ (receivedAssetIds) ແລະປິດໃບອັດຕະໂນມັດຖ້າລາຍການ Asset Tag ຄົບທຸກລາຍການ.
-   * - ທຸກຢ່າງ (ມອບ, ສະຕ໊ອກ, ໃບຂໍ) ຢູ່ໃນ transaction ດຽວ.
-   */
   async claim(
     id: string,
     user: PermissionUser,
@@ -971,7 +906,6 @@ export class AssetsService {
         );
       }
     }
-    // ຜູ້ມີສິດ assign ຮັບໃຫ້ຕົນເອງໂດຍບໍ່ຕ້ອງມີໃບຂໍໄດ້ ສະເພາະເມື່ອບໍ່ບັງຄັບແຍກໜ້າທີ່ (ໂໝດ dev)
     const needEntitlement =
       !canAssign || targetIsOther || (await sodEnforced());
 
@@ -1033,14 +967,11 @@ export class AssetsService {
     });
   }
 
-  /** ໃບຂໍທີ່ອະນຸມັດແລ້ວ ຂອງຜູ້ຮັບ ທີ່ຍັງມີໂຄຕ້າເຫຼືອສຳລັບຊັບສິນນີ້ (ນັບຊັບສິນທີ່ຮັບໄປແລ້ວຕາມໃບນັ້ນ) */
   private async findEntitlement(
     targetId: string,
     asset: AssetDocument,
     session?: ClientSession,
   ) {
-    // ສະຖານະທີ່ຍັງຮັບຂອງບໍ່ຄົບ: APPROVED / ORDERED / PARTIALLY_RECEIVED
-    // (CLOSED = ຮັບຄົບແລ້ວ, ບໍ່ມີໂຄຕ້າໃຫ້ຮັບເພີ່ມ)
     const requests = await this.supplyRequestModel
       .find({
         requestedBy: targetId as any,
@@ -1056,8 +987,9 @@ export class AssetsService {
       .session(session ?? null)
       .exec();
     for (const r of requests) {
-      // ຄຳຂໍທີ່ຜູກກັບໃບສະເໜີຊື້ ແລະຂອງຍັງມາບໍ່ຄົບ = ຍັງບໍ່ "ພ້ອມມາຮັບ" — ຍັງ claim ບໍ່ໄດ້
+      const lineMode = isLineTracked(r.items);
       if (
+        !lineMode &&
         r.items.some(
           (i) => !!i.purchaseRequestId && (i.arrivedQty ?? 0) < (i.purchaseQty ?? 0),
         )
@@ -1070,15 +1002,21 @@ export class AssetsService {
         const k = matchAssetToItem(r.items, p, counts);
         if (k >= 0) counts[k] += 1;
       });
-      const k = matchAssetToItem(r.items, asset, counts);
-      if (k >= 0 && counts[k] < r.items[k].quantity) {
-        return { request: r, itemIndex: k, counts };
+      const pool = r.items
+        .map((_, idx) => idx)
+        .filter(
+          (idx) => !lineMode || lineStatusOf(r.items[idx]) === SupplyLineStatus.READY,
+        );
+      const poolItems = pool.map((idx) => r.items[idx]);
+      const poolCounts = pool.map((idx) => counts[idx]);
+      const j = matchAssetToItem(poolItems, asset, poolCounts);
+      if (j >= 0 && poolCounts[j] < poolItems[j].quantity) {
+        return { request: r, itemIndex: pool[j], counts };
       }
     }
     return null;
   }
 
-  /** ບັນທຶກວ່າຊັບສິນນີ້ຖືກຮັບຕາມໃບຂໍ ແລະປິດໃບເມື່ອລາຍການ Asset Tag ຄົບທັງໝົດ */
   private async recordReceipt(
     request: SupplyRequestDocument,
     asset: AssetDocument,
@@ -1100,9 +1038,25 @@ export class AssetsService {
         this.requiresAssetTagForCatalog(i.catalogItemId, ctx.session),
       ),
     );
-    const complete = request.items.every(
-      (it, i) => tagged[i] && counts[i] >= it.quantity,
-    );
+    let complete: boolean;
+    if (isLineTracked(request.items)) {
+      const line = request.items[itemIndex];
+      if (tagged[itemIndex] && counts[itemIndex] >= line.quantity) {
+        line.lineStatus = SupplyLineStatus.COLLECTED;
+        line.lineUpdatedBy = actorId as any;
+        line.lineUpdatedAt = new Date();
+        request.markModified('items');
+      }
+      request.status = deriveSupplyStatus(request.items);
+      if (!request.items.some((i) => lineStatusOf(i) === SupplyLineStatus.READY)) {
+        request.readyToCollectAt = undefined;
+      }
+      complete = request.status === SupplyRequestStatus.CLOSED;
+    } else {
+      complete = request.items.every(
+        (it, i) => tagged[i] && counts[i] >= it.quantity,
+      );
+    }
     if (complete) {
       request.status = SupplyRequestStatus.CLOSED;
       request.fulfilledBy = actorId as any;
@@ -1123,9 +1077,7 @@ export class AssetsService {
     });
   }
 
-  // ───────────── Assign / Return / Status / Remove ─────────────
 
-  /** ເປີດໃຫ້ service ອື່ນ (ຮັບເຄື່ອງຕາມໃບຂໍ) ມອບຊັບສິນພາຍໃນ transaction ດຽວກັນ */
   assignInCtx(
     asset: AssetDocument,
     assigneeId: string,
@@ -1148,7 +1100,6 @@ export class AssetsService {
     );
   }
 
-  /** ຈອງຊັບສິນ (ທີ່ຍັງວ່າງ) ໄວ້ໃຫ້ຄຳຂໍເບີກ — ໃຊ້ຕອນຮັບເຄື່ອງຕາມໃບສະເໜີຊື້ທີ່ຜູກກັບຄຳຂໍ */
   async reserveForRequestInTx(
     assetIds: string[],
     requestId: string,
@@ -1169,18 +1120,49 @@ export class AssetsService {
     return res.modifiedCount ?? 0;
   }
 
-  /** ປົດການຈອງທັງໝົດຂອງຄຳຂໍ (ເຊັ່ນ ຄຳຂໍຖືກປະຕິເສດ) — ຊັບສິນກັບຄືນເປັນສະຕ໊ອກທົ່ວໄປ */
-  async releaseReservationsForRequest(requestId: string, session?: ClientSession) {
+  async findFreeAssetIds(catalogItemId: string, limit: number): Promise<string[]> {
+    const docs = await this.assetModel
+      .find({
+        catalogItemId,
+        status: AssetStatus.AVAILABLE,
+        reservedForRequestId: { $exists: false },
+      })
+      .sort({ createdAt: 1 })
+      .limit(limit)
+      .select('_id')
+      .lean()
+      .exec();
+    return docs.map((d: any) => String(d._id));
+  }
+
+  countFreeAssets(catalogItemId: string) {
+    return this.assetModel
+      .countDocuments({
+        catalogItemId,
+        status: AssetStatus.AVAILABLE,
+        reservedForRequestId: { $exists: false },
+      })
+      .exec();
+  }
+
+  async releaseReservationsForRequest(
+    requestId: string,
+    session?: ClientSession,
+    catalogItemIds?: string[],
+  ) {
+    if (catalogItemIds && catalogItemIds.length === 0) return;
     await this.assetModel
       .updateMany(
-        { reservedForRequestId: requestId },
+        {
+          reservedForRequestId: requestId,
+          ...(catalogItemIds ? { catalogItemId: { $in: catalogItemIds } } : {}),
+        },
         { $unset: { reservedForRequestId: 1 } },
         { session },
       )
       .exec();
   }
 
-  /** ຊັບສິນທີ່ຈອງໄວ້ໃຫ້ຄຳຂໍນີ້ (ຍັງບໍ່ໄດ້ມອບ) */
   countReservedForRequest(requestId: string, session?: ClientSession) {
     return this.assetModel
       .countDocuments({ reservedForRequestId: requestId, status: AssetStatus.AVAILABLE })
@@ -1201,13 +1183,11 @@ export class AssetsService {
     if (asset.status === AssetStatus.RETIRED) {
       throw new BadRequestException('Cannot assign a retired asset');
     }
-    // ຊັບສິນທີ່ຈອງໄວ້ໃຫ້ຄຳຂໍເບີກ ມອບໄດ້ສະເພາະຜ່ານຄຳຂໍນັ້ນ (ສະແກນຮັບ)
     if (asset.reservedForRequestId && asset.reservedForRequestId !== reservedFor) {
       throw new BadRequestException(
         `ຊັບສິນ ${asset.assetTag} ຖືກຈອງໄວ້ສຳລັບຄຳຂໍເບີກ ${asset.reservedForRequestId} — ມອບໃຫ້ຄົນອື່ນບໍ່ໄດ້`,
       );
     }
-    // ມອບໄດ້ສະເພາະຊັບສິນ "ວ່າງ" — ຫ້າມມອບຊ້ຳໃຫ້ຄົນອື່ນ ຫຼື ມອບຕອນກຳລັງສ້ອມ
     if (asset.status !== AssetStatus.AVAILABLE) {
       throw new BadRequestException(
         asset.status === AssetStatus.ASSIGNED
@@ -1368,8 +1348,6 @@ export class AssetsService {
       },
     );
 
-    // ບັນທຶກປະຫວັດການສ້ອມແປງອັດຕະໂມມັດ (ເຮັດຫຼັງ commit ເພື່ອບໍ່ໃຫ້ຊ້ຳເມື່ອ transaction retry):
-    // ສົ່ງເຂົ້າ -> ສ້າງບັນທຶກ IN_PROGRESS, ອອກຈາກການສ້ອມແປງ -> ປິດບັນທຶກທີ່ຍັງຄ້າງຢູ່ເປັນ COMPLETED
     if (status === 'UNDER_REPAIR') {
       await this.maintenanceHistoryService.create(
         {

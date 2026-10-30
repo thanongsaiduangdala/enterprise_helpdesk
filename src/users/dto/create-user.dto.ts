@@ -1,5 +1,4 @@
 import {
-  IsBoolean,
   IsEmail,
   IsNotEmpty,
   IsOptional,
@@ -44,12 +43,4 @@ export class CreateUserDto {
   @ApiPropertyOptional({ example: 'DX001' })
   @IsOptional()
   departmentId?: string;
-
-  @ApiPropertyOptional({
-    description:
-      'ກຳນົດ/ຍົກເລີກໃຫ້ຜູ້ໃຊ້ເປັນຫົວໜ້າ (departments.managerIds) ຂອງ departmentId. ບໍ່ເກັບໃນ user.',
-  })
-  @IsOptional()
-  @IsBoolean()
-  isDepartmentManager?: boolean;
 }

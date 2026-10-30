@@ -1,9 +1,11 @@
 import {
   IsArray,
   IsBoolean,
+  IsInt,
   IsOptional,
   IsString,
   MaxLength,
+  Min,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -25,6 +27,17 @@ export class ReceiveSupplyRequestDto {
   @IsOptional()
   @IsBoolean()
   confirmConsumables?: boolean;
+
+  @ApiPropertyOptional({
+    example: [0, 2],
+    description:
+      'Line-tracked requests only: indexes (in request.items) of the READY lines being collected now. Omit to collect every READY line. Ignored for legacy requests (they are received whole).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  lineIndexes?: number[];
 
   @ApiPropertyOptional({
     example: 'EMP001',

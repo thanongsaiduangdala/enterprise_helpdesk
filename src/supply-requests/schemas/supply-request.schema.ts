@@ -13,6 +13,8 @@ export enum SupplyRequestSource {
 export enum SupplyRequestStatus {
   /** ຄຳຂໍສ່ວນບຸກຄົນ ລໍຖ້າຫົວໜ້າພະແນກຂອງຜູ້ຂໍອະນຸມັດ (ຂັ້ນທີ 1) ກ່ອນເຂົ້າຄິວຝ່າຍສາງ */
   PENDING_MANAGER = 'PENDING_MANAGER',
+  /** ຫົວໜ້າພະແນກໃຫ້ພະນັກງານແກ້ໄຂລາຍການ ແລ້ວສົ່ງໃໝ່ */
+  NEEDS_REVISION = 'NEEDS_REVISION',
   REQUESTED = 'REQUESTED',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
@@ -27,6 +29,20 @@ export enum SupplyRequestStatus {
    * ລະບົບປົດໃຫ້ຖືກເປັນ terminal (ບໍ່ເຄີນຖືກຄຳນວນກັບຄືນ)
    */
   FULFILLED = 'FULFILLED',
+}
+
+/** ສະຖານະຂອງແຕ່ລະລາຍການ (ແຍກຕາມລາຍການ) */
+export enum SupplyLineStatus {
+  /** ລໍຖ້າຝ່າຍສາງກວດ */
+  WAITING = 'WAITING',
+  /** ມີຂອງ ແລະຈອງແລ້ວ — ມາຮັບໄດ້ */
+  READY = 'READY',
+  /** ບໍ່ມີຂອງ — ສັ່ງຊື້ແລ້ວ ລໍຖ້າຂອງມາ */
+  ON_ORDER = 'ON_ORDER',
+  /** ຝ່າຍສາງປະຕິເສດລາຍການນີ້ */
+  REJECTED = 'REJECTED',
+  /** ຮັບໄປແລ້ວ */
+  COLLECTED = 'COLLECTED',
 }
 
 @Schema({ _id: false })
@@ -60,6 +76,20 @@ class SupplyRequestItem {
   /** ຈຳນວນ (ໃນ purchaseQty) ທີ່ຂອງມາຮອດຄັງແລ້ວ ຜ່ານໃບຮັບເຄື່ອງ */
   @Prop({ min: 0, default: 0 })
   arrivedQty?: number;
+
+  /** ສະຖານະລາຍການ — ເອກະສານເກົ່າບໍ່ມີຄ່ານີ້ (ຖືວ່າ WAITING) */
+  @Prop({ enum: SupplyLineStatus, default: SupplyLineStatus.WAITING })
+  lineStatus?: SupplyLineStatus;
+
+  /** ໝາຍເຫດຈາກຝ່າຍສາງ (ເຊັ່ນ ເຫດຜົນທີ່ປະຕິເສດ) */
+  @Prop()
+  lineNote?: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  lineUpdatedBy?: Types.ObjectId;
+
+  @Prop()
+  lineUpdatedAt?: Date;
 }
 
 /** ບັນທຶກເມື່ອເຈົ້າໜ້າທີ່ສາງຮັບເຄື່ອງແທນ ໂດຍບໍ່ແມ່ນຜູ້ຂໍ/ຜູ້ຮັບແທນທີ່ກຳນົດໄວ້ (override) */
@@ -133,6 +163,20 @@ export class SupplyRequest {
 
   @Prop()
   rejectionReason?: string;
+
+  /** ຂໍ້ຄວາມຈາກຫົວໜ້າພະແນກ ເມື່ອໃຫ້ແກ້ໄຂລາຍການ (status NEEDS_REVISION) */
+  @Prop()
+  revisionNote?: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  revisionRequestedBy?: Types.ObjectId;
+
+  @Prop()
+  revisionRequestedAt?: Date;
+
+  /** ຈຳນວນຄັ້ງທີ່ພະນັກງານສົ່ງໃໝ່ຫຼັງແກ້ໄຂ */
+  @Prop({ default: 0 })
+  resubmitCount?: number;
 
   @Prop({ type: Types.ObjectId, ref: 'User' })
   fulfilledBy?: Types.ObjectId;

@@ -13,6 +13,9 @@ import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { SupplyRequestsService } from './supply-requests.service';
 import { CreateSupplyRequestDto } from './dto/create-supply-request.dto';
 import { RejectSupplyRequestDto } from './dto/reject-supply-request.dto';
+import { RequestChangesSupplyRequestDto } from './dto/request-changes-supply-request.dto';
+import { ResubmitSupplyRequestDto } from './dto/resubmit-supply-request.dto';
+import { ReviewSupplyLinesDto } from './dto/review-supply-lines.dto';
 import { BulkFulfillDto } from './dto/bulk-fulfill.dto';
 import { ReceiveSupplyRequestDto } from './dto/receive-supply-request.dto';
 import { SetSupplyRequestDelegateDto } from './dto/set-supply-request-delegate.dto';
@@ -161,6 +164,39 @@ export class SupplyRequestsController {
     @Req() req: any,
   ) {
     return this.requestsService.managerReject(id, req.user, dto.reason, req.ip);
+  }
+
+  /** ຫົວໜ້າພະແນກໃຫ້ພະນັກງານແກ້ໄຂລາຍການ (ບໍ່ອະນຸມັດ/ບໍ່ປະຕິເສດ) */
+  @Patch(':id/manager-request-changes')
+  @RequirePermission('supplies', 'read')
+  managerRequestChanges(
+    @Param('id') id: string,
+    @Body() dto: RequestChangesSupplyRequestDto,
+    @Req() req: any,
+  ) {
+    return this.requestsService.managerRequestChanges(id, req.user, dto.note, req.ip);
+  }
+
+  /** ຝ່າຍສາງກວດແຕ່ລະລາຍການ: ຜູກ Catalog / ມີຂອງ / ສັ່ງຊື້ / ປະຕິເສດ */
+  @Patch(':id/review-lines')
+  @RequirePermission('supplies', 'approve')
+  reviewLines(
+    @Param('id') id: string,
+    @Body() dto: ReviewSupplyLinesDto,
+    @Req() req: any,
+  ) {
+    return this.requestsService.reviewLines(id, dto, req.user, req.ip);
+  }
+
+  /** ຜູ້ຂໍແກ້ລາຍການ ແລ້ວສົ່ງໃໝ່ */
+  @Patch(':id/resubmit')
+  @RequirePermission('supplies', 'create')
+  resubmit(
+    @Param('id') id: string,
+    @Body() dto: ResubmitSupplyRequestDto,
+    @Req() req: any,
+  ) {
+    return this.requestsService.resubmit(id, dto, req.user.userId, req.ip);
   }
 
   @Patch(':id/approve')

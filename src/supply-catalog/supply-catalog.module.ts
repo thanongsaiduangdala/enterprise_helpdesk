@@ -9,6 +9,10 @@ import { SupplyCatalogController } from './supply-catalog.controller';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { Counter, CounterSchema } from '../roles/schemas/counter.schema';
 import { Asset, AssetSchema } from '../assets/schemas/asset.schema';
+import {
+  SupplyRequest,
+  SupplyRequestSchema,
+} from '../supply-requests/schemas/supply-request.schema';
 
 @Module({
   imports: [
@@ -16,6 +20,7 @@ import { Asset, AssetSchema } from '../assets/schemas/asset.schema';
       { name: SupplyCatalogItem.name, schema: SupplyCatalogItemSchema },
       { name: Counter.name, schema: CounterSchema },
       { name: Asset.name, schema: AssetSchema },
+      { name: SupplyRequest.name, schema: SupplyRequestSchema },
     ]),
     AuditLogsModule,
   ],
