@@ -297,6 +297,17 @@ export class UsersService {
     return this.userModel.find({ isActive: true }).exec();
   }
 
+  /** ລະຫັດຜູ້ໃຊ້ທີ່ຍັງໃຊ້ງານ ແລະ ມີສິດ module:action (ລວມ SUPER_ADMIN) — ໃຊ້ສົ່ງແຈ້ງເຕືອນຜູ້ອະນຸມັດ */
+  async findActiveIdsWithPermission(module: string, action: string) {
+    const roles = await this.rolesService.findRolesWithPermission(module, action);
+    const roleIds = new Set(roles.map((r) => String(r._id)));
+    const superAdmin = await this.rolesService.findByName('SUPER_ADMIN');
+    if (superAdmin) roleIds.add(String(superAdmin._id));
+    if (roleIds.size === 0) return [] as string[];
+    const users = await this.findActiveByRoleIds([...roleIds]);
+    return users.map((u) => String(u._id));
+  }
+
   findActiveByRoleIds(roleIds: string[]) {
     return this.userModel
       .find({ role: { $in: roleIds }, isActive: true })

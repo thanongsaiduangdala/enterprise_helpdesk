@@ -9,6 +9,7 @@ import { ClientSession, Connection, Model } from 'mongoose';
 import {
   SupplyRequest,
   SupplyRequestDocument,
+  SupplyRequestSource,
   SupplyRequestStatus,
 } from './schemas/supply-request.schema';
 import {
@@ -315,6 +316,47 @@ export class SupplyRequestsService {
     return delegateId;
   }
 
+  /**
+   * ຄຳຂໍສ່ວນບຸກຄົນ → ຕ້ອງຜ່ານຫົວໜ້າພະແນກຂອງຜູ້ຂໍກ່ອນ (PENDING_MANAGER).
+   * ຂ້າມຂັ້ນນີ້ (ເຂົ້າຄິວຝ່າຍສາງເລີຍ) ເມື່ອ: ຜູ້ຂໍບໍ່ມີພະແນກ / ພະແນກບໍ່ມີຫົວໜ້າທີ່ຍັງໃຊ້ງານ /
+   * ຜູ້ຂໍເປັນຫົວໜ້າເອງ (ບໍ່ອະນຸມັດຕົນເອງ) / ປິດດ້ວຍ MANAGER_APPROVAL_REQUIRED=false
+   */
+  private async resolveManagerStage(requesterId: string): Promise<{
+    status: SupplyRequestStatus;
+    managerDepartmentId?: string;
+    managerStageSkipped?: string;
+    managerIds: string[];
+  }> {
+    const skip = (reason: string) => ({
+      status: SupplyRequestStatus.REQUESTED,
+      managerStageSkipped: reason,
+      managerIds: [] as string[],
+    });
+    if (process.env.MANAGER_APPROVAL_REQUIRED === 'false') return skip('DISABLED');
+    const requester = await this.usersService.findOneRaw(requesterId);
+    if (!requester.departmentId) return skip('NO_DEPARTMENT');
+    const department = await this.departmentsService.findOne(
+      String(requester.departmentId),
+    );
+    const allManagerIds = (department?.managerIds ?? []).map(String);
+    if (allManagerIds.includes(requesterId)) return skip('REQUESTER_IS_MANAGER');
+    const activeManagerIds: string[] = [];
+    for (const managerId of allManagerIds) {
+      try {
+        const manager = await this.usersService.findOneRaw(managerId);
+        if (manager && manager.isActive !== false) activeManagerIds.push(managerId);
+      } catch {
+        // ຫົວໜ້າທີ່ຖືກລຶບ/ຫາບໍ່ພົບ — ບໍ່ນັບ
+      }
+    }
+    if (activeManagerIds.length === 0) return skip('NO_MANAGER');
+    return {
+      status: SupplyRequestStatus.PENDING_MANAGER,
+      managerDepartmentId: String(department._id),
+      managerIds: activeManagerIds,
+    };
+  }
+
   async create(dto: CreateSupplyRequestDto, requestedBy: string, ip?: string) {
     const departmentAssignment = await this.resolveDepartmentAssignment(
       dto,
@@ -344,6 +386,9 @@ export class SupplyRequestsService {
       purchaseRequestId: i.purchaseRequestId,
     })) as Array<any>;
     const links = await this.prepareLinks(items, requestedBy);
+    const managerStage = departmentAssignment
+      ? undefined
+      : await this.resolveManagerStage(requestedBy);
     const _id = await this.generateId();
     // ຈອງໃບສະເໜີ (ກັນຜູກຊ້ຳ) ກ່ອນບັນທຶກຄຳຂໍ; ຖ້າບັນທຶກບໍ່ສຳເລັດ ຄືນຄ່າຄືນ
     const claimed: string[] = [];
@@ -372,6 +417,20 @@ export class SupplyRequestsService {
       _id,
       requestedBy,
       items,
+      source: departmentAssignment
+        ? SupplyRequestSource.DEPARTMENT
+        : SupplyRequestSource.PERSONAL,
+      ...(managerStage
+        ? {
+            status: managerStage.status,
+            ...(managerStage.managerDepartmentId
+              ? { managerDepartmentId: managerStage.managerDepartmentId }
+              : {}),
+            ...(managerStage.managerStageSkipped
+              ? { managerStageSkipped: managerStage.managerStageSkipped }
+              : {}),
+          }
+        : {}),
       ...(departmentAssignment ?? {}),
       ...(delegateId
         ? {
@@ -396,6 +455,12 @@ export class SupplyRequestsService {
     );
     if (departmentAssignment) {
       await this.notifyDepartmentRequestCreated(saved, requestedBy);
+    } else if (managerStage?.status === SupplyRequestStatus.PENDING_MANAGER) {
+      // ແຈ້ງສະເພາະຫົວໜ້າພະແນກ — ຍັງບໍ່ແຈ້ງຝ່າຍສາງ/ຜູ້ອະນຸມັດ
+      await this.notifyManagersToReview(saved, requestedBy, managerStage.managerIds);
+    } else if (managerStage) {
+      // ຂ້າມຂັ້ນຫົວໜ້າ (ບໍ່ມີຫົວໜ້າ ຯລຯ) → ເຂົ້າຄິວຝ່າຍສາງເລີຍ ແຈ້ງຜູ້ອະນຸມັດ
+      await this.notifyApproversAwaiting(saved, requestedBy);
     }
     return saved;
   }
@@ -437,6 +502,209 @@ export class SupplyRequestsService {
       }
     } catch {
       // the request is saved; a failed notification must not undo it
+    }
+  }
+
+  private async requesterDisplayName(userId: string) {
+    const user = await this.usersService.findOneRaw(userId);
+    return (
+      `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() ||
+      user.employeeCode ||
+      userId
+    );
+  }
+
+  /** ແຈ້ງຫົວໜ້າພະແນກວ່າມີຄຳຂໍສ່ວນບຸກຄົນລໍຖ້າອະນຸມັດ — ລົ້ມເຫລວບໍ່ກະທົບການສ້າງໃບຂໍ */
+  private async notifyManagersToReview(
+    request: SupplyRequestDocument,
+    requesterId: string,
+    managerIds: string[],
+  ) {
+    try {
+      const id = String(request._id);
+      const name = await this.requesterDisplayName(requesterId);
+      for (const managerId of managerIds) {
+        if (managerId === requesterId) continue;
+        await this.notificationsService.notify(
+          managerId,
+          'SUPPLY_REQUEST_MANAGER_REVIEW',
+          id,
+          'SupplyRequest',
+          `ມີຄຳຂໍເບີກລໍຖ້າທ່ານອະນຸມັດ: ${id}`,
+          `${name} ຂໍເບີກ ${request.items.length} ລາຍການ (${id}) — ກະລຸນາອະນຸມັດ ຫຼື ປະຕິເສດ`,
+        );
+      }
+    } catch {
+      // the request is saved; a failed notification must not undo it
+    }
+  }
+
+  /** ແຈ້ງຜູ້ມີສິດອະນຸມັດ (supplies:approve) ວ່າມີຄຳຂໍເຂົ້າຄິວຝ່າຍສາງແລ້ວ */
+  private async notifyApproversAwaiting(
+    request: SupplyRequestDocument,
+    requesterId: string,
+  ) {
+    try {
+      const id = String(request._id);
+      const name = await this.requesterDisplayName(requesterId);
+      const approverIds = await this.usersService.findActiveIdsWithPermission(
+        'supplies',
+        'approve',
+      );
+      for (const approverId of approverIds) {
+        if (approverId === requesterId) continue;
+        await this.notificationsService.notify(
+          approverId,
+          'SUPPLY_REQUEST_AWAITING_APPROVAL',
+          id,
+          'SupplyRequest',
+          `ມີຄຳຂໍເບີກລໍຖ້າອະນຸມັດ: ${id}`,
+          `${name} ຂໍເບີກ ${request.items.length} ລາຍການ (${id})`,
+        );
+      }
+    } catch {
+      // the request is saved; a failed notification must not undo it
+    }
+  }
+
+  /**
+   * ຄິວຂັ້ນທີ 1: ໃບສ່ວນບຸກຄົນທີ່ລໍຖ້າຫົວໜ້າພະແນກ.
+   * - ຫົວໜ້າພະແນກ: ເຫັນສະເພາະພະແນກທີ່ຕົນເປັນຫົວໜ້າ
+   * - ຜູ້ມີສິດ supplies:approve: ເຫັນທຸກໃບ (ອະນຸມັດແທນໄດ້ ເມື່ອຫົວໜ້າລາພັກ)
+   * - ຄົນອື່ນ: 403 (frontend ຊ່ອນແຖບ)
+   */
+  async findManagerQueue(user: PermissionUser) {
+    const actorId = user.userId;
+    if (!actorId) throw new BadRequestException('Not authenticated');
+    const substitute = hasPermission(user, 'supplies', 'approve');
+    const managed = await this.departmentsService.findManagedDepartmentIds(actorId);
+    if (!substitute && managed.length === 0) {
+      throw new ForbiddenException('ສະເພາະຫົວໜ້າພະແນກເທົ່ານັ້ນ');
+    }
+    const filter: Record<string, unknown> = {
+      status: SupplyRequestStatus.PENDING_MANAGER,
+    };
+    if (!substitute) filter.managerDepartmentId = { $in: managed };
+    const docs = await this.requestModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .populate('requestedBy', 'firstName lastName email employeeCode')
+      .populate('managerDepartmentId', 'name')
+      .populate('delegateId', 'firstName lastName employeeCode')
+      .exec();
+    return this.attachPurchaseStatus(docs);
+  }
+
+  /** ກວດສິດອະນຸມັດຂັ້ນຫົວໜ້າ: ຫົວໜ້າພະແນກຂອງຜູ້ຂໍ ຫຼື ຜູ້ມີສິດ supplies:approve (ແທນ) */
+  private async assertCanReviewAsManager(
+    request: SupplyRequestDocument,
+    user: PermissionUser,
+    action: 'APPROVE' | 'REJECT',
+    ip?: string,
+  ): Promise<{ substitute: boolean }> {
+    const actorId = user.userId;
+    if (!actorId) throw new BadRequestException('Not authenticated');
+    if (request.status !== SupplyRequestStatus.PENDING_MANAGER) {
+      throw new BadRequestException(
+        `Request is "${request.status}", expected "PENDING_MANAGER" for this action`,
+      );
+    }
+    if ((await sodEnforced()) && request.requestedBy.toString() === actorId) {
+      await this.logSodBlocked(actorId, String(request._id), `SR_MANAGER_${action}_SELF`, ip);
+      throw new ForbiddenException(
+        'Segregation of duties: you cannot review your own request',
+      );
+    }
+    const managed = await this.departmentsService.findManagedDepartmentIds(actorId);
+    const isManager =
+      !!request.managerDepartmentId &&
+      managed.includes(String(request.managerDepartmentId));
+    if (isManager) return { substitute: false };
+    if (hasPermission(user, 'supplies', 'approve')) return { substitute: true };
+    throw new ForbiddenException(
+      'ສະເພາະຫົວໜ້າພະແນກຂອງຜູ້ຂໍ ຫຼື ຜູ້ມີສິດອະນຸມັດ (supplies:approve) ເທົ່ານັ້ນ',
+    );
+  }
+
+  /** ຫົວໜ້າພະແນກອະນຸມັດຂັ້ນທີ 1 → ສົ່ງຕໍ່ເຂົ້າຄິວຝ່າຍສາງ (REQUESTED) */
+  async managerApprove(id: string, user: PermissionUser, ip?: string) {
+    const request = await this.findOne(id);
+    const { substitute } = await this.assertCanReviewAsManager(request, user, 'APPROVE', ip);
+    const before = request.toObject();
+    request.status = SupplyRequestStatus.REQUESTED;
+    request.managerApprovedBy = user.userId as any;
+    request.managerApprovedAt = new Date();
+    request.managerApprovedAsSubstitute = substitute;
+    const saved = await request.save();
+    await this.auditLogsService.log(
+      user.userId!,
+      substitute
+        ? 'SUPPLY_REQUEST_MANAGER_APPROVED_AS_SUBSTITUTE'
+        : 'SUPPLY_REQUEST_MANAGER_APPROVED',
+      'SupplyRequest',
+      id,
+      before,
+      saved.toObject(),
+      ip,
+    );
+    await this.notifyRequesterOfManagerDecision(saved, true);
+    await this.notifyApproversAwaiting(saved, String(saved.requestedBy));
+    return saved;
+  }
+
+  /** ຫົວໜ້າພະແນກປະຕິເສດຂັ້ນທີ 1 — ຕ້ອງມີເຫດຜົນ; ປົດການຈອງ/ໃບສະເໜີຊື້ທີ່ຜູກຄືກັບການປະຕິເສດປົກກະຕິ */
+  async managerReject(id: string, user: PermissionUser, reason: string, ip?: string) {
+    const request = await this.findOne(id);
+    const { substitute } = await this.assertCanReviewAsManager(request, user, 'REJECT', ip);
+    const before = request.toObject();
+    request.status = SupplyRequestStatus.REJECTED;
+    request.rejectionReason = reason;
+    request.managerRejectedBy = user.userId as any;
+    request.managerRejectedAt = new Date();
+    request.managerApprovedAsSubstitute = substitute;
+    const saved = await request.save();
+    await this.assetsService.releaseReservationsForRequest(id);
+    await this.purchaseModel
+      .updateMany(
+        { supplyRequestId: id },
+        { $unset: { supplyRequestId: 1, supplyRequestItemIndex: 1 } },
+      )
+      .exec();
+    await this.auditLogsService.log(
+      user.userId!,
+      substitute
+        ? 'SUPPLY_REQUEST_MANAGER_REJECTED_AS_SUBSTITUTE'
+        : 'SUPPLY_REQUEST_MANAGER_REJECTED',
+      'SupplyRequest',
+      id,
+      before,
+      saved.toObject(),
+      ip,
+    );
+    await this.notifyRequesterOfManagerDecision(saved, false);
+    return saved;
+  }
+
+  private async notifyRequesterOfManagerDecision(
+    request: SupplyRequestDocument,
+    approved: boolean,
+  ) {
+    try {
+      const id = String(request._id);
+      await this.notificationsService.notify(
+        String(request.requestedBy),
+        approved ? 'SUPPLY_REQUEST_MANAGER_APPROVED' : 'SUPPLY_REQUEST_MANAGER_REJECTED',
+        id,
+        'SupplyRequest',
+        approved
+          ? `ຫົວໜ້າພະແນກອະນຸມັດຄຳຂໍ ${id} ແລ້ວ`
+          : `ຫົວໜ້າພະແນກປະຕິເສດຄຳຂໍ ${id}`,
+        approved
+          ? 'ຄຳຂໍຖືກສົ່ງຕໍ່ໃຫ້ຝ່າຍສາງ/ຜູ້ອະນຸມັດແລ້ວ'
+          : `ເຫດຜົນ: ${request.rejectionReason ?? '—'}`,
+      );
+    } catch {
+      // decision is saved; a failed notification must not undo it
     }
   }
 
@@ -490,6 +758,8 @@ export class SupplyRequestsService {
     ];
     if (managedDepartmentIds.length > 0) {
       scope.push({ departmentId: { $in: managedDepartmentIds } });
+      // ໃບສ່ວນບຸກຄົນຂອງພະນັກງານໃນພະແນກທີ່ຕົນເປັນຫົວໜ້າ (ລໍຖ້າ/ຜ່ານຂັ້ນຫົວໜ້າ)
+      scope.push({ managerDepartmentId: { $in: managedDepartmentIds } });
     }
 
     const docs = await this.requestModel
@@ -500,6 +770,8 @@ export class SupplyRequestsService {
       .populate('custodianId', 'firstName lastName employeeCode')
       .populate('delegateId', 'firstName lastName employeeCode')
       .populate('approvedBy', 'firstName lastName employeeCode')
+      .populate('managerApprovedBy', 'firstName lastName employeeCode')
+      .populate('managerDepartmentId', 'name')
       .populate('fulfilledBy', 'firstName lastName employeeCode')
       .populate('receivedBy', 'firstName lastName employeeCode')
       .populate('receiveOverride.by', 'firstName lastName employeeCode')
@@ -536,6 +808,8 @@ export class SupplyRequestsService {
       .populate('departmentId', 'name')
       .populate('custodianId', 'firstName lastName employeeCode')
       .populate('delegateId', 'firstName lastName employeeCode')
+      .populate('managerApprovedBy', 'firstName lastName employeeCode')
+      .populate('managerDepartmentId', 'name')
       .exec();
     // ໃສ່ purchaseStatus ໃຫ້ລາຍການທີ່ຜູກໃບສະເໜີຊື້ — ໜ້າອະນຸມັດໃຊ້ສະແດງສະຖານະໃບສະເໜີຊື້
     return this.attachPurchaseStatus(docs);
@@ -554,6 +828,14 @@ export class SupplyRequestsService {
     request: SupplyRequestDocument,
     expected: SupplyRequestStatus,
   ) {
+    if (
+      request.status === SupplyRequestStatus.PENDING_MANAGER &&
+      expected === SupplyRequestStatus.REQUESTED
+    ) {
+      throw new BadRequestException(
+        'ຄຳຂໍນີ້ຍັງລໍຖ້າຫົວໜ້າພະແນກອະນຸມັດຂັ້ນທຳອິດ — ຜູ້ອະນຸມັດຝ່າຍສາງຍັງດຳເນີນການບໍ່ໄດ້',
+      );
+    }
     if (request.status !== expected) {
       throw new BadRequestException(
         `Request is "${request.status}", expected "${expected}" for this action`,

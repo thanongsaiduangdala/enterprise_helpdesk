@@ -88,6 +88,13 @@ export class SupplyRequestsController {
     return this.requestsService.findAll(status, this.scopingUserId(req));
   }
 
+  /** ຄິວຂັ້ນທີ 1: ຄຳຂໍສ່ວນບຸກຄົນທີ່ລໍຖ້າຫົວໜ້າພະແນກ (403 ຖ້າບໍ່ແມ່ນຫົວໜ້າ/ຜູ້ອະນຸມັດ) */
+  @Get('manager-queue')
+  @RequirePermission('supplies', 'read')
+  managerQueue(@Req() req: any) {
+    return this.requestsService.findManagerQueue(req.user);
+  }
+
   /** ໃບຮັບເຄື່ອງ: ຂໍ້ມູນໃບຂໍ + ລາຍການທີ່ຕ້ອງສະແກນ Asset Tag + ສິດຢືນຢັນຂອງຜູ້ເປີດ */
   @Get(':id/receipt')
   @RequirePermission('supplies', 'read')
@@ -117,6 +124,23 @@ export class SupplyRequestsController {
   @RequirePermission('supplies', 'read')
   findOne(@Param('id') id: string, @Req() req: any) {
     return this.requestsService.findOne(id, this.scopingUserId(req));
+  }
+
+  /** ຫົວໜ້າພະແນກອະນຸມັດຂັ້ນທີ 1 — service ກວດວ່າເປັນຫົວໜ້າພະແນກຂອງຜູ້ຂໍ (ຫຼື supplies:approve ແທນ) */
+  @Patch(':id/manager-approve')
+  @RequirePermission('supplies', 'read')
+  managerApprove(@Param('id') id: string, @Req() req: any) {
+    return this.requestsService.managerApprove(id, req.user, req.ip);
+  }
+
+  @Patch(':id/manager-reject')
+  @RequirePermission('supplies', 'read')
+  managerReject(
+    @Param('id') id: string,
+    @Body() dto: RejectSupplyRequestDto,
+    @Req() req: any,
+  ) {
+    return this.requestsService.managerReject(id, req.user, dto.reason, req.ip);
   }
 
   @Patch(':id/approve')

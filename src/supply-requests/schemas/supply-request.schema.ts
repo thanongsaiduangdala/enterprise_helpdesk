@@ -3,7 +3,16 @@ import { Document, Types } from 'mongoose';
 
 export type SupplyRequestDocument = SupplyRequest & Omit<Document, '_id'>;
 
+export enum SupplyRequestSource {
+  /** ພະນັກງານຂໍໃນນາມສ່ວນຕົວ — ຜ່ານຫົວໜ້າພະແນກກ່ອນ */
+  PERSONAL = 'PERSONAL',
+  /** ຂໍໃນນາມພະແນກ — ເຂົ້າຄິວຝ່າຍສາງໂດຍກົງ */
+  DEPARTMENT = 'DEPARTMENT',
+}
+
 export enum SupplyRequestStatus {
+  /** ຄຳຂໍສ່ວນບຸກຄົນ ລໍຖ້າຫົວໜ້າພະແນກຂອງຜູ້ຂໍອະນຸມັດ (ຂັ້ນທີ 1) ກ່ອນເຂົ້າຄິວຝ່າຍສາງ */
+  PENDING_MANAGER = 'PENDING_MANAGER',
   REQUESTED = 'REQUESTED',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
@@ -88,6 +97,34 @@ export class SupplyRequest {
   @Prop({ enum: SupplyRequestStatus, default: SupplyRequestStatus.REQUESTED })
   status!: SupplyRequestStatus;
 
+  /** ແຫຼ່ງທີ່ມາ: PERSONAL | DEPARTMENT (ໃບເກົ່າບໍ່ມີຄ່ານີ້ — ໃຫ້ເບິ່ງຈາກ departmentId) */
+  @Prop({ enum: SupplyRequestSource })
+  source?: SupplyRequestSource;
+
+  /** ພະແນກຂອງຜູ້ຂໍ ຕອນຍື່ນ — ໃຊ້ກຳນົດຫົວໜ້າທີ່ຕ້ອງອະນຸມັດຂັ້ນທີ 1 (ຕັ້ງສະເພາະໃບທີ່ຜ່ານຂັ້ນນີ້) */
+  @Prop({ type: String, ref: 'Department' })
+  managerDepartmentId?: string;
+
+  /** ເຫດຜົນທີ່ຂ້າມຂັ້ນຫົວໜ້າ: NO_DEPARTMENT | NO_MANAGER | REQUESTER_IS_MANAGER | DISABLED */
+  @Prop()
+  managerStageSkipped?: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  managerApprovedBy?: Types.ObjectId;
+
+  @Prop()
+  managerApprovedAt?: Date;
+
+  /** true = ຜູ້ມີສິດ supplies:approve ອະນຸມັດຂັ້ນຫົວໜ້າແທນ (ຫົວໜ້າລາພັກ ຯລຯ) */
+  @Prop()
+  managerApprovedAsSubstitute?: boolean;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  managerRejectedBy?: Types.ObjectId;
+
+  @Prop()
+  managerRejectedAt?: Date;
+
   @Prop({ type: Types.ObjectId, ref: 'User' })
   approvedBy?: Types.ObjectId;
 
@@ -136,4 +173,5 @@ export const SupplyRequestSchema = SchemaFactory.createForClass(SupplyRequest);
 SupplyRequestSchema.index({ requestedBy: 1, status: 1 });
 SupplyRequestSchema.index({ departmentId: 1, status: 1 });
 SupplyRequestSchema.index({ status: 1 });
+SupplyRequestSchema.index({ managerDepartmentId: 1, status: 1 });
 SupplyRequestSchema.index({ delegateId: 1, status: 1 });
