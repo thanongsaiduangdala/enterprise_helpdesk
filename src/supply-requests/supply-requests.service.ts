@@ -394,7 +394,50 @@ export class SupplyRequestsService {
       saved.toObject(),
       ip,
     );
+    if (departmentAssignment) {
+      await this.notifyDepartmentRequestCreated(saved, requestedBy);
+    }
     return saved;
+  }
+
+  /**
+   * ແຈ້ງຫົວໜ້າແຜນກ (managerIds) ແລະ ຜູ້ຮັບຜິດຊອບ (custodian) ເມື່ອມີຄົນສ້າງໃບຂໍໃນນາມແຜນກ
+   * ຂ້າມຜູ້ຂໍເອງ — ລົ້ມເຫລວບໍ່ກະທົບການສ້າງໃບຂໍ (ບັນທຶກໄປແລ້ວ)
+   */
+  private async notifyDepartmentRequestCreated(
+    request: SupplyRequestDocument,
+    requesterId: string,
+  ) {
+    try {
+      if (!request.departmentId) return;
+      const department = await this.departmentsService.findOne(
+        String(request.departmentId),
+      );
+      const requester = await this.usersService.findOneRaw(requesterId);
+      const requesterName =
+        `${requester.firstName ?? ''} ${requester.lastName ?? ''}`.trim() ||
+        requester.employeeCode ||
+        requesterId;
+      const recipients = new Set<string>(
+        (department?.managerIds ?? []).map(String),
+      );
+      if (request.custodianId) recipients.add(String(request.custodianId));
+      recipients.delete(requesterId);
+      const id = String(request._id);
+      const deptName = department?.name ?? String(request.departmentId);
+      for (const userId of recipients) {
+        await this.notificationsService.notify(
+          userId,
+          'SUPPLY_REQUEST_DEPARTMENT_CREATED',
+          id,
+          'SupplyRequest',
+          `ມີຄຳຂໍເບີກໃນນາມແຜນກ ${deptName}: ${id}`,
+          `${requesterName} ໄດ້ສ້າງຄຳຂໍເບີກ ${id} ໃນນາມແຜນກ ${deptName} (${request.items.length} ລາຍການ)`,
+        );
+      }
+    } catch {
+      // the request is saved; a failed notification must not undo it
+    }
   }
 
   async findRequestableDepartments(userId: string) {
