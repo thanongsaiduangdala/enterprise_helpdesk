@@ -171,24 +171,16 @@ export class DepartmentsService {
   }
 
   /**
-   * Departments the user may request supplies for: their own active department
-   * and any active departments that explicitly list them as a manager.
-   * Return only picker fields; authorization is still re-checked on POST.
+   * Departments the user may request supplies for: only active departments
+   * that explicitly list them as a manager. Return only picker fields;
+   * authorization is still re-checked on POST.
    */
   async findRequestableForUser(
     userId: string,
-    ownDepartmentId?: string,
   ): Promise<Array<{ _id: string; name: string; branchId: string }>> {
-    const allowedDepartments: Record<string, unknown>[] = [
-      { managerIds: String(userId) },
-    ];
-    if (ownDepartmentId) {
-      allowedDepartments.push({ _id: String(ownDepartmentId) });
-    }
-
     const departments = await this.departmentModel
       .find(
-        { isActive: { $ne: false }, $or: allowedDepartments },
+        { isActive: { $ne: false }, managerIds: String(userId) },
         { _id: 1, name: 1, branchId: 1 },
       )
       .lean()

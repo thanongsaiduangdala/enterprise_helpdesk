@@ -178,7 +178,7 @@ describe('SupplyRequestsService manager stage', () => {
       expect(saved.managerStageSkipped).toBe('NO_DEPARTMENT');
     });
 
-    it('department requests go straight to the warehouse queue (no manager stage)', async () => {
+    it('manager department requests go straight to the warehouse queue (no manager stage)', async () => {
       usersService.findOneRaw.mockImplementation((id: string) =>
         Promise.resolve({
           _id: id,
@@ -189,7 +189,7 @@ describe('SupplyRequestsService manager stage', () => {
       );
       await service.create(
         { ...dto, departmentId: 'DX001', custodianId: 'emp-1' },
-        'emp-1',
+        'head-1',
       );
       expect(saved.status).toBeUndefined();
       expect(saved.source).toBe(SupplyRequestSource.DEPARTMENT);

@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { SupplyRequestsService } from './supply-requests.service';
 import { SupplyRequestStatus } from './schemas/supply-request.schema';
 import { AssetsService } from '../assets/assets.service';
@@ -245,7 +245,7 @@ describe('SupplyRequestsService department flows', () => {
 
   it('creates a department request, approves it, receives the scanned asset and records the department as holder', async () => {
     const catalogItem = seedCatalog({ stockQty: 2 });
-    seedDepartment();
+    seedDepartment({ managerIds: ['requester-1'] });
 
     const created = await service.create(
       {
@@ -312,6 +312,24 @@ describe('SupplyRequestsService department flows', () => {
     expect(request.receivedAssetIds).toEqual([]);
   });
 
+  it('rejects a department request raised by a member who is not a manager', async () => {
+    seedDepartment({ managerIds: ['manager-1'] });
+
+    await expect(
+      service.create(
+        {
+          items: [{ catalogItemId: 'SC001', name: 'Laptop', quantity: 1 }],
+          departmentId: 'DX001',
+          custodianId: 'custodian-1',
+        },
+        'requester-1',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(requestModel).not.toHaveBeenCalled();
+    expect(catalogService.findOne).not.toHaveBeenCalled();
+  });
+
   it('rejects a department request raised by a user outside that department', async () => {
     seedDepartment({ managerIds: ['manager-1'] });
     usersService.findOneRaw.mockReturnValue({
@@ -329,7 +347,7 @@ describe('SupplyRequestsService department flows', () => {
         },
         'outsider-1',
       ),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(requestModel).not.toHaveBeenCalled();
     expect(catalogService.findOne).not.toHaveBeenCalled();

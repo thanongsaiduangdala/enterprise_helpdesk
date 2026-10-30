@@ -224,7 +224,8 @@ export class SupplyRequestsService {
 
   /**
    * ກວດ ແລະ ແປງຂໍ້ມູນພະແນກ/ຜູ້ຮັບຜິດຊອບ ສຳລັບໃບຂໍທີ່ຂໍໃນນາມພະແນກ.
-   * ຜູ້ຂໍ ແລະ ຜູ້ຮັບຜິດຊອບ ຕ້ອງເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງພະແນກນັ້ນ.
+   * ຜູ້ຂໍ ຕ້ອງເປັນຫົວໜ້າພະແນກ (managerIds) ເທົ່ານັ້ນ;
+   * ຜູ້ຮັບຜິດຊອບ ຕ້ອງເປັນສະມາຊິກ ຫຼື ຫົວໜ້າຂອງພະແນກນັ້ນ.
    */
   private async resolveDepartmentAssignment(
     dto: CreateSupplyRequestDto,
@@ -247,11 +248,9 @@ export class SupplyRequestsService {
     if (requester.isActive === false) {
       throw new BadRequestException('ບັນຊີຜູ້ຂໍຖືກປິດໃຊ້ງານແລ້ວ');
     }
-    const requesterInDept =
-      String(requester.departmentId ?? '') === String(department._id);
-    if (!requesterInDept && !managerIds.includes(String(requester._id))) {
-      throw new BadRequestException(
-        `ຂໍໃນນາມພະແນກໄດ້ສະເພາະສະມາຊິກ ຫຼື ຫົວໜ້າພະແນກ "${department.name}"`,
+    if (!managerIds.includes(String(requester._id))) {
+      throw new ForbiddenException(
+        `ຂໍໃນນາມພະແນກໄດ້ສະເພາະຫົວໜ້າພະແນກ "${department.name}"`,
       );
     }
 
@@ -710,11 +709,7 @@ export class SupplyRequestsService {
   }
 
   async findRequestableDepartments(userId: string) {
-    const user = await this.usersService.findOneRaw(userId);
-    return this.departmentsService.findRequestableForUser(
-      userId,
-      user.departmentId ? String(user.departmentId) : undefined,
-    );
+    return this.departmentsService.findRequestableForUser(userId);
   }
 
   /**

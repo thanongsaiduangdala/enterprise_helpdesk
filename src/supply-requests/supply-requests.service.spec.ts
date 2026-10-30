@@ -27,7 +27,6 @@ describe('SupplyRequestsService.findMine department-manager visibility', () => {
     departmentsService = {
       findManagedDepartmentIds: jest.fn().mockResolvedValue([]),
       findRequestableForUser: jest.fn().mockResolvedValue([
-        { _id: 'DEPT-OWN', name: 'Operations', branchId: 'BR-01' },
         { _id: 'DEPT-MANAGED', name: 'Finance', branchId: 'BR-02' },
       ]),
     };
@@ -45,19 +44,17 @@ describe('SupplyRequestsService.findMine department-manager visibility', () => {
     );
   });
 
-  it('returns requestable departments using the profile department and manager memberships', async () => {
+  it('returns requestable departments using manager memberships only', async () => {
     const expected = [
-      { _id: 'DEPT-OWN', name: 'Operations', branchId: 'BR-01' },
       { _id: 'DEPT-MANAGED', name: 'Finance', branchId: 'BR-02' },
     ];
 
     await expect(
       service.findRequestableDepartments('user-1'),
     ).resolves.toEqual(expected);
-    expect(usersService.findOneRaw).toHaveBeenCalledWith('user-1');
+    expect(usersService.findOneRaw).not.toHaveBeenCalled();
     expect(departmentsService.findRequestableForUser).toHaveBeenCalledWith(
       'user-1',
-      'DEPT-OWN',
     );
   });
 

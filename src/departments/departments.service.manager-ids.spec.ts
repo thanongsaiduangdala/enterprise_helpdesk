@@ -24,7 +24,7 @@ describe('DepartmentsService supply-request department access', () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it('returns only active requestable department picker fields', async () => {
+  it('returns only active departments where the user is a manager', async () => {
     const exec = jest.fn().mockResolvedValue([
       {
         _id: 'DEPT-01',
@@ -43,14 +43,14 @@ describe('DepartmentsService supply-request department access', () => {
     );
 
     await expect(
-      service.findRequestableForUser('u1', 'DEPT-02'),
+      service.findRequestableForUser('u1'),
     ).resolves.toEqual([
       { _id: 'DEPT-01', name: 'Operations', branchId: 'BR-01' },
     ]);
     expect(find).toHaveBeenCalledWith(
       {
         isActive: { $ne: false },
-        $or: [{ managerIds: 'u1' }, { _id: 'DEPT-02' }],
+        managerIds: 'u1',
       },
       { _id: 1, name: 1, branchId: 1 },
     );
