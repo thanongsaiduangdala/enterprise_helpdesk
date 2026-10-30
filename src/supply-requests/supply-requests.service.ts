@@ -31,6 +31,7 @@ import {
   hasAnyPermission,
   hasPermission,
   PermissionUser,
+  SUPER_ADMIN_ROLE,
 } from '../common/utils/permission.util';
 import {
   AuditEvent,
@@ -570,13 +571,13 @@ export class SupplyRequestsService {
   /**
    * ຄິວຂັ້ນທີ 1: ໃບສ່ວນບຸກຄົນທີ່ລໍຖ້າຫົວໜ້າພະແນກ.
    * - ຫົວໜ້າພະແນກ: ເຫັນສະເພາະພະແນກທີ່ຕົນເປັນຫົວໜ້າ
-   * - ຜູ້ມີສິດ supplies:approve: ເຫັນທຸກໃບ (ອະນຸມັດແທນໄດ້ ເມື່ອຫົວໜ້າລາພັກ)
-   * - ຄົນອື່ນ: 403 (frontend ຊ່ອນແຖບ)
+   * - ຜູ້ບໍລິຫານສູງສຸດ (SUPER_ADMIN): ເຫັນທຸກໃບ (ອະນຸມັດແທນໄດ້ ເມື່ອຫົວໜ້າລາພັກ)
+   * - ຄົນອື່ນ (ລວມ AGENT/ຝ່າຍສາງທີ່ມີ supplies:approve): 403 (frontend ຊ່ອນແຖບ)
    */
   async findManagerQueue(user: PermissionUser) {
     const actorId = user.userId;
     if (!actorId) throw new BadRequestException('Not authenticated');
-    const substitute = hasPermission(user, 'supplies', 'approve');
+    const substitute = user.role === SUPER_ADMIN_ROLE;
     const managed = await this.departmentsService.findManagedDepartmentIds(actorId);
     if (!substitute && managed.length === 0) {
       throw new ForbiddenException('ສະເພາະຫົວໜ້າພະແນກເທົ່ານັ້ນ');
@@ -595,7 +596,7 @@ export class SupplyRequestsService {
     return this.attachPurchaseStatus(docs);
   }
 
-  /** ກວດສິດອະນຸມັດຂັ້ນຫົວໜ້າ: ຫົວໜ້າພະແນກຂອງຜູ້ຂໍ ຫຼື ຜູ້ມີສິດ supplies:approve (ແທນ) */
+  /** ກວດສິດອະນຸມັດຂັ້ນຫົວໜ້າ: ຫົວໜ້າພະແນກຂອງຜູ້ຂໍ ຫຼື SUPER_ADMIN (ແທນ) — AGENT/ຝ່າຍສາງບໍ່ມີສິດຂັ້ນນີ້ */
   private async assertCanReviewAsManager(
     request: SupplyRequestDocument,
     user: PermissionUser,
@@ -620,9 +621,9 @@ export class SupplyRequestsService {
       !!request.managerDepartmentId &&
       managed.includes(String(request.managerDepartmentId));
     if (isManager) return { substitute: false };
-    if (hasPermission(user, 'supplies', 'approve')) return { substitute: true };
+    if (user.role === SUPER_ADMIN_ROLE) return { substitute: true };
     throw new ForbiddenException(
-      'ສະເພາະຫົວໜ້າພະແນກຂອງຜູ້ຂໍ ຫຼື ຜູ້ມີສິດອະນຸມັດ (supplies:approve) ເທົ່ານັ້ນ',
+      'ສະເພາະຫົວໜ້າພະແນກຂອງຜູ້ຂໍ ຫຼື ຜູ້ບໍລິຫານສູງສຸດເທົ່ານັ້ນ',
     );
   }
 
@@ -801,6 +802,12 @@ export class SupplyRequestsService {
     const filter: Record<string, unknown> = {};
     if (status) filter.status = status;
     if (requestedBy) filter.requestedBy = requestedBy;
+    // ໃບທີ່ລໍຖ້າຫົວໜ້າພະແນກ ຍັງບໍ່ເຂົ້າຄິວຝ່າຍສາງ — ຜູ້ມີສິດ approve/fulfill/manage ບໍ່ເຫັນຜ່ານ list ນີ້
+    // (ເຈົ້າຂອງໃບເຫັນຂອງຕົນເອງຜ່ານ /my ແລະ filter requestedBy)
+    if (!requestedBy) {
+      if (status === SupplyRequestStatus.PENDING_MANAGER) return [];
+      if (!status) filter.status = { $ne: SupplyRequestStatus.PENDING_MANAGER };
+    }
     const docs = await this.requestModel
       .find(filter)
       .sort({ createdAt: -1 })

@@ -29,7 +29,14 @@ describe('SupplyRequestsService manager stage', () => {
   };
   const approver: PermissionUser = {
     userId: 'appr-1',
-    permissions: [{ module: 'supplies', actions: ['read', 'approve'] }],
+    role: 'SUPER_ADMIN',
+    permissions: [],
+  };
+  // AGENT/ຝ່າຍສາງ: ມີ supplies:approve ແຕ່ບໍ່ມີສິດຂັ້ນຫົວໜ້າ
+  const agent: PermissionUser = {
+    userId: 'agent-1',
+    role: 'AGENT',
+    permissions: [{ module: 'supplies', actions: ['read', 'approve', 'fulfill'] }],
   };
 
   const dto: any = {
@@ -221,7 +228,17 @@ describe('SupplyRequestsService manager stage', () => {
       );
     });
 
-    it('a supplies:approve user can approve on behalf and it is audited as substitute', async () => {
+    it('AGENT with supplies:approve is forbidden at the manager stage', async () => {
+      pending();
+      await expect(service.managerApprove('SR001', agent)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      await expect(
+        service.managerReject('SR001', agent, 'x'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('SUPER_ADMIN can approve on behalf and it is audited as substitute', async () => {
       const r = pending();
       await service.managerApprove('SR001', approver);
       expect(r.managerApprovedAsSubstitute).toBe(true);
@@ -254,6 +271,16 @@ describe('SupplyRequestsService manager stage', () => {
       );
     });
 
+    it('findAll hides PENDING_MANAGER from warehouse staff', async () => {
+      await service.findAll();
+      expect(requestModel.find).toHaveBeenLastCalledWith({
+        status: { $ne: SupplyRequestStatus.PENDING_MANAGER },
+      });
+      await expect(
+        service.findAll(SupplyRequestStatus.PENDING_MANAGER),
+      ).resolves.toEqual([]);
+    });
+
     it('warehouse approval is blocked while the manager has not approved', async () => {
       pending();
       await expect(service.approve('SR001', 'appr-1')).rejects.toThrow(
@@ -263,7 +290,7 @@ describe('SupplyRequestsService manager stage', () => {
   });
 
   describe('manager queue', () => {
-    it('head sees only their departments; others get 403; approvers see all', async () => {
+    it('head sees only their departments; AGENT gets 403; SUPER_ADMIN sees all', async () => {
       await service.findManagerQueue(head);
       expect(requestModel.find).toHaveBeenLastCalledWith({
         status: SupplyRequestStatus.PENDING_MANAGER,
@@ -273,6 +300,9 @@ describe('SupplyRequestsService manager stage', () => {
       expect(requestModel.find).toHaveBeenLastCalledWith({
         status: SupplyRequestStatus.PENDING_MANAGER,
       });
+      await expect(service.findManagerQueue(agent)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
       await expect(
         service.findManagerQueue({ ...employee, userId: 'x' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
