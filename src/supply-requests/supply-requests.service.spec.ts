@@ -41,6 +41,7 @@ describe('SupplyRequestsService.findMine department-manager visibility', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
   });
 

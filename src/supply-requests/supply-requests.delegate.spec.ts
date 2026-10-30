@@ -58,6 +58,8 @@ function setup(request: any) {
     findByTagOrId: jest.fn(),
     assignInCtx: jest.fn(),
     flushAudits: jest.fn().mockResolvedValue(undefined),
+    reserveForRequestInTx: jest.fn().mockResolvedValue(undefined),
+    releaseReservationsForRequest: jest.fn().mockResolvedValue(undefined),
   };
   const catalogService = {
     findOne: jest.fn().mockResolvedValue({ stockQty: 100 }),
@@ -80,6 +82,7 @@ function setup(request: any) {
     assetsService as any,
     connection as any,
     notificationsService as any,
+    {} as any,
   );
   return {
     service,

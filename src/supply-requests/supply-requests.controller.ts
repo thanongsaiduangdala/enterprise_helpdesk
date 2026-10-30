@@ -61,16 +61,6 @@ export class SupplyRequestsController {
     return this.requestsService.findRequestableDepartments(req.user.userId);
   }
 
-<<<<<<< HEAD
-  /** ກວດຊື່ຜູ້ຮັບຜິດຊອບຈາກລະຫັດພະນັກງານ ກ່ອນສົ່ງໃບຂໍຂອງພະແນກ (ບໍ່ສົ່ງຂໍ້ມູນລະອຽດ) */
-  @Get('custodian-lookup/:employeeCode')
-  @RequirePermission('supplies', 'create')
-  lookupCustodian(
-    @Param('employeeCode') employeeCode: string,
-    @Query('departmentId') departmentId?: string,
-  ) {
-    return this.requestsService.lookupCustodian(employeeCode, departmentId);
-=======
   /** ຄົ້ນຫາຄົນທີ່ເລືອກເປັນຜູ້ຮັບຜິດຊອບ ຕອນສ້າງໃບຂໍໃນນາມແຜນກ (ສະມາຊິກ/ຫົວໜ້າຂອງແຜນກນັ້ນ) */
   @Get('custodian-candidates')
   @RequirePermission('supplies', 'create')
@@ -86,7 +76,6 @@ export class SupplyRequestsController {
       q,
       req.user.userId,
     );
->>>>>>> 075e5b7106ac66286e35363ce9bd1ff56679fb81
   }
 
   @Get()

@@ -405,37 +405,6 @@ export class SupplyRequestsService {
     );
   }
 
-<<<<<<< HEAD
-  async lookupCustodian(employeeCode: string, departmentId?: string) {
-    const user = await this.usersService.findByEmployeeCode(
-      String(employeeCode ?? '').trim(),
-    );
-    if (!user) return { found: false as const };
-    let eligible = true;
-    let reason: string | undefined;
-    if (user.isActive === false) {
-      eligible = false;
-      reason = 'ບັນຊີນີ້ຖືກປິດໃຊ້ງານ';
-    } else if (departmentId) {
-      const department = await this.departmentsService.findOne(departmentId);
-      const inDept =
-        String(user.departmentId ?? '') === String(department?._id ?? '');
-      const isManager = (department?.managerIds ?? [])
-        .map(String)
-        .includes(String(user._id));
-      if (!inDept && !isManager) {
-        eligible = false;
-        reason = `ບໍ່ແມ່ນສະມາຊິກ ຫຼືຫົວໜ້າຂອງພະແນກ "${department?.name ?? departmentId}"`;
-      }
-    }
-    return {
-      found: true as const,
-      employeeCode: user.employeeCode,
-      name: [user.firstName, user.lastName].filter(Boolean).join(' '),
-      eligible,
-      reason,
-    };
-=======
   /**
    * ລາຍຊື່ຄົນທີ່ເລືອກເປັນ "ຜູ້ຮັບຜິດຊອບ" ຕອນສ້າງໃບຂໍໃນນາມແຜນກ (ຄົ້ນຫາຕາມຊື່/ລະຫັດ).
    * - ຜູ້ເອີ້ນຕ້ອງຂໍໃນນາມແຜນກນີ້ໄດ້ (ສະມາຊິກ ຫຼື ຫົວໜ້າ) — ກົດດຽວກັບ resolveDepartmentAssignment
@@ -462,7 +431,6 @@ export class SupplyRequestsService {
       limit: 30,
     });
     return { users };
->>>>>>> 075e5b7106ac66286e35363ce9bd1ff56679fb81
   }
 
   async findMine(userId: string) {

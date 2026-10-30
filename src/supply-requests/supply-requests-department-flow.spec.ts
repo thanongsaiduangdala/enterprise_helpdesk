@@ -174,6 +174,9 @@ describe('SupplyRequestsService department flows', () => {
       findById: jest.fn((id: string) => query(assets.get(String(id)) ?? null)),
       find: jest.fn((filter: any) => query(findAssets(filter))),
       findOneAndUpdate: jest.fn(),
+      updateMany: jest.fn(() =>
+        query({ matchedCount: 0, modifiedCount: 0 }),
+      ),
     };
 
     requestModel = jest.fn(function (this: any, data: any) {
@@ -235,6 +238,8 @@ describe('SupplyRequestsService department flows', () => {
       departmentsService,
       assetsService,
       connection,
+      {} as any,
+      {} as any,
     );
   });
 
@@ -255,7 +260,7 @@ describe('SupplyRequestsService department flows', () => {
     expect(created.status).toBe(SupplyRequestStatus.REQUESTED);
 
     const approved = await service.approve('SR001', 'approver-1');
-    expect(approved.status).toBe(SupplyRequestStatus.APPROVED);
+    expect((approved as any).status).toBe(SupplyRequestStatus.APPROVED);
 
     const asset = makeAsset();
     const received = await service.receive(
